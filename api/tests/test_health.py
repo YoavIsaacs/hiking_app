@@ -21,3 +21,10 @@ def test_health_has_version_and_sha(client: TestClient, settings: Settings) -> N
     }
     assert body["version"] == settings.version
     assert body["git_sha"] == settings.git_sha
+
+
+def test_unknown_route_404_still_carries_request_id(client: TestClient) -> None:
+    response = client.get("/nope", headers={"X-Request-ID": "req-404"})
+
+    assert response.status_code == 404
+    assert response.headers["x-request-id"] == "req-404"

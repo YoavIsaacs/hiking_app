@@ -1,5 +1,7 @@
 import pytest
 from fastapi.testclient import TestClient
+from pydantic import ValidationError
+from pydantic_settings.exceptions import SettingsError
 
 from app.config import Settings
 from app.main import create_app
@@ -25,3 +27,19 @@ def test_create_app_without_args_reads_env(monkeypatch: pytest.MonkeyPatch) -> N
 
     assert body["git_sha"] == "fromenv123"
     assert body["env"] == "staging"
+
+
+def test_settings_reject_invalid_log_level(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("LOG_LEVEL", "LOUD")
+
+    with pytest.raises(ValidationError):
+        Settings(_env_file=None)
+
+
+def test_settings_reject_malformed_cors_origins(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("CORS_ORIGINS", "http://not-json.test")
+
+    with pytest.raises(SettingsError):
+        Settings(_env_file=None)

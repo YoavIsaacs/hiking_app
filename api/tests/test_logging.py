@@ -1,10 +1,16 @@
 import json
 import logging
 import sys
+from collections.abc import Callable, Iterator
 
 import pytest
 
-from app.logging_config import JsonFormatter, configure_logging, request_id_var
+from app.logging_config import (
+    LOGGED_MARK,
+    JsonFormatter,
+    configure_logging,
+    request_id_var,
+)
 
 
 def _record(
@@ -88,3 +94,74 @@ def test_output_is_json_on_stream(capsys: pytest.CaptureFixture[str]) -> None:
         assert json.loads(err)["message"] == "ping"
     finally:
         root.handlers[:] = before
+
+
+@pytest.fixture
+def install_logging() -> Iterator[Callable[[], logging.Logger]]:
+    root = logging.getLogger()
+    before = list(root.handlers)
+    level = root.level
+    names = ("uvicorn", "uvicorn.error", "uvicorn.access")
+    saved = {
+        n: (
+            list(logging.getLogger(n).handlers),
+            list(logging.getLogger(n).filters),
+            logging.getLogger(n).propagate,
+            logging.getLogger(n).disabled,
+        )
+        for n in names
+    }
+
+    def install() -> logging.Logger:
+        # Called from the test body so the handler binds to capsys's stderr.
+        configure_logging("INFO")
+        return logging.getLogger("uvicorn.error")
+
+    try:
+        yield install
+    finally:
+        root.handlers[:] = before
+        root.setLevel(level)
+        for n, (handlers, filters, propagate, disabled) in saved.items():
+            lg = logging.getLogger(n)
+            lg.handlers[:] = handlers
+            lg.filters[:] = filters
+            lg.propagate = propagate
+            lg.disabled = disabled
+
+
+def test_uvicorn_filter_drops_already_logged_exception(
+    capsys: pytest.CaptureFixture[str], install_logging: Callable[[], logging.Logger]
+) -> None:
+    uvicorn_logger = install_logging()
+    try:
+        raise RuntimeError("boom")
+    except RuntimeError as exc:
+        setattr(exc, LOGGED_MARK, True)
+        uvicorn_logger.error("Exception in ASGI application", exc_info=True)
+    assert capsys.readouterr().err == ""
+
+
+def test_uvicorn_filter_emits_unmarked_exception(
+    capsys: pytest.CaptureFixture[str], install_logging: Callable[[], logging.Logger]
+) -> None:
+    uvicorn_logger = install_logging()
+    try:
+        raise RuntimeError("boom")
+    except RuntimeError:
+        uvicorn_logger.error("Exception in ASGI application", exc_info=True)
+    lines = capsys.readouterr().err.strip().splitlines()
+    assert len(lines) == 1
+    data = json.loads(lines[0])
+    assert data["logger"] == "uvicorn.error"
+    assert data["exc_type"] == "RuntimeError"
+    assert "Traceback" in data["exc_info"]
+
+
+def test_uvicorn_filter_emits_record_without_exc_info(
+    capsys: pytest.CaptureFixture[str], install_logging: Callable[[], logging.Logger]
+) -> None:
+    uvicorn_logger = install_logging()
+    uvicorn_logger.info("Started server process")
+    lines = capsys.readouterr().err.strip().splitlines()
+    assert json.loads(lines[-1])["message"] == "Started server process"

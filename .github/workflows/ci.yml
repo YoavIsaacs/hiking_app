@@ -28,4 +28,4 @@ jobs:
           uv sync --frozen --directory api
           pnpm install --frozen-lockfile
       - name: pre-commit
-        run: uvx pre-commit run --all-files --show-diff-on-failure
+        run: uvx pre-commit@4.7.0 run --all-files --show-diff-on-failure

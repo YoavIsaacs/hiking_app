@@ -12,7 +12,7 @@ install:
 
 # Run the API with auto-reload on http://127.0.0.1:8000
 dev-api:
-    cd api && uv run uvicorn app.main:app --reload
+    cd api && uv run --frozen uvicorn app.main:app --reload
 
 # Run the web app on http://localhost:5173
 dev-web:
@@ -20,7 +20,7 @@ dev-web:
 
 # Run every test suite; fails if any suite fails
 test:
-    cd api && uv run pytest
+    cd api && uv run --frozen pytest
     pnpm --filter web test
 
 # Run all pre-commit hooks on all files

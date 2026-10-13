@@ -8,7 +8,7 @@ React PWA + FastAPI first, then React Native / Expo, same backend throughout. MI
 - [uv](https://docs.astral.sh/uv/) (installs Python 3.12 for you)
 - [Node.js](https://nodejs.org/) 24 and [pnpm](https://pnpm.io/) (version pinned in `package.json`; `corepack enable` works)
 - [just](https://github.com/casey/just)
-- [pre-commit](https://pre-commit.com/) (`uv tool install pre-commit`)
+- [pre-commit](https://pre-commit.com/) (`uv tool install pre-commit==4.7.0`)
 - On Windows, run everything from Git Bash.
 
 ## Setup

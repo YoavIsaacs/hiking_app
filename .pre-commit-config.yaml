@@ -1,0 +1,45 @@
+# Python and JS tools run from the projects' own environments (api/ uv env, web/ pnpm install),
+# so hook versions can never drift from the versions pinned in uv.lock / pnpm-lock.yaml.
+# Run `just install` first (it syncs both environments and installs the git hook).
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: end-of-file-fixer
+      - id: trailing-whitespace
+      - id: check-yaml
+        args: [--allow-multiple-documents] # pnpm-lock.yaml is multi-document
+      - id: detect-private-key
+
+  - repo: local
+    hooks:
+      - id: ruff-check
+        name: ruff lint
+        entry: uv run --frozen --directory api ruff check .
+        language: system
+        files: ^api/
+        pass_filenames: false
+      - id: ruff-format
+        name: ruff format
+        entry: uv run --frozen --directory api ruff format --check .
+        language: system
+        files: ^api/
+        pass_filenames: false
+      - id: mypy
+        name: mypy
+        entry: uv run --frozen --directory api mypy app tests
+        language: system
+        files: ^api/
+        pass_filenames: false
+      - id: eslint
+        name: eslint
+        entry: pnpm --filter web lint
+        language: system
+        files: ^web/
+        pass_filenames: false
+      - id: prettier
+        name: prettier
+        entry: pnpm --filter web format:check
+        language: system
+        files: ^web/
+        pass_filenames: false

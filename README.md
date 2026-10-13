@@ -23,7 +23,7 @@ just install      # api deps, web deps, and the pre-commit git hook
 From a fresh clone, each app is two commands (`just install` is shared):
 
 ```sh
-just dev-api      # http://127.0.0.1:8000  (GET / returns 200)
+just dev-api      # http://127.0.0.1:8000  (GET /health returns 200)
 just dev-web      # http://localhost:5173
 ```
 
@@ -41,7 +41,7 @@ Deployment arrives in step 0.5.
 
 ## Troubleshooting
 
-- **Windows: port 8000 still busy after stopping `just dev-api`.** Killing `uv run uvicorn --reload` can leave
+- **Windows: port 8000 still busy after stopping `just dev-api`.** Killing `uv run uvicorn --factory --reload` can leave
   the child Python process listening. Find and kill it:
   `netstat -ano | grep :8000` then `taskkill //PID <pid> //F`.
 - **`just` not found in Git Bash.** Reopen the shell after installing; on Windows `winget install Casey.Just`.

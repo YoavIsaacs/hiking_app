@@ -1,6 +1,6 @@
 ---
 name: backend-expert
-description: Senior Python/FastAPI engineer for the Hike Prep App API in api/. Use to implement backend checklist items — routes, Pydantic models, settings, middleware, GPX parsing, weather and trail adapters, the pure packing-rules engine, the Dockerfile and API CI jobs — against tests QA has written.
+description: Senior Python/FastAPI engineer for the Hike Prep App API in api/. Use to implement backend checklist items — routes, Pydantic models, settings, middleware, GPX parsing, weather and trail adapters, the pure packing-rules engine — against tests QA has written. CI, Docker and deploy config belong to devops.
 tools: Read, Grep, Glob, Edit, Write, Bash
 model: sonnet
 color: green

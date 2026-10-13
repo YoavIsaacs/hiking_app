@@ -17,7 +17,9 @@ code is wrong, you prove it with a failing test and report it.
 The tech lead asks for this before implementers start.
 
 1. Write every test the step's checklist names, with those exact names where given.
-2. Add acceptance tests for the step's behaviour and for its checkpoint where it can be automated.
+2. Add acceptance tests for the step's behaviour and for its checkpoint where it can be automated, and turn
+   every acceptance criterion in the step's `docs/ux/` spec into a Testing Library or Playwright test
+   (plus an automated accessibility check on each new screen once an axe-based tool is approved in a brief).
 3. Think adversarially: empty and huge inputs, malformed GPX, missing elevation/time data, timezones and DST,
    extreme weather values, network timeouts and 5xx from Open-Meteo/Overpass, offline, slow 3G.
    Use Hypothesis for properties of pure logic (e.g. checklist is deterministic; adding rain never removes rain

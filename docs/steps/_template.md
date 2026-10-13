@@ -6,7 +6,9 @@ Branch: `step/<id>-<slug>` · Phase: <n> · Status: briefing | design | tests | 
 <one sentence: what is true when this step is done>
 
 ## Checklist
-Copied verbatim from `docs/roadmap/`. Owner: architect / backend / frontend / qa / manager.
+Copied verbatim from `docs/roadmap/`. Owner: architect / ux / design / backend / frontend / mobile / devops / qa / manager.
+
+Agents this step uses (and why the others are skipped): <...>
 
 - [ ] <item> — owner
 - [ ] <item> — owner

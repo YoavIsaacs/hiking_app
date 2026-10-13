@@ -13,9 +13,16 @@ Everyone in this repo — the tech lead and every subagent — follows this file
 | Manager | the human (Yoav) | priorities, approvals, merges, anything needing an account, a console or a phone | — |
 | Tech lead | `tech-lead` (main session) | step briefs, delegation, review, PRs, `docs/roadmap/PROGRESS.md`, `docs/steps/` | product code and tests (delegates them) |
 | Architect | `architect` | `docs/adr/`, `docs/architecture/`, interface/contract sketches | implementation, tests |
-| Backend expert | `backend-expert` | `api/` application code, `api/Dockerfile`, API-side CI jobs | `web/`, tests written by QA (may add unit tests for its own internals) |
-| Frontend expert | `frontend-expert` | `web/` application code, web-side CI jobs | `api/`, the generated `web/src/api/schema.d.ts` by hand |
+| UX expert | `ux-expert` | `docs/ux/` — flows, wireframes, states, copy, accessibility, acceptance criteria | code, styles |
+| Graphic designer | `graphic-designer` | `docs/design/`, `design/tokens.json` + generated token outputs, icons and app assets | components, layout code |
+| Backend expert | `backend-expert` | `api/` application code | `web/`, `mobile/`, CI/Docker/deploy config, QA's acceptance tests |
+| Frontend expert | `frontend-expert` | `web/` application code | `api/`, the generated `schema.d.ts` and token outputs by hand, CI config |
+| Mobile expert | `mobile-expert` | `mobile/` — **Phase 4 onward only** | `api/`, `web/` components, CI config |
+| DevOps | `devops` | `.github/`, pre-commit, `justfile`, `api/Dockerfile`, `firebase.json`, release config, `docs/runbooks/` | application code; never runs cloud commands |
 | QA | `qa` | acceptance tests, e2e, test fixtures, coverage, checkpoint verification | application code |
+| Reviewer | `reviewer` | independent review findings (read-only) | any file |
+
+Implementers may add unit tests for internals they introduce; they never edit QA's acceptance or e2e tests.
 
 ## Source of truth
 
@@ -24,6 +31,8 @@ Everyone in this repo — the tech lead and every subagent — follows this file
 2. `docs/roadmap/PROGRESS.md` — which steps are done, verified, and how.
 3. `docs/steps/<step-id>.md` — the brief for the step in progress.
 4. `docs/adr/` — architecture decisions. A decision not in an ADR is not decided.
+5. `docs/ux/` and `design/tokens.json` — what screens do and how they look. Frontend and mobile build to these;
+   a gap or conflict goes back to the tech lead, not into an improvised design.
 
 ## Definition of done (a step)
 
@@ -52,12 +61,18 @@ api/                 FastAPI app (uv project)        → backend-expert
   app/               application code
   tests/             pytest                          → qa (acceptance) + backend-expert (unit)
 web/                 React + Vite app (pnpm)         → frontend-expert
-  src/
+  src/styles/tokens.css  generated from design/tokens.json → graphic-designer
+  public/icons/      app and PWA icons               → graphic-designer
   e2e/               Playwright                      → qa
-.github/workflows/   CI and deploy                   → owner of the area the job checks
+mobile/              Expo app (Phase 4+)             → mobile-expert
+design/tokens.json   design token source             → graphic-designer
+.github/             CI, deploy, Dependabot          → devops
 docs/roadmap/        roadmap mirror + PROGRESS.md    → tech-lead
 docs/steps/          one brief per step              → tech-lead
 docs/adr/            decision records                → architect
+docs/ux/             UX specs per step               → ux-expert
+docs/design/         visual identity and specs       → graphic-designer
+docs/runbooks/       manager actions, step by step   → devops
 ```
 
 ## Commands

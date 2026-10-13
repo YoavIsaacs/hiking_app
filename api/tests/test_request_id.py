@@ -1,4 +1,4 @@
-import logging
+import json
 
 import pytest
 from fastapi.testclient import TestClient
@@ -51,13 +51,17 @@ def test_context_var_is_reset_after_request(client: TestClient) -> None:
 
 
 def test_access_log_line_carries_request_id(
-    client: TestClient, caplog: pytest.LogCaptureFixture
+    capsys: pytest.CaptureFixture[str], settings: Settings
 ) -> None:
-    with caplog.at_level(logging.INFO, logger="app.access"):
-        client.get("/health", headers={REQUEST_ID_HEADER: "log-me"})
-    record = next(r for r in caplog.records if r.name == "app.access")
-    assert record.__dict__["status"] == 200
-    assert record.__dict__["path"] == "/health"
+    client = TestClient(create_app(settings))
+    client.get("/health", headers={REQUEST_ID_HEADER: "log-me"})
+    lines = [
+        json.loads(ln) for ln in capsys.readouterr().err.splitlines() if ln[:1] == "{"
+    ]
+    access = next(d for d in lines if d["logger"] == "app.access")
+    assert access["request_id"] == "log-me"
+    assert access["status"] == 200
+    assert access["path"] == "/health"
 
 
 def test_lifespan_scope_passes_through(settings: Settings) -> None:

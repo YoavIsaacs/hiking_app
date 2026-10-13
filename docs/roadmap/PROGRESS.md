@@ -1,6 +1,6 @@
 # Progress
 
-Master roadmap: "Hike Prep App — Roadmap" doc. Mirror of its step checklists: `docs/roadmap/phase-*.md`.
+Master roadmap: "Hike Prep App — Roadmap" doc. Mirror: `docs/roadmap/overview.md` (checkpoints) and `phase-*.md` (checklists).
 The tech lead keeps this file true. A step moves to Done only with checkpoint evidence.
 
 | Step | Title | Status | PR | Checkpoint evidence | Verified on |

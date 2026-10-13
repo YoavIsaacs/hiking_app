@@ -26,8 +26,9 @@ Implementers may add unit tests for internals they introduce; they never edit QA
 
 ## Source of truth
 
-1. `docs/roadmap/` — the roadmap and per-phase step checklists, mirrored from the "Hike Prep App — Roadmap" doc.
-   The doc is the master copy; if the two disagree, stop and tell the tech lead, who asks the manager.
+1. `docs/roadmap/` — mirrored from the "Hike Prep App — Roadmap" doc. `overview.md` has each step's Tests, CI
+   and **Checkpoint**; `phase-N.md` has the detailed checklist. The doc is the master copy; if the two disagree,
+   stop and tell the tech lead, who asks the manager. Never edit the mirror to change scope.
 2. `docs/roadmap/PROGRESS.md` — which steps are done, verified, and how.
 3. `docs/steps/<step-id>.md` — the brief for the step in progress.
 4. `docs/adr/` — architecture decisions. A decision not in an ADR is not decided.

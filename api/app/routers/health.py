@@ -1,4 +1,4 @@
-from typing import Annotated
+from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
@@ -10,13 +10,13 @@ router = APIRouter()
 
 
 class HealthResponse(BaseModel):
-    status: str
+    status: Literal["ok"]
     version: str
     git_sha: str
     env: str
 
 
-@router.get("/health", response_model=HealthResponse, operation_id="getHealth")
+@router.get("/health", response_model=HealthResponse)
 def health(settings: Annotated[Settings, Depends(get_settings)]) -> HealthResponse:
     return HealthResponse(
         status="ok",

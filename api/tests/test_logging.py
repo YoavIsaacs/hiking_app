@@ -1,5 +1,6 @@
 import json
 import logging
+import sys
 
 import pytest
 
@@ -41,22 +42,27 @@ def test_formatter_includes_extra_fields() -> None:
     assert data["status"] == 200
 
 
-def test_formatter_records_exception_type_without_traceback() -> None:
+def test_formatter_records_exception_type_and_traceback() -> None:
     try:
         raise ValueError("secret detail")
     except ValueError:
-        import sys
-
         record = _record()
         record.exc_info = sys.exc_info()
-    data = json.loads(JsonFormatter().format(record))
+    line = JsonFormatter().format(record)
+    data = json.loads(line)
     assert data["exc_type"] == "ValueError"
-    assert "secret detail" not in json.dumps(data)
+    assert "Traceback" in data["exc_info"]
+    assert "ValueError: secret detail" in data["exc_info"]
+    assert "\n" not in line
 
 
 def test_configure_logging_is_idempotent_and_sets_level() -> None:
     root = logging.getLogger()
     before = list(root.handlers)
+    level = root.level
+    uv_saved = {
+        n: list(logging.getLogger(n).handlers) for n in ("uvicorn", "uvicorn.error")
+    }
     try:
         configure_logging("DEBUG")
         configure_logging("WARNING")
@@ -66,7 +72,9 @@ def test_configure_logging_is_idempotent_and_sets_level() -> None:
         assert logging.getLogger("uvicorn.access").disabled
     finally:
         root.handlers[:] = before
-        root.setLevel(logging.WARNING)
+        root.setLevel(level)
+        for n, handlers in uv_saved.items():
+            logging.getLogger(n).handlers[:] = handlers
         logging.getLogger("uvicorn.access").disabled = False
 
 

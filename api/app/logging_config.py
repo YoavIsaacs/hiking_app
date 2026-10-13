@@ -5,6 +5,7 @@ from datetime import UTC, datetime
 
 request_id_var: ContextVar[str] = ContextVar("request_id", default="-")
 
+LOGGED_MARK = "_hike_logged"
 _HANDLER_MARK = "_hike_json_handler"
 _STANDARD_ATTRS = frozenset(
     logging.LogRecord("", 0, "", 0, "", None, None).__dict__
@@ -29,7 +30,17 @@ class JsonFormatter(logging.Formatter):
             payload["exc_type"] = (
                 record.exc_info[0].__name__ if record.exc_info[0] else None
             )
+            # Tracebacks stay in server logs; they are never put in responses.
+            payload["exc_info"] = self.formatException(record.exc_info)
         return json.dumps(payload, default=str)
+
+
+class _SkipAlreadyLogged(logging.Filter):
+    """Drop uvicorn's duplicate error line for exceptions the middleware logged."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        exc = record.exc_info[1] if record.exc_info else None
+        return not getattr(exc, LOGGED_MARK, False)
 
 
 def configure_logging(level: str) -> None:
@@ -49,6 +60,8 @@ def configure_logging(level: str) -> None:
         uv = logging.getLogger(name)
         uv.handlers.clear()
         uv.propagate = True
+        uv.filters[:] = [f for f in uv.filters if not isinstance(f, _SkipAlreadyLogged)]
+    logging.getLogger("uvicorn.error").addFilter(_SkipAlreadyLogged())
     access = logging.getLogger("uvicorn.access")
     access.handlers.clear()
     access.propagate = False

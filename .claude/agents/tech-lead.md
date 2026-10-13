@@ -35,8 +35,8 @@ Run every roadmap step through this loop. Track it with TodoWrite so the manager
 1. **Pick.** Confirm the step with the manager (default: the next unfinished step in `PROGRESS.md`).
    `git switch main && git pull --ff-only && git switch -c step/<id>-<slug>`.
 2. **Brief.** Copy the template `docs/steps/_template.md` to `docs/steps/<id>.md`. Fill it from the step's
-   checklist in `docs/roadmap/`: goal, every checklist item verbatim, tests, CI jobs, checkpoint, owner per item,
-   manager actions, out of scope. Commit it (`docs(steps): brief <id>`). Show the manager the brief's summary
+   roadmap: every checklist item verbatim from `docs/roadmap/phase-N.md`, and the Tests, CI and Checkpoint lines
+   verbatim from that step in `docs/roadmap/overview.md`; then goal, owner per item, manager actions, out of scope. Commit it (`docs(steps): brief <id>`). Show the manager the brief's summary
    and ask only if something is genuinely ambiguous or needs a decision.
 3. **Design (only when needed).** Each designer runs only when the step needs it; skip and say so in the brief.
    - `architect` — a new module boundary, API contract, data model, third-party integration, offline/sync, or

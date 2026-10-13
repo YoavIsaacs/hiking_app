@@ -29,3 +29,29 @@ jobs:
           pnpm install --frozen-lockfile
       - name: pre-commit
         run: uvx pre-commit@4.7.0 run --all-files --show-diff-on-failure
+
+  api-test:
+    name: api-test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: api
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v7
+        with:
+          python-version: "3.12"
+          enable-cache: true
+          cache-dependency-glob: api/uv.lock
+      - name: Install dependencies
+        run: uv sync --frozen
+      - name: ruff check
+        run: uv run --frozen ruff check .
+      - name: ruff format
+        run: uv run --frozen ruff format --check .
+      - name: mypy
+        run: uv run --frozen mypy app tests
+      - name: pytest
+        run: uv run --frozen pytest

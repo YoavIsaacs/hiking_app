@@ -17,6 +17,7 @@ FROM python:3.12-slim AS runtime
 ARG GIT_SHA=unknown
 ARG VERSION=0.0.0-dev
 ENV GIT_SHA=${GIT_SHA} \
+    VERSION=${VERSION} \
     PATH="/app/.venv/bin:$PATH" \
     PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1

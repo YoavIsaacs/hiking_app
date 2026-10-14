@@ -7,7 +7,7 @@ The tech lead keeps this file true. A step moves to Done only with checkpoint ev
 | --- | --- | --- | --- | --- | --- |
 | 0.1 | Repo and tooling | done (part deferred) | [#3](https://github.com/YoavIsaacs/hiking_app/pull/3) | Fresh clone → `just install` → `just dev-api` / `just dev-web` = 3 commands each, both HTTP 200 (QA, branch); `pre-commit run --all-files` 10/10 hooks pass on `main` @ 4018695 locally and in CI run [38387791812](https://github.com/YoavIsaacs/hiking_app/actions/runs/38387791812); `just test` passes. `lint` required on `main` since 2026-10-14 (ruleset `main`). **Deferred by manager:** secret scanning/push protection and the fake-API-key check. | 2026-10-13 |
 | 0.2 | FastAPI skeleton | done | [#6](https://github.com/YoavIsaacs/hiking_app/pull/6) | On `main` @ 77726b0: `uv run pytest` 35 passed, coverage 100% (gate 85%, `--disable-socket`); `mypy app tests` strict → 0 errors (15 files); CodeQL run [38527140518](https://github.com/YoavIsaacs/hiking_app/actions/runs/38527140518) → 0 results, 0 open alerts; `/health` local latency n=300 after warm-up p50 1.20 ms / p95 1.64 ms / max 2.34 ms (< 50 ms). Docker (QA, branch): non-root uid 10001, `/health` returns build `GIT_SHA`/`VERSION`. Required checks on `main` (`gh api …/rules/branches/main`): `lint`, `api-test`, `Analyze (python)` (GitHub Actions). | 2026-10-14 |
-| 0.3 | React app | briefing — blocked on manager decision (see brief) | | | |
+| 0.3 | React app | in progress — design (ux-expert next) | | | |
 | 0.4 | Generated API client | not started | | | |
 | 0.5 | Deployment | not started | | | |
 | 0.6 | Pipeline rules | not started | | | |
@@ -16,8 +16,8 @@ The tech lead keeps this file true. A step moves to Done only with checkpoint ev
 Read this, then `docs/steps/<current step>.md`. Nothing here lives only in chat.
 
 - **Current step:** 0.3 React app on branch `step/0.3-react-app`. Brief: `docs/steps/0.3.md`. Stage: briefing.
-  **Blocked on one manager decision** (`.env` files — the brief's "Open decisions"). Once decided, record it in
-  the brief and continue the loop at "Design" (ux-expert).
+  `.env` decision made (option A). Next: loop stage "Design" — delegate the Home page spec to `ux-expert`,
+  then the frontend contract stub (tech-lead step 4a).
 - **`main` protection:** branch ruleset `main` (active, no bypass): required checks `lint`, `api-test`,
   `Analyze (python)`; deletion and force-push blocked. PR-required, linear history etc. arrive in 0.6.
 - **Open PRs:** none. Dependabot #4 (`@types/node` 26) and #5 (TypeScript 7) closed by manager decision;
@@ -26,7 +26,7 @@ Read this, then `docs/steps/<current step>.md`. Nothing here lives only in chat.
   Docker images `hike-api:qa`, `hike-api:test`.
 
 ### Carry-forward (decided items waiting for their step)
-- **0.3:** `.env` conflict (open decision in the brief). Dependabot ignore rules for `@types/node` majors
+- **0.3:** `.env` option A (decided; see brief). Dependabot ignore rules for `@types/node` majors
   above the Node runtime (24) and TypeScript majors. 0.1 placeholder nits to fold in: explicit `"strict": true`,
   `<title>`, remove leftover Vite template CSS and `web/public/icons.svg`, `toBeTruthy` placeholder test,
   ESLint `defineConfig`.
@@ -70,7 +70,7 @@ Read this, then `docs/steps/<current step>.md`. Nothing here lives only in chat.
   tech lead. devops 1: Dockerfile `VERSION` not exported though its report said it was — QA caught it).
   QA listed the 500 path as "untested" but didn't flag it as a checklist gap. Backend ran `ruff --fix` over
   QA's untracked tests (formatting only).
-- **Repeated patterns → proposed changes (awaiting manager approval):**
+- **Repeated patterns → changes (manager-approved and applied 2026-10-14):**
   1. QA missed failure-path gaps twice (0.1, 0.2) → `.claude/agents/qa.md`: treat every untested failure path
      of a checklist item as a *finding*, not a follow-up; always probe negatives and false positives
      (errors, 4xx/5xx, ignore rules, invalid input).

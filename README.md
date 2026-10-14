@@ -32,7 +32,7 @@ just dev-web      # http://localhost:5173
 ```sh
 just test         # api pytest + web vitest; fails if either fails
 just lint         # pre-commit run --all-files (ruff, mypy, ESLint, Prettier, file hygiene)
-just gen-api      # not implemented until step 0.4
+just gen-api      # regenerate api/openapi.json + web/src/api/schema.d.ts; needs uv (API toolchain) even for frontend-only work
 ```
 
 ## Deploy

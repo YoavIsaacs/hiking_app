@@ -78,7 +78,7 @@ jobs:
           uv sync --frozen --directory api
           pnpm install --frozen-lockfile
       - name: Regenerate OpenAPI schema and web types
-        run: pnpm --filter web gen:api
+        run: pnpm --filter web --fail-if-no-match gen:api
       - name: Fail if generated files are stale
         run: |
           if ! git diff --exit-code || [ -n "$(git status --porcelain)" ]; then

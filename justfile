@@ -37,4 +37,4 @@ lint:
 
 # Regenerate api/openapi.json and the web API client (web/src/api/schema.d.ts) from FastAPI
 gen-api:
-    pnpm --filter web gen:api
+    pnpm --filter web --fail-if-no-match gen:api

@@ -67,7 +67,7 @@ describe('HomePage error states (UX AC 3, 4, 5, 6)', () => {
     renderApp()
     const alert = await screen.findByRole('alert')
     expect(
-      within(alert).getByRole('heading', { name: ERROR_TITLE }),
+      within(alert).getByRole('heading', { name: ERROR_TITLE, level: 3 }),
     ).toBeInTheDocument()
     expect(alert).toHaveTextContent(HTTP_MSG)
   })

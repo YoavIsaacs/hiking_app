@@ -9,7 +9,6 @@ React PWA + FastAPI first, then React Native / Expo, same backend throughout. MI
 - [Node.js](https://nodejs.org/) 24 and [pnpm](https://pnpm.io/) (version pinned in `package.json`; `corepack enable` works)
 - [just](https://github.com/casey/just)
 - [pre-commit](https://pre-commit.com/) (`uv tool install pre-commit==4.7.0`)
-- On Windows, run everything from Git Bash.
 
 ## Setup
 
@@ -26,6 +25,10 @@ From a fresh clone, each app is two commands (`just install` is shared):
 just dev-api      # http://127.0.0.1:8000  (GET /health returns 200)
 just dev-web      # http://localhost:5173
 ```
+
+The API reads its settings from `HIKE_`-prefixed environment variables (`HIKE_ENV`, `HIKE_VERSION`, `HIKE_GIT_SHA`,
+`HIKE_CORS_ORIGINS`, `HIKE_CORS_FIREBASE_SITE`, `HIKE_OPEN_METEO_BASE_URL`, `HIKE_LOG_LEVEL`); unprefixed names are ignored.
+Local dev needs none of them.
 
 ## Test and lint
 
@@ -44,6 +47,6 @@ Deployment arrives in step 0.5.
 - **Windows: port 8000 still busy after stopping `just dev-api`.** Killing `uv run uvicorn --factory --reload` can leave
   the child Python process listening. Find and kill it:
   `netstat -ano | grep :8000` then `taskkill //PID <pid> //F`.
-- **`just` not found in Git Bash.** Reopen the shell after installing; on Windows `winget install Casey.Just`.
+- **`just` not found.** Reopen the terminal after installing; on Windows `winget install Casey.Just`.
 - **Windows: recipe fails with a shell or `uv`/`pnpm` not found error.** On Windows `just` runs recipes with `cmd.exe`
   (no Git or WSL needed), so make sure `uv`, `pnpm` and `pre-commit` are on your Windows PATH.

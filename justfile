@@ -1,5 +1,6 @@
-# Works in Git Bash on Windows and on Linux/macOS.
-set windows-shell := ["bash", "-uc"]
+# Recipes must stay valid in both POSIX sh and cmd.exe (plain `cd X && cmd`; no quoting tricks, `>&2` or $VAR):
+# on Windows cmd.exe always exists, whereas sh needs Git's usr\bin on PATH and bash can resolve to WSL.
+set windows-shell := ["cmd.exe", "/c"]
 
 default:
     @just --list
@@ -31,7 +32,6 @@ e2e:
 lint:
     pre-commit run --all-files --show-diff-on-failure
 
-# Regenerate the web API client from OpenAPI (not implemented until step 0.4)
+# Regenerate api/openapi.json and the web API client (web/src/api/schema.d.ts) from FastAPI
 gen-api:
-    @echo "gen-api is not implemented until step 0.4" >&2
-    @exit 1
+    pnpm --filter web --fail-if-no-match gen:api

@@ -4,6 +4,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.config import Settings
 from app.logging_config import configure_logging
 from app.middleware import REQUEST_ID_HEADER, RequestIdMiddleware
+from app.operation_ids import check_operation_ids, operation_id
 from app.routers import health
 
 
@@ -11,7 +12,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or Settings()
     configure_logging(settings.log_level)
 
-    app = FastAPI(title="Hike Prep API", version=settings.version)
+    app = FastAPI(
+        title="Hike Prep API",
+        version=settings.version,
+        generate_unique_id_function=operation_id,
+    )
     app.state.settings = settings
 
     app.add_middleware(
@@ -25,4 +30,5 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.add_middleware(RequestIdMiddleware)
 
     app.include_router(health.router)
+    check_operation_ids(app)
     return app

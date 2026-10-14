@@ -32,7 +32,7 @@ just dev-web      # http://localhost:5173
 ```sh
 just test         # api pytest + web vitest; fails if either fails
 just lint         # pre-commit run --all-files (ruff, mypy, ESLint, Prettier, file hygiene)
-just gen-api      # not implemented until step 0.4
+just gen-api      # regenerate api/openapi.json + web/src/api/schema.d.ts; needs uv (API toolchain) even for frontend-only work
 ```
 
 ## Deploy
@@ -45,3 +45,5 @@ Deployment arrives in step 0.5.
   the child Python process listening. Find and kill it:
   `netstat -ano | grep :8000` then `taskkill //PID <pid> //F`.
 - **`just` not found in Git Bash.** Reopen the shell after installing; on Windows `winget install Casey.Just`.
+- **Windows: recipe fails with a shell or `uv`/`pnpm` not found error.** On Windows `just` runs recipes with `cmd.exe`
+  (no Git or WSL needed), so make sure `uv`, `pnpm` and `pre-commit` are on your Windows PATH.

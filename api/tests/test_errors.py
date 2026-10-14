@@ -13,7 +13,7 @@ def _app(settings: Settings) -> FastAPI:
     app = create_app(settings)
 
     @app.get("/boom")
-    def boom() -> None:
+    def trigger_boom() -> None:
         raise RuntimeError("secret detail")
 
     return app

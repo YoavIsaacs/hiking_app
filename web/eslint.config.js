@@ -14,6 +14,7 @@ export default defineConfig(
       'playwright-report',
       'test-results',
       'blob-report',
+      'src/api/schema.d.ts',
     ],
   },
   {
@@ -30,6 +31,24 @@ export default defineConfig(
         projectService: true,
         tsconfigRootDir: import.meta.dirname,
       },
+    },
+  },
+  {
+    files: ['src/**/*.{ts,tsx}'],
+    ignores: ['src/api/**'],
+    rules: {
+      'no-restricted-syntax': [
+        'error',
+        {
+          selector: "CallExpression[callee.name='fetch']",
+          message: 'Call the API through src/api/client.ts',
+        },
+        {
+          selector:
+            "CallExpression[callee.property.name='fetch'][callee.object.name=/^(window|globalThis|self)$/]",
+          message: 'Call the API through src/api/client.ts',
+        },
+      ],
     },
   },
   prettier,

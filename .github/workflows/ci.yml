@@ -56,6 +56,37 @@ jobs:
       - name: pytest
         run: uv run --frozen pytest
 
+  api-contract:
+    name: api-contract
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v7
+        with:
+          python-version: "3.12"
+          enable-cache: true
+          cache-dependency-glob: api/uv.lock
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+      - name: Install dependencies
+        run: |
+          uv sync --frozen --directory api
+          pnpm install --frozen-lockfile
+      - name: Regenerate OpenAPI schema and web types
+        run: pnpm --filter web --fail-if-no-match gen:api
+      - name: Fail if generated files are stale
+        run: |
+          if ! git diff --exit-code || [ -n "$(git status --porcelain)" ]; then
+            echo "::error::Generated API files are out of date. Run 'just gen-api' and commit api/openapi.json and web/src/api/schema.d.ts."
+            git status --porcelain
+            exit 1
+          fi
+
   web-test:
     name: web-test
     runs-on: ubuntu-latest

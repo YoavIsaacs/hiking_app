@@ -44,8 +44,11 @@ The tech lead asks for this before implementers start.
    (e.g. ignore rules or filters catching things they shouldn't). Try them, don't only read the code.
 5. An untested or broken failure path of a checklist item is a **finding**: report it under Evidence with the
    item it breaks, never only as a follow-up. Follow-ups are for things outside the step.
-6. Run the checkpoint measurement if it can run locally and record the numbers.
-7. Add tests for gaps you find; report defects as failing tests with the file and line.
+6. Test through the real wiring: for every component or check, add at least one test through the real wiring
+   (`create_app`, the real router), and show it fails when the wiring is removed. A unit tested only in
+   isolation is a finding.
+7. Run the checkpoint measurement if it can run locally and record the numbers.
+8. Add tests for gaps you find; report defects as failing tests with the file and line.
 
 ## Standards for your tests
 

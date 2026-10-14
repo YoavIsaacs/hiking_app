@@ -1,5 +1,7 @@
 export function getApiBaseUrl(): string {
-  return import.meta.env.VITE_API_URL.replace(/\/+$/, '')
+  const url = import.meta.env.VITE_API_URL
+  if (!url) throw new Error('VITE_API_URL is not set')
+  return url.replace(/\/+$/, '')
 }
 
 // Hand-written for 0.3 only; replaced by generated types in 0.4.
@@ -40,6 +42,8 @@ function isHealth(value: unknown): value is Health {
 export const HEALTH_TIMEOUT_MS = 4000
 
 export async function fetchHealth(signal?: AbortSignal): Promise<Health> {
+  // Computed before the try so a config error is not misclassified as network.
+  const url = `${getApiBaseUrl()}/health`
   const controller = new AbortController()
   let timedOut = false
   const timer = setTimeout(() => {
@@ -51,7 +55,7 @@ export async function fetchHealth(signal?: AbortSignal): Promise<Health> {
   else signal?.addEventListener('abort', onCallerAbort, { once: true })
 
   try {
-    return await requestHealth(controller.signal)
+    return await requestHealth(url, controller.signal)
   } catch (cause) {
     if (signal?.aborted) throw cause
     if (timedOut)
@@ -63,10 +67,13 @@ export async function fetchHealth(signal?: AbortSignal): Promise<Health> {
   }
 }
 
-async function requestHealth(signal: AbortSignal): Promise<Health> {
+async function requestHealth(
+  url: string,
+  signal: AbortSignal,
+): Promise<Health> {
   let response: Response
   try {
-    response = await fetch(`${getApiBaseUrl()}/health`, { signal })
+    response = await fetch(url, { signal })
   } catch (cause) {
     // An abort (caller or timeout) is classified by fetchHealth.
     if (signal.aborted) throw cause

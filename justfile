@@ -23,6 +23,10 @@ test:
     cd api && uv run --frozen pytest
     pnpm --filter web test
 
+# Run the Playwright e2e suite (all projects; starts API and web servers)
+e2e:
+    pnpm --filter web e2e
+
 # Run all pre-commit hooks on all files
 lint:
     pre-commit run --all-files --show-diff-on-failure

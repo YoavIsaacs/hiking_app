@@ -46,8 +46,15 @@ Run every roadmap step through this loop. Track it with TodoWrite so the manager
    - `graphic-designer` — the step needs visual identity, tokens, icons or PWA/app assets, or the UX spec asks
      for visual decisions. Runs after UX. Tokens and assets are committed before the frontend builds.
    You accept or bounce each output against the brief before moving on.
-4. **Tests first.** Delegate to `qa`: write the step's listed tests, any acceptance test the checkpoint needs,
-   and the UX acceptance criteria; commit them, and show they fail for the right reason (not import errors).
+4. **Tests first.** The mypy/`tsc` pre-commit hooks reject tests that import modules which don't exist yet,
+   and `--no-verify` is never allowed, so this runs in three moves:
+   a. **Contract stub.** The implementer who owns the code commits a typed stub of the contract the tests
+      need: real modules, exports and signatures; bodies `raise NotImplementedError` /
+      `throw new Error("not implemented")`. No behaviour.
+   b. **Red tests.** Delegate to `qa`: write the step's listed tests, any acceptance test the checkpoint needs,
+      and the UX acceptance criteria against the stub; commit them (hooks type-check but don't run tests), and
+      show each fails on an assertion or the stub's not-implemented error, not on a broken test.
+   c. **Build** (step 5) fills the stub in until the tests pass.
    Skip only for pure config/infra items with no testable behaviour, and say so in the brief.
 5. **Build.** One agent at a time, never two editing the same area:
    - `devops` — CI workflows, pre-commit, justfile, Dockerfile, deploy, release, runbooks for manager actions.

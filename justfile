@@ -1,9 +1,6 @@
-# Recipes are POSIX sh, so they run the same on Linux/macOS (CI) and Windows.
-# On Windows use `sh`, not `bash`: Git for Windows ships sh.exe (and puts it on PATH
-# via its cmd/ or usr/bin dir), whereas `bash` can resolve to C:\Windows\System32\bash.exe
-# (WSL2), which cannot see Windows uv/pnpm. System32 has no sh.exe, so this never picks WSL.
-# If Git for Windows is missing, just reports that `sh` was not found.
-set windows-shell := ["sh", "-uc"]
+# Recipes must stay valid in both POSIX sh and cmd.exe (plain `cd X && cmd`; no quoting tricks, `>&2` or $VAR):
+# on Windows cmd.exe always exists, whereas sh needs Git's usr\bin on PATH and bash can resolve to WSL.
+set windows-shell := ["cmd.exe", "/c"]
 
 default:
     @just --list

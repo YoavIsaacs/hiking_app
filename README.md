@@ -45,5 +45,5 @@ Deployment arrives in step 0.5.
   the child Python process listening. Find and kill it:
   `netstat -ano | grep :8000` then `taskkill //PID <pid> //F`.
 - **`just` not found in Git Bash.** Reopen the shell after installing; on Windows `winget install Casey.Just`.
-- **Windows: `just` says `sh` not found, or `uv: command not found` from `/bin/bash`.** `just` runs recipes with Git for
-  Windows' `sh.exe` (never WSL's `bash.exe`); install Git for Windows and make sure its `cmd` or `usr\bin` dir is on PATH.
+- **Windows: recipe fails with a shell or `uv`/`pnpm` not found error.** On Windows `just` runs recipes with `cmd.exe`
+  (no Git or WSL needed), so make sure `uv`, `pnpm` and `pre-commit` are on your Windows PATH.

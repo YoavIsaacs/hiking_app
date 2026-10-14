@@ -35,7 +35,6 @@ e2e:
 lint:
     pre-commit run --all-files --show-diff-on-failure
 
-# Regenerate the web API client from OpenAPI (not implemented until step 0.4)
+# Regenerate api/openapi.json and the web API client (web/src/api/schema.d.ts) from FastAPI
 gen-api:
-    @echo "gen-api is not implemented until step 0.4" >&2
-    @exit 1
+    pnpm --filter web gen:api

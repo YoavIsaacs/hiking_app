@@ -35,15 +35,41 @@ function isHealth(value: unknown): value is Health {
   )
 }
 
+// Per-attempt timeout. With one retry after 1 s (queryClient.ts) the worst
+// case is 2 x 4 s + 1 s = 9 s, inside the 10 s target in UX 0.3 section 4.
+export const HEALTH_TIMEOUT_MS = 4000
+
 export async function fetchHealth(signal?: AbortSignal): Promise<Health> {
-  let response: Response
+  const controller = new AbortController()
+  let timedOut = false
+  const timer = setTimeout(() => {
+    timedOut = true
+    controller.abort()
+  }, HEALTH_TIMEOUT_MS)
+  const onCallerAbort = (): void => controller.abort()
+  if (signal?.aborted) controller.abort()
+  else signal?.addEventListener('abort', onCallerAbort, { once: true })
+
   try {
-    response = await fetch(
-      `${getApiBaseUrl()}/health`,
-      signal ? { signal } : {},
-    )
+    return await requestHealth(controller.signal)
   } catch (cause) {
     if (signal?.aborted) throw cause
+    if (timedOut)
+      throw new ApiError('network', 'The API did not respond in time')
+    throw cause
+  } finally {
+    clearTimeout(timer)
+    signal?.removeEventListener('abort', onCallerAbort)
+  }
+}
+
+async function requestHealth(signal: AbortSignal): Promise<Health> {
+  let response: Response
+  try {
+    response = await fetch(`${getApiBaseUrl()}/health`, { signal })
+  } catch (cause) {
+    // An abort (caller or timeout) is classified by fetchHealth.
+    if (signal.aborted) throw cause
     throw new ApiError('network', 'Could not reach the API')
   }
   if (!response.ok) {

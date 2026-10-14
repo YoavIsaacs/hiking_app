@@ -6,9 +6,9 @@ const body = { status: 'ok', version: '1', git_sha: 'abc', env: 'test' }
 function hangingFetch(): void {
   vi.stubGlobal(
     'fetch',
-    (_url: string, init: RequestInit) =>
+    (request: Request) =>
       new Promise((_resolve, reject) => {
-        init.signal?.addEventListener('abort', () =>
+        request.signal.addEventListener('abort', () =>
           reject(new DOMException('aborted', 'AbortError')),
         )
       }),

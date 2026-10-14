@@ -17,6 +17,8 @@ export default defineConfig({
         'src/test/**',
         'src/main.tsx',
         'src/vite-env.d.ts',
+        // Compile-time check only; never executed, so it has no coverage.
+        'src/api/__typecheck__.ts',
       ],
       thresholds: { lines: 80, statements: 80, functions: 80, branches: 80 },
     },

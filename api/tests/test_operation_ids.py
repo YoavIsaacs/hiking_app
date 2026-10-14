@@ -6,7 +6,7 @@ from typing import Any
 
 import pytest
 from fastapi import APIRouter, FastAPI
-from fastapi.routing import APIRoute
+from fastapi.routing import APIRoute, iter_route_contexts
 
 from app.config import Settings
 from app.main import create_app
@@ -197,8 +197,19 @@ def test_create_app_rejects_a_route_with_a_name_override(
 def test_every_route_in_the_real_app_uses_the_generated_operation_id(
     settings: Settings,
 ) -> None:
-    routes = [r for r in create_app(settings).routes if isinstance(r, APIRoute)]
-    assert routes, "the real app exposes no API routes"
-    for route in routes:
+    # include_router leaves only placeholders in app.routes; expand them with the
+    # include context applied so unique_id is the effective one.
+    contexts = [
+        c
+        for c in iter_route_contexts(create_app(settings).routes)
+        if isinstance(c.original_route, APIRoute)
+    ]
+    assert contexts, "the real app exposes no API routes"
+    seen: set[tuple[str, str]] = set()
+    for context in contexts:
+        route = context.original_route
+        assert isinstance(route, APIRoute)
         assert route.operation_id is None, route.path
-        assert route.unique_id == operation_id(route), route.path
+        assert context.unique_id == operation_id(route), route.path
+        seen.add((route.path, context.unique_id))
+    assert ("/health", "getHealth") in seen

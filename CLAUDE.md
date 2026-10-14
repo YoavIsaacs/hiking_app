@@ -87,7 +87,11 @@ Run the gates for the area you touched before you report back.
 - Work happens on the step branch the tech lead created: `step/<id>-<slug>` (e.g. `step/0.2-fastapi-skeleton`). Never commit to `main`.
 - Conventional Commits (`feat(api): …`, `test(web): …`, `ci: …`, `docs(adr): …`). Small commits, each with passing gates.
 - Only the tech lead pushes and opens PRs. Nobody force-pushes, rewrites shared history, or merges — the manager merges.
+- Stage by path, only files you own or were told to change. Never run `git stash`, `git add -A`/`git add .`,
+  or formatters/fixers over files you don't own.
 - Never commit secrets, `.env*` files, or credentials. If a task seems to need one, stop and report.
+  The only exception: `web/.env.development` and `web/.env.production`, which hold public `VITE_*` values only
+  (they ship in the bundle, so they must never contain a secret).
 
 ## Handoffs
 

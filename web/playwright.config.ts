@@ -3,7 +3,17 @@ import { API_URL } from './e2e/constants.js'
 
 // The API only allows CORS from http://localhost:5173 (api/app/config.py), so
 // the web origin is pinned to that port and must not drift (strictPort).
-const WEB_URL = 'http://localhost:5173'
+const LOCAL_WEB_URL = 'http://localhost:5173'
+
+// Live mode: set E2E_BASE_URL (web) and E2E_API_URL (API, read in e2e/constants.ts)
+// to run the same specs against a deployment, e.g. the post-deploy smoke:
+//   E2E_BASE_URL=https://<project>.web.app E2E_API_URL=https://<api> pnpm --filter web e2e
+// No local servers are started in that mode. All three projects run.
+const LIVE_URL = process.env.E2E_BASE_URL
+if (LIVE_URL && !process.env.E2E_API_URL) {
+  throw new Error('E2E_BASE_URL is set but E2E_API_URL is not')
+}
+const WEB_URL = LIVE_URL ?? LOCAL_WEB_URL
 
 export default defineConfig({
   testDir: 'e2e',
@@ -19,24 +29,26 @@ export default defineConfig({
     { name: 'pixel-7', use: { ...devices['Pixel 7'] } },
     { name: 'iphone-14', use: { ...devices['iPhone 14'] } },
   ],
-  webServer: [
-    {
-      // create_app is a factory; there is no module-level `app`.
-      command:
-        'uv run --frozen uvicorn app.main:create_app --factory --port 8000',
-      cwd: '../api',
-      url: `${API_URL}/health`,
-      reuseExistingServer: !process.env.CI,
-      timeout: 120_000,
-    },
-    {
-      // Dev server: no build step, so the run stays fast and starts the same
-      // way on Windows and Linux. A production-build check belongs to CI.
-      command: 'pnpm exec vite --host localhost --port 5173 --strictPort',
-      url: WEB_URL,
-      env: { VITE_API_URL: API_URL },
-      reuseExistingServer: !process.env.CI,
-      timeout: 120_000,
-    },
-  ],
+  webServer: LIVE_URL
+    ? undefined
+    : [
+        {
+          // create_app is a factory; there is no module-level `app`.
+          command:
+            'uv run --frozen uvicorn app.main:create_app --factory --port 8000',
+          cwd: '../api',
+          url: `${API_URL}/health`,
+          reuseExistingServer: !process.env.CI,
+          timeout: 120_000,
+        },
+        {
+          // Dev server: no build step, so the run stays fast and starts the same
+          // way on Windows and Linux. A production-build check belongs to CI.
+          command: 'pnpm exec vite --host localhost --port 5173 --strictPort',
+          url: WEB_URL,
+          env: { VITE_API_URL: API_URL },
+          reuseExistingServer: !process.env.CI,
+          timeout: 120_000,
+        },
+      ],
 })

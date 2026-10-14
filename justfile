@@ -12,7 +12,7 @@ install:
 
 # Run the API with auto-reload on http://127.0.0.1:8000
 dev-api:
-    cd api && uv run --frozen uvicorn app.main:app --reload
+    cd api && uv run --frozen uvicorn app.main:create_app --factory --reload
 
 # Run the web app on http://localhost:5173
 dev-web:

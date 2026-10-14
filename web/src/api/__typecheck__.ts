@@ -38,13 +38,15 @@ export const contractCalls = {
 
 // Field by field: each entry is `true` only if the generated type matches
 // exactly, so a rename, removal, addition or retype breaks `tsc`.
-type Health = NonNullable<
-  Awaited<ReturnType<(typeof contractCalls)['/health']['get']>>
+// Generic helper only; it names no API type.
+type CallResult<F extends () => Promise<unknown>> = NonNullable<
+  Awaited<ReturnType<F>>
 >
+type ProbeFn = (typeof contractCalls)['/health']['get']
 export const healthFieldChecks: [
-  Equal<Health['status'], 'ok'>,
-  Equal<Health['version'], string>,
-  Equal<Health['git_sha'], string>,
-  Equal<Health['env'], string>,
-  Equal<keyof Health, 'status' | 'version' | 'git_sha' | 'env'>,
+  Equal<CallResult<ProbeFn>['status'], 'ok'>,
+  Equal<CallResult<ProbeFn>['version'], string>,
+  Equal<CallResult<ProbeFn>['git_sha'], string>,
+  Equal<CallResult<ProbeFn>['env'], string>,
+  Equal<keyof CallResult<ProbeFn>, 'status' | 'version' | 'git_sha' | 'env'>,
 ] = [true, true, true, true, true]

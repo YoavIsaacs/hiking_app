@@ -38,7 +38,39 @@ describe('fetchHealth classification (UX §4 error causes)', () => {
     expect(await failure()).toMatchObject({ kind: 'network' })
   })
 
+  it('rejects with kind "http" 500 for an HTML error page', async () => {
+    server.use(
+      http.get(
+        HEALTH,
+        () =>
+          new HttpResponse('<html>boom</html>', {
+            status: 500,
+            headers: { 'Content-Type': 'text/html' },
+          }),
+      ),
+    )
+    const err = await failure()
+    expect(err).toBeInstanceOf(ApiError)
+    expect(err).toMatchObject({ kind: 'http', status: 500 })
+  })
+
+  it('rejects with kind "http" 502 for a JSON error body', async () => {
+    server.use(
+      http.get(HEALTH, () =>
+        HttpResponse.json({ detail: 'bad gateway' }, { status: 502 }),
+      ),
+    )
+    expect(await failure()).toMatchObject({ kind: 'http', status: 502 })
+  })
+
   it.each([
+    ['an empty body', () => new HttpResponse('', { status: 200 })],
+    ['a 204 no-content', () => new HttpResponse(null, { status: 204 })],
+    ['JSON null', () => HttpResponse.json(null)],
+    [
+      'an HTML page',
+      () => new HttpResponse('<html>hi</html>', { status: 200 }),
+    ],
     ['not JSON', () => new HttpResponse('<html></html>')],
     [
       'missing version',
@@ -53,7 +85,7 @@ describe('fetchHealth classification (UX §4 error causes)', () => {
       () => HttpResponse.json({ ...validHealth, version: 3 }),
     ],
   ])(
-    'rejects with kind "invalid" for a 200 body that is %s',
+    'rejects with kind "invalid" for a 2xx response that is %s',
     async (_name, resp) => {
       server.use(http.get(HEALTH, resp))
       expect(await failure()).toMatchObject({ kind: 'invalid' })

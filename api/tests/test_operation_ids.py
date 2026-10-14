@@ -5,7 +5,7 @@ from collections.abc import Callable
 from typing import Any
 
 import pytest
-from fastapi import FastAPI
+from fastapi import APIRouter, FastAPI
 from fastapi.routing import APIRoute
 
 from app.config import Settings
@@ -160,3 +160,45 @@ def test_every_operation_in_the_real_app_schema_is_camel_case_and_unique(
 def test_health_get_operation_id_is_get_health(settings: Settings) -> None:
     schema = create_app(settings).openapi()
     assert schema["paths"]["/health"]["get"]["operationId"] == "getHealth"
+
+
+def _app_with_extra_route(
+    monkeypatch: pytest.MonkeyPatch, settings: Settings, **route_kwargs: Any
+) -> None:
+    """Make create_app include an extra route, via the module it really includes."""
+    from app.routers import health
+
+    extra = APIRouter()
+
+    def get_thing() -> dict[str, str]:
+        return {}
+
+    extra.add_api_route("/thing", get_thing, methods=["GET"], **route_kwargs)
+    extra.include_router(health.router)
+    monkeypatch.setattr(health, "router", extra)
+
+
+def test_create_app_rejects_a_route_with_a_hand_set_operation_id(
+    monkeypatch: pytest.MonkeyPatch, settings: Settings
+) -> None:
+    _app_with_extra_route(monkeypatch, settings, operation_id="getThing")
+    with pytest.raises(OperationIdError, match="operation_id"):
+        create_app(settings)
+
+
+def test_create_app_rejects_a_route_with_a_name_override(
+    monkeypatch: pytest.MonkeyPatch, settings: Settings
+) -> None:
+    _app_with_extra_route(monkeypatch, settings, name="other_name")
+    with pytest.raises(OperationIdError, match="name"):
+        create_app(settings)
+
+
+def test_every_route_in_the_real_app_uses_the_generated_operation_id(
+    settings: Settings,
+) -> None:
+    routes = [r for r in create_app(settings).routes if isinstance(r, APIRoute)]
+    assert routes, "the real app exposes no API routes"
+    for route in routes:
+        assert route.operation_id is None, route.path
+        assert route.unique_id == operation_id(route), route.path

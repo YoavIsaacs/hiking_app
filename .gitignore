@@ -15,6 +15,7 @@ htmlcov/
 .coverage
 .coverage.*
 coverage.xml
+coverage/
 
 # Logs
 *.log
@@ -28,6 +29,9 @@ pnpm-debug.log*
 # Environment files
 .env*
 !.env.example
+# Public VITE_* values only (they ship in the bundle); never put a secret here.
+!web/.env.development
+!web/.env.production
 .envrc
 
 # IDE / OS

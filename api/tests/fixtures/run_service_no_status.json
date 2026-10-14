@@ -1,0 +1,6 @@
+{
+  "apiVersion": "serving.knative.dev/v1",
+  "kind": "Service",
+  "metadata": {"name": "hike-api"},
+  "spec": {"traffic": [{"latestRevision": true, "percent": 100}]}
+}

@@ -1,0 +1,24 @@
+{
+  "apiVersion": "serving.knative.dev/v1",
+  "kind": "Service",
+  "metadata": {"name": "hike-api", "namespace": "123456789012"},
+  "spec": {
+    "traffic": [
+      {"revisionName": "hike-api-00007-abc", "percent": 100},
+      {"revisionName": "hike-api-00008-def", "tag": "candidate"}
+    ]
+  },
+  "status": {
+    "url": "https://hike-api-123456789012.me-west1.run.app",
+    "latestReadyRevisionName": "hike-api-00008-def",
+    "latestCreatedRevisionName": "hike-api-00008-def",
+    "traffic": [
+      {"revisionName": "hike-api-00007-abc", "percent": 100},
+      {
+        "revisionName": "hike-api-00008-def",
+        "tag": "candidate",
+        "url": "https://candidate---hike-api-123456789012.me-west1.run.app"
+      }
+    ]
+  }
+}

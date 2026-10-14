@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test'
 
-const API_URL = 'http://localhost:8000'
+import { API_URL } from './constants.js'
 
 test('home page shows the API version from the real /health (UX AC 12)', async ({
   page,

@@ -1,16 +1,18 @@
 import { defineConfig, devices } from '@playwright/test'
+import { API_URL } from './e2e/constants.js'
 
 // The API only allows CORS from http://localhost:5173 (api/app/config.py), so
 // the web origin is pinned to that port and must not drift (strictPort).
 const WEB_URL = 'http://localhost:5173'
-const API_URL = 'http://localhost:8000'
 
 export default defineConfig({
   testDir: 'e2e',
   fullyParallel: true,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 2 : 0,
-  reporter: [['html', { open: 'never' }]],
+  reporter: process.env.CI
+    ? [['github'], ['html', { open: 'never' }]]
+    : [['html', { open: 'never' }]],
   use: { baseURL: WEB_URL, trace: 'on-first-retry' },
   projects: [
     { name: 'desktop-chromium', use: { ...devices['Desktop Chrome'] } },
@@ -20,7 +22,8 @@ export default defineConfig({
   webServer: [
     {
       // create_app is a factory; there is no module-level `app`.
-      command: 'uv run uvicorn app.main:create_app --factory --port 8000',
+      command:
+        'uv run --frozen uvicorn app.main:create_app --factory --port 8000',
       cwd: '../api',
       url: `${API_URL}/health`,
       reuseExistingServer: !process.env.CI,

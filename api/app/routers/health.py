@@ -14,6 +14,7 @@ class HealthResponse(BaseModel):
     version: str
     git_sha: str
     env: str
+    region: str = "contract-break-probe"
 
 
 @router.get("/health", response_model=HealthResponse)

@@ -1,0 +1,155 @@
+name: Deploy API
+
+# ADR 0002 section 4: build once, deploy with no traffic, smoke the candidate,
+# promote, smoke the live service, and roll back automatically if the live check fails.
+# Every decision (versions, revisions, URLs, smoke) lives in api/tools/deploy.py.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "api/**"
+      - ".github/workflows/deploy-api.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-api
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: deploy-api
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    # The environment admits only main and gives the OIDC subject
+    # repo:<owner>/<repo>:environment:production that api-deploy trusts.
+    environment: production
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+      REGION: ${{ vars.GCP_REGION }}
+      RUNTIME_SA: ${{ vars.API_RUNTIME_SA }}
+      SERVICE: hike-api
+      DEPLOY_TOOL: uv run --frozen --directory api python -m tools.deploy
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: astral-sh/setup-uv@v7
+        with:
+          python-version: "3.12"
+
+      - name: Authenticate to Google Cloud (WIF, no keys)
+        uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
+          service_account: ${{ vars.API_DEPLOY_SA }}
+
+      - uses: google-github-actions/setup-gcloud@v3
+
+      - name: Read API version
+        id: version
+        run: |
+          VERSION=$($DEPLOY_TOOL version)
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Record the serving revision
+        id: before
+        run: |
+          if ! gcloud run services describe "$SERVICE" --region="$REGION" --project="$PROJECT_ID" \
+            --format=json > "$RUNNER_TEMP/before.json"; then
+            echo "::error::Service $SERVICE not found: run the runbook bootstrap step first"
+            exit 1
+          fi
+          $DEPLOY_TOOL serving --service-json "$RUNNER_TEMP/before.json" >> "$GITHUB_OUTPUT"
+
+      - name: Build and push image
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          IMAGE="$REGION-docker.pkg.dev/$PROJECT_ID/hike/api:$GITHUB_SHA"
+          echo "IMAGE=$IMAGE" >> "$GITHUB_ENV"
+          gcloud auth configure-docker "$REGION-docker.pkg.dev" --quiet
+          docker build api --tag "$IMAGE" \
+            --build-arg "GIT_SHA=$GITHUB_SHA" --build-arg "VERSION=$VERSION"
+          docker push "$IMAGE"
+
+      - name: Deploy candidate (no traffic)
+        run: |
+          gcloud run deploy "$SERVICE" \
+            --image="$IMAGE" \
+            --project="$PROJECT_ID" \
+            --region="$REGION" \
+            --service-account="$RUNTIME_SA" \
+            --no-traffic --tag=candidate \
+            --min-instances=0 --max-instances=3 \
+            --memory=512Mi --cpu=1 --concurrency=80 --cpu-boost \
+            --no-invoker-iam-check \
+            --set-env-vars="HIKE_ENV=production,HIKE_LOG_LEVEL=INFO,HIKE_CORS_ORIGINS=[],HIKE_CORS_FIREBASE_SITE=$PROJECT_ID" \
+            --quiet
+
+      - name: Locate the candidate
+        id: after
+        run: |
+          gcloud run services describe "$SERVICE" --region="$REGION" --project="$PROJECT_ID" \
+            --format=json > "$RUNNER_TEMP/after.json"
+          $DEPLOY_TOOL tagged --service-json "$RUNNER_TEMP/after.json" --tag candidate >> "$GITHUB_OUTPUT"
+
+      - name: Smoke the candidate
+        env:
+          CANDIDATE_URL: ${{ steps.after.outputs.candidate_url }}
+        run: |
+          $DEPLOY_TOOL smoke --url "$CANDIDATE_URL" --expected-sha "$GITHUB_SHA" \
+            --origin "https://$PROJECT_ID.web.app"
+
+      - name: Promote the candidate to 100% traffic
+        id: promote
+        env:
+          CANDIDATE_REVISION: ${{ steps.after.outputs.candidate_revision }}
+        run: |
+          gcloud run services update-traffic "$SERVICE" --region="$REGION" --project="$PROJECT_ID" \
+            --to-revisions="$CANDIDATE_REVISION=100" --quiet
+
+      - name: Smoke the live service
+        run: |
+          LIVE_URL=$(gcloud run services describe "$SERVICE" --region="$REGION" --project="$PROJECT_ID" \
+            --format='value(status.url)')
+          $DEPLOY_TOOL smoke --url "$LIVE_URL" --expected-sha "$GITHUB_SHA" \
+            --origin "https://$PROJECT_ID.web.app"
+
+      - name: Roll back to the previous revision
+        if: failure() && steps.promote.outcome == 'success'
+        env:
+          PREVIOUS_REVISION: ${{ steps.before.outputs.previous_revision }}
+        run: |
+          gcloud run services update-traffic "$SERVICE" --region="$REGION" --project="$PROJECT_ID" \
+            --to-revisions="$PREVIOUS_REVISION=100" --quiet
+
+      - name: Traffic table and summary
+        if: always()
+        env:
+          CANDIDATE_REVISION: ${{ steps.after.outputs.candidate_revision }}
+          CANDIDATE_URL: ${{ steps.after.outputs.candidate_url }}
+          PREVIOUS_REVISION: ${{ steps.before.outputs.previous_revision }}
+          JOB_STATUS: ${{ job.status }}
+        run: |
+          {
+            echo "## Deploy API"
+            echo
+            echo "- Result: $JOB_STATUS"
+            echo "- Commit: $GITHUB_SHA"
+            echo "- Previous revision: ${PREVIOUS_REVISION:-n/a}"
+            echo "- Candidate revision: ${CANDIDATE_REVISION:-n/a}"
+            echo "- Candidate URL: ${CANDIDATE_URL:-n/a}"
+            echo
+            echo "### Traffic (status.traffic)"
+            echo '```'
+            gcloud run services describe "$SERVICE" --region="$REGION" --project="$PROJECT_ID" \
+              --format='yaml(status.traffic)' \
+              || echo "(could not read the service)"
+            echo '```'
+          } | tee -a "$GITHUB_STEP_SUMMARY"

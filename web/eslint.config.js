@@ -7,7 +7,15 @@ import { defineConfig } from 'eslint/config'
 import prettier from 'eslint-config-prettier'
 
 export default defineConfig(
-  { ignores: ['dist', 'coverage'] },
+  {
+    ignores: [
+      'dist',
+      'coverage',
+      'playwright-report',
+      'test-results',
+      'blob-report',
+    ],
+  },
   {
     files: ['**/*.{ts,tsx}'],
     extends: [

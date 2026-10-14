@@ -1,4 +1,4 @@
-import type { ReactNode, Ref } from 'react'
+import type { JSX, Ref } from 'react'
 
 export interface ErrorStateProps {
   title: string
@@ -14,7 +14,7 @@ export function ErrorState({
   headingLevel = 3,
   action,
   headingRef,
-}: ErrorStateProps): ReactNode {
+}: ErrorStateProps): JSX.Element {
   const Heading = `h${headingLevel}` as const
   return (
     <div role="alert">

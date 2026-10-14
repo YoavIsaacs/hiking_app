@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query'
-import { useRef } from 'react'
+import { useRef, type JSX } from 'react'
 import { ApiError, fetchHealth } from '../api/client'
 import { ErrorState } from '../components/ErrorState'
 
@@ -13,7 +13,7 @@ function errorMessage(error: unknown): string {
   return "Couldn't connect to the API. Check your connection, or that the API is running, then try again."
 }
 
-export function HomePage(): React.JSX.Element {
+export function HomePage(): JSX.Element {
   const query = useQuery({
     queryKey: ['health'],
     queryFn: ({ signal }) => fetchHealth(signal),

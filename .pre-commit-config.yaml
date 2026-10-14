@@ -29,7 +29,7 @@ repos:
         pass_filenames: false
       - id: mypy
         name: mypy
-        entry: uv run --frozen --directory api mypy app tests
+        entry: uv run --frozen --directory api mypy app tools tests
         language: system
         files: ^api/
         pass_filenames: false

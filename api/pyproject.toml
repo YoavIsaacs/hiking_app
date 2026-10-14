@@ -16,7 +16,7 @@ testpaths = ["tests"]
 pythonpath = ["."]
 # --allow-hosts=127.0.0.1: Starlette's TestClient needs a loopback socketpair on Windows;
 # outbound network stays blocked.
-addopts = "--cov=app --cov-fail-under=85 --disable-socket --allow-hosts=127.0.0.1"
+addopts = "--cov=app --cov=tools --cov-fail-under=85 --disable-socket --allow-hosts=127.0.0.1"
 filterwarnings = [
     "error",
     # Starlette deprecates httpx for TestClient in favour of httpx2, which would be an unapproved new dependency.
@@ -30,7 +30,7 @@ target-version = "py312"
 select = ["E", "F", "I", "UP", "B", "SIM"]
 
 [tool.ruff.lint.isort]
-known-first-party = ["app"]
+known-first-party = ["app", "tools"]
 
 [tool.mypy]
 strict = true

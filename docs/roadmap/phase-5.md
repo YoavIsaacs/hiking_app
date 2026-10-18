@@ -1,95 +1,108 @@
-# Phase 5 — Native features and release checklist
+# Phase 5 — Migrate to React Native checklist
 
-## 5.1 Evening-before reminder
+No backend endpoints change in this phase. Every item here is frontend, shared code or CI.
 
-**Backend**
+## 5.0 Extract shared code
 
-- [ ] `devices` table: `token`, `user_id`, `platform`, `created_at`, `last_seen_at`
-- [ ] `trips.reminder_at` column (nullable) + Alembic migration
-- [ ] `POST /v1/devices` — register or refresh an Expo push token
-- [ ] `DELETE /v1/devices/{token}` — unregister (on sign-out)
-- [ ] `PUT /v1/trips/{trip_id}/reminder` — `{enabled, time}`; default 19:00 local the day before
-- [ ] `POST /internal/jobs/refresh-reminders` — only accepts Cloud Scheduler's OIDC token for its service account
-- [ ] Job logic: find trips with `reminder_at` in the window → re-run checklist → diff with the stored one → store the new one
-- [ ] Send through Expo's push API only if the diff is non-empty; message names what changed ("Rain now 70% — rain shell added")
-- [ ] Handle Expo push receipts; delete tokens reported as `DeviceNotRegistered`
-- [ ] Cloud Scheduler job every 15 minutes, created by Terraform or a documented `gcloud` script in `infra/`
-- [ ] Tests: changed list → push; unchanged → no push; deleted trip → skipped; invalid token → removed; request without OIDC → 401
+- [ ] Create `packages/core` with its own `package.json`, `tsconfig.json` (no DOM lib), Vitest config
+- [ ] Move: generated `schema.d.ts` and the openapi-fetch client (base URL injected, not read from `import.meta.env`)
+- [ ] Move: TanStack Query hooks (`useParseRoute`, `useChecklist`, `useTrips`, `useRefreshTrip`, `useFeed`, `useHike`, `usePlanFromHike`, `useRating`, etc.)
+- [ ] Move: the sync engine (3.4) and the auth-state store, with the Firebase SDK behind an injected `AuthClient` interface
+- [ ] Move: `TripRepository` interface and its contract test suite
+- [ ] Move: `diffChecklists`, formatters (distance, duration, temperature), sunset-margin logic, Zustand trip store
+- [ ] Update `gen:api` to write into `packages/core`
+- [ ] Web app imports everything from `@hikeprep/core`
+- [ ] ESLint in core: `no-restricted-globals` for `window`, `document`, `localStorage`; `no-restricted-imports` for `react-dom`
+- [ ] TypeScript `lib: ["ES2022"]` only in core, so DOM types fail to compile
+- [ ] CI: `core-test` job (lint, `tsc`, Vitest, coverage ≥ 85%)
+- [ ] Verify: full web suite and Playwright green after the move
 
-**Mobile**
+## 5.1 Expo app scaffold
 
-- [ ] expo-notifications: request permission when the first reminder is enabled, not at launch
-- [ ] Register the push token after sign-in; refresh on app start
-- [ ] Local notification scheduled as a fallback for signed-out users (no forecast refresh)
-- [ ] Tapping a notification opens that trip
-- [ ] Reminder toggle and time on the trip screen
-- [ ] Tests (module mocked): schedule, cancel on trip delete, reschedule on date change
-- [ ] Verify: reminder arrives within ±5 min; push only when the list changed in 5 of 5 scenarios
+- [ ] `pnpm create expo-app mobile` with the TypeScript template
+- [ ] Expo Router with routes: `(tabs)/index` (plan), `(tabs)/trips`, `(tabs)/feed`, `trip/[id]`, `hike/[id]`, `settings`
+- [ ] Metro configured for the pnpm monorepo (watch folders, `node-linker` settings as Expo's monorepo guide describes)
+- [ ] `app.config.ts` with build profiles: development, preview, production; `API_URL` per profile
+- [ ] Bundle identifier / package name chosen (e.g. `com.yourname.hikeprep`)
+- [ ] App icon and splash screen
+- [ ] Jest (jest-expo preset) + React Native Testing Library + MSW for React Native
+- [ ] Test: home screen renders the API version from mocked `/health`
+- [ ] CI: `mobile-test` job — ESLint, `tsc`, Jest, `npx expo-doctor`
+- [ ] Verify: Expo Go on your phone shows the deployed API version
 
-## 5.2 Map view (optional)
+## 5.2 Data layer
 
-- [ ] Choose react-native-maps or MapLibre (MapLibre if 5.3 offline tiles are planned)
-- [ ] Route polyline from `points`; markers for start, high point, end, water sources
-- [ ] Fit-to-route on open; follow-user button if location permission given
-- [ ] OSM / tile provider attribution on the map
-- [ ] Test: route → map coordinates conversion
-- [ ] Maestro: open map for a fixture trip, screenshot
-- [ ] Verify: renders for all 10 fixtures; ready in < 2 s
+- [ ] TanStack Query provider with React Native focus and online managers (AppState, NetInfo)
+- [ ] expo-sqlite implementation of `TripRepository` with the same schema as Dexie's v2
+- [ ] SQLite migrations runner (version table)
+- [ ] Run core's `TripRepository` contract tests against the SQLite implementation
+- [ ] Persist the trip store with the SQLite repository
+- [ ] Verify: 0 changes to core hooks were needed; trips survive app restarts
 
-## 5.3 Offline map tiles (optional)
+## 5.3 Plan screen
 
-- [ ] Pick a tile source whose terms allow offline download (check before building)
-- [ ] On trip save: compute the route bounding box + margin, zoom range, estimated size
-- [ ] Download the offline pack with progress; Wi-Fi-only option
-- [ ] Delete packs when a trip is deleted; storage usage shown in settings
-- [ ] Tests: bounding box and size estimate
-- [ ] Maestro: airplane mode → open saved trip → map visible
-- [ ] Verify: ≤ 50 MB for a typical day hike
+- [ ] expo-document-picker with `type: '*/*'`, `copyToCacheDirectory: true`
+- [ ] Upload the picked file to `POST /v1/routes/parse` as multipart from its local URI
+- [ ] Native date picker (limited range) and time picker (@react-native-community/datetimepicker)
+- [ ] Options toggles; keyboard-safe layout
+- [ ] Same error messages as the web app (shared mapping from core)
+- [ ] Component tests for validation and errors
+- [ ] `mobile/.maestro/plan_flow.yaml`: pick fixture → date → build → checklist visible
+- [ ] Push fixture GPX files onto the emulator in the Maestro setup step
+- [ ] CI: `e2e-mobile` workflow — build a debug APK, start an Android emulator (reactivecircus/android-emulator-runner), run Maestro, upload recordings on failure
+- [ ] Verify on a real iPhone and Android: pick from Files and Downloads; all 10 fixtures accepted
 
-## 5.4 On-trail pace tracking (optional)
+## 5.4 Route summary screen
 
-- [ ] expo-location with background permission; expo-task-manager background task
-- [ ] Snap each GPS fix to the route; compute distance done and remaining
-- [ ] `projectFinish(progress, plan)` in `packages/core` (pure, testable)
-- [ ] Local notification if projected finish moves past sunset (once, then every 30 min at most)
-- [ ] Start/stop tracking button; persistent notification while tracking (Android requirement)
-- [ ] Clear permission explanation screens; works with "while using" only, just without background alerts
-- [ ] Tests: projection on recorded tracks — on pace, behind, stopped, off-route
-- [ ] Tests: permission denied path
-- [ ] Verify: correct alerts in 3 of 3 recorded-track simulations; battery ≤ 5% per hour
+- [ ] Stat cards, finish-vs-sunset margin, warnings banner
+- [ ] Elevation chart (victory-native or react-native-gifted-charts; pick one)
+- [ ] Weather strip as a horizontal list
+- [ ] Component tests: renders all fixture responses
+- [ ] Test: numbers match the web app's for each fixture (same formatter from core)
+- [ ] Maestro screenshot step for 2 fixtures
+- [ ] Verify: 60 fps scrolling (React Native performance monitor)
 
-## 5.5 Release pipeline and beta
+## 5.5 Checklist screen
 
-- [ ] Apple Developer Program and Google Play Console accounts
-- [ ] App Store Connect app record; Google Play app record
-- [ ] EAS credentials (signing) managed by EAS
-- [ ] Version source: git tag → `version`; `autoIncrement` for build numbers
-- [ ] Sentry React Native SDK; source maps and debug symbols uploaded during EAS Build
-- [ ] EAS Update channels: `preview`, `production`; runtime version policy set
-- [ ] `.github/workflows/release-mobile.yml` on `v*` tags: `mobile-test` → `e2e-mobile` → `eas build --profile production --platform all` → `eas submit` to TestFlight and Play internal
-- [ ] `.github/workflows/ota.yml`: JS-only fix → `eas update --channel production`, gated on tests
-- [ ] TestFlight external testers group and Play internal testing list (≥ 5 people)
-- [ ] Verify: a tag produces both builds with 0 manual steps
-- [ ] Verify: 2 weeks of beta; crash-free sessions ≥ 99% in Sentry
+- [ ] `SectionList` grouped by category
+- [ ] Item row: checkbox, name, quantity, priority badge, reason, your gear name if mapped
+- [ ] Haptic feedback on tick (expo-haptics)
+- [ ] "More ideas" collapsed section
+- [ ] Progress header
+- [ ] Tests: tick/untick, counts, every item has a reason
+- [ ] `mobile/.maestro/ticks_persist.yaml`: tick 3 → kill app → relaunch → 3 still ticked
+- [ ] Verify: 40-item list at 60 fps; tick < 100 ms
 
-## 5.6 Store preparation
+## 5.6 Trip migration from the PWA
 
-- [ ] Privacy policy page (hosted on Firebase Hosting): what's collected (account, trips, location if tracking), why, retention, deletion
-- [ ] In-app account deletion (required by Apple when accounts exist) + `DELETE /v1/me` endpoint and test
-- [ ] Apple privacy nutrition labels filled in
-- [ ] Google Play data-safety form filled in
-- [ ] Location permission usage strings (iOS `NSLocation*UsageDescription`) explaining the benefit
-- [ ] Store listing text: title, subtitle, description, keywords
-- [ ] Screenshots for required device sizes, generated by Maestro flows
-- [ ] `.github/workflows/screenshots.yml` (manual trigger) regenerates them
-- [ ] Age rating questionnaires
-- [ ] Submit to review; track rejections in `docs/store-review.md`
+- [ ] Import screen in settings: pick the PWA's JSON export
+- [ ] Validate against `export.schema.json` (shared from core)
+- [ ] Merge rule for duplicates (same trip id → newer `updatedAt` wins)
+- [ ] Signed-in users: signing in syncs their trips (3.4); the import screen is only for trips saved on a device while signed out
+- [ ] Tests: valid file, invalid file, duplicate handling, round-trip (export from web → import to native → identical)
+- [ ] Verify: 100% of your PWA trips import
 
-## 5.7 Release and PWA decision
+## 5.7 Sign-in and community screens
 
-- [ ] Production release from a tag; staged rollout on Google Play (e.g. 20% → 100%)
-- [ ] Smoke test on a store-installed build: plan → checklist → reminder
-- [ ] release-please generates the changelog; store "What's new" text from it
-- [ ] Monitor Sentry and API logs for the first week
-- [ ] `docs/decisions/0002-pwa-future.md`: keep the PWA as the web version, or retire it
-- [ ] Verify the phase exit checkpoint after the first month (crash-free ≥ 99%)
+- [ ] Native sign-in through Firebase Auth: Google, plus **Sign in with Apple** (App Store guideline 4.8 requires it when a third-party sign-in is offered)
+- [ ] FastAPI keeps verifying Firebase ID tokens; only the sign-in providers are new (enabled in the Firebase console — manager)
+- [ ] Feed tab: same cards, filters and cursor pagination as the PWA (core's `useFeed`); pull to refresh
+- [ ] Hike screen: stats, trimmed route, the author's packing list and notes, rating, "Plan this hike"
+- [ ] Publish, edit visibility and unpublish from a trip
+- [ ] Report and block from the hike screen and profile; terms shown at first sign-in
+- [ ] Account menu: profile, sign out, delete account (calls `DELETE /v1/me` from 3.3)
+- [ ] Hike links (`https://<web host>/h/{id}`) open in the app: iOS universal links + Android app links; fall back to the PWA page
+- [ ] Tests: component tests for each screen's states (loading, empty, error, signed out); sign-in with the auth module mocked
+- [ ] Maestro: open feed → open a hike → plan it → checklist visible; report a hike → confirmation shown
+- [ ] Verify: every community flow from Phase 3 has a native equivalent in the parity table
+
+## 5.8 Parity check and development build
+
+- [ ] `eas.json` with development, preview and production profiles
+- [ ] EAS development build installed on your phone
+- [ ] `docs/parity.md`: table of every PWA feature with native status
+- [ ] For every Playwright flow, a matching Maestro flow exists
+- [ ] CI: EAS preview build on merge to `main` (expo/expo-github-action with `EXPO_TOKEN` secret)
+- [ ] Make `e2e-mobile` a required check
+- [ ] Use the native app on 2 real hikes; log them in `field-notes.md`
+- [ ] Verify: parity table 100% green

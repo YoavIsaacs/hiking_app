@@ -1,7 +1,8 @@
 # Hike Prep App — project rules for every agent
 
 A mobile app that builds hike packing checklists from a GPX route and the weather forecast.
-React PWA + FastAPI first (Phases 0–3), then React Native / Expo (Phases 4–5), same FastAPI backend throughout.
+React PWA + FastAPI first (Phases 0–4, with accounts and a community feed in Phase 3), then React Native / Expo
+(Phases 5–6), same FastAPI backend throughout. Free to use; running cost $0/month unless the manager approves otherwise.
 
 Everyone in this repo — the tech lead and every subagent — follows this file. Role files in
 `.claude/agents/` add to it; they never relax it.
@@ -17,7 +18,7 @@ Everyone in this repo — the tech lead and every subagent — follows this file
 | Graphic designer | `graphic-designer` | `docs/design/`, `design/tokens.json` + generated token outputs, icons and app assets | components, layout code |
 | Backend expert | `backend-expert` | `api/` application code | `web/`, `mobile/`, CI/Docker/deploy config, QA's acceptance tests |
 | Frontend expert | `frontend-expert` | `web/` application code | `api/`, the generated `schema.d.ts` and token outputs by hand, CI config |
-| Mobile expert | `mobile-expert` | `mobile/` — **Phase 4 onward only** | `api/`, `web/` components, CI config |
+| Mobile expert | `mobile-expert` | `mobile/` — **Phase 5 onward only** | `api/`, `web/` components, CI config |
 | DevOps | `devops` | `.github/`, pre-commit, `justfile`, `api/Dockerfile`, `firebase.json`, release config, `docs/runbooks/` | application code; never runs cloud commands |
 | QA | `qa` | acceptance tests, e2e, test fixtures, coverage, checkpoint verification | application code |
 | Reviewer | `reviewer` | independent review findings (read-only) | any file |
@@ -65,7 +66,7 @@ web/                 React + Vite app (pnpm)         → frontend-expert
   src/styles/tokens.css  generated from design/tokens.json → graphic-designer
   public/icons/      app and PWA icons               → graphic-designer
   e2e/               Playwright                      → qa
-mobile/              Expo app (Phase 4+)             → mobile-expert
+mobile/              Expo app (Phase 5+)             → mobile-expert
 design/tokens.json   design token source             → graphic-designer
 .github/             CI, deploy, Dependabot          → devops
 docs/roadmap/        roadmap mirror + PROGRESS.md    → tech-lead

@@ -1,0 +1,96 @@
+# Phase 6 — Native features and release checklist
+
+## 6.1 Evening-before reminder
+
+**Backend**
+
+- [ ] `devices` table: `token`, `user_id`, `platform`, `created_at`, `last_seen_at`
+- [ ] `trips.reminder_at` column (nullable) + Alembic migration
+- [ ] `POST /v1/devices` — register or refresh an Expo push token
+- [ ] `DELETE /v1/devices/{token}` — unregister (on sign-out)
+- [ ] `PUT /v1/trips/{trip_id}/reminder` — `{enabled, time}`; default 19:00 local the day before
+- [ ] `POST /internal/jobs/refresh-reminders` — only accepts Cloud Scheduler's OIDC token for its service account
+- [ ] Job logic: find trips with `reminder_at` in the window → re-run checklist → diff with the stored one → store the new one
+- [ ] Send through Expo's push API only if the diff is non-empty; message names what changed ("Rain now 70% — rain shell added")
+- [ ] Handle Expo push receipts; delete tokens reported as `DeviceNotRegistered`
+- [ ] Cloud Scheduler job every 15 minutes, created by Terraform or a documented `gcloud` script in `infra/`
+- [ ] Tests: changed list → push; unchanged → no push; deleted trip → skipped; invalid token → removed; request without OIDC → 401
+
+**Mobile**
+
+- [ ] expo-notifications: request permission when the first reminder is enabled, not at launch
+- [ ] Register the push token after sign-in; refresh on app start
+- [ ] Local notification scheduled as a fallback for signed-out users (no forecast refresh)
+- [ ] Tapping a notification opens that trip
+- [ ] Reminder toggle and time on the trip screen
+- [ ] Tests (module mocked): schedule, cancel on trip delete, reschedule on date change
+- [ ] Verify: reminder arrives within ±5 min; push only when the list changed in 5 of 5 scenarios
+
+## 6.2 Map view (optional)
+
+- [ ] Choose react-native-maps or MapLibre (MapLibre if 6.3 offline tiles are planned)
+- [ ] Route polyline from `points`; markers for start, high point, end, water sources
+- [ ] Fit-to-route on open; follow-user button if location permission given
+- [ ] OSM / tile provider attribution on the map
+- [ ] Test: route → map coordinates conversion
+- [ ] Maestro: open map for a fixture trip, screenshot
+- [ ] Verify: renders for all 10 fixtures; ready in < 2 s
+
+## 6.3 Offline map tiles (optional)
+
+- [ ] Pick a tile source whose terms allow offline download (check before building)
+- [ ] On trip save: compute the route bounding box + margin, zoom range, estimated size
+- [ ] Download the offline pack with progress; Wi-Fi-only option
+- [ ] Delete packs when a trip is deleted; storage usage shown in settings
+- [ ] Tests: bounding box and size estimate
+- [ ] Maestro: airplane mode → open saved trip → map visible
+- [ ] Verify: ≤ 50 MB for a typical day hike
+
+## 6.4 On-trail pace tracking (optional)
+
+- [ ] expo-location with background permission; expo-task-manager background task
+- [ ] Snap each GPS fix to the route; compute distance done and remaining
+- [ ] `projectFinish(progress, plan)` in `packages/core` (pure, testable)
+- [ ] Local notification if projected finish moves past sunset (once, then every 30 min at most)
+- [ ] Start/stop tracking button; persistent notification while tracking (Android requirement)
+- [ ] Clear permission explanation screens; works with "while using" only, just without background alerts
+- [ ] Tests: projection on recorded tracks — on pace, behind, stopped, off-route
+- [ ] Tests: permission denied path
+- [ ] Verify: correct alerts in 3 of 3 recorded-track simulations; battery ≤ 5% per hour
+
+## 6.5 Release pipeline and beta
+
+- [ ] Apple Developer Program and Google Play Console accounts
+- [ ] App Store Connect app record; Google Play app record
+- [ ] EAS credentials (signing) managed by EAS
+- [ ] Version source: git tag → `version`; `autoIncrement` for build numbers
+- [ ] Sentry React Native SDK; source maps and debug symbols uploaded during EAS Build
+- [ ] EAS Update channels: `preview`, `production`; runtime version policy set
+- [ ] `.github/workflows/release-mobile.yml` on `v*` tags: `mobile-test` → `e2e-mobile` → `eas build --profile production --platform all` → `eas submit` to TestFlight and Play internal
+- [ ] `.github/workflows/ota.yml`: JS-only fix → `eas update --channel production`, gated on tests
+- [ ] TestFlight external testers group and Play internal testing list (≥ 5 people)
+- [ ] Verify: a tag produces both builds with 0 manual steps
+- [ ] Verify: 2 weeks of beta; crash-free sessions ≥ 99% in Sentry
+
+## 6.6 Store preparation
+
+- [ ] Privacy policy (from 3.9) updated for the native app: account, trips, published hikes, ratings, location if tracking; why, retention, deletion
+- [ ] In-app account deletion reachable from native settings (endpoint built in 3.3; required by Apple when accounts exist)
+- [ ] User-generated content requirements (App Store guideline 1.2, Google Play UGC policy): terms accepted before posting, report content, block users, moderation with timely action — all built in 3.9; listed with screenshots in `docs/store-review.md`
+- [ ] Apple privacy nutrition labels filled in (include public profile and published hikes)
+- [ ] Google Play data-safety form filled in
+- [ ] Location permission usage strings (iOS `NSLocation*UsageDescription`) explaining the benefit
+- [ ] Store listing text: title, subtitle, description, keywords
+- [ ] Screenshots for required device sizes, generated by Maestro flows
+- [ ] `.github/workflows/screenshots.yml` (manual trigger) regenerates them
+- [ ] Age rating questionnaires (answer the user-generated-content questions)
+- [ ] Submit to review; track rejections in `docs/store-review.md`
+
+## 6.7 Release and PWA decision
+
+- [ ] Production release from a tag; staged rollout on Google Play (e.g. 20% → 100%)
+- [ ] Smoke test on a store-installed build: plan → checklist → reminder; sign in → feed → plan a published hike
+- [ ] release-please generates the changelog; store "What's new" text from it
+- [ ] Monitor Sentry and API logs for the first week
+- [ ] `docs/decisions/0002-pwa-future.md`: keep the PWA as the web version, or retire it
+- [ ] Verify the phase exit checkpoint after the first month (crash-free ≥ 99%)

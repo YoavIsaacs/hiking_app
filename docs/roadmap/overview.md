@@ -4,23 +4,29 @@ Oct 12, 2026 · @Yoav
 
 ## Overview
 
-The app turns a hiking route and a date into a packing checklist, with a one-line reason next to every item. It starts as a React PWA on a FastAPI backend and moves to React Native (Expo) only after the PWA has been used on real hikes.
+The app turns a hiking route and a date into a packing checklist, with a one-line reason next to every item. It starts as a React PWA on a FastAPI backend, adds accounts and a community where people publish hikes with their packing lists, rate them and plan from them, and moves to React Native (Expo) only after the PWA has been used on real hikes.
 
 The guiding rule: **all the thinking lives in FastAPI.** The frontend only uploads, displays and ticks boxes, so the migration is a new UI over an unchanged API, not a rewrite.
 
-&#91;embedded content: roadmap · 6 phases, 1 decision gate\]
+&#91;embedded content: roadmap · 7 phases, 1 decision gate\]
 
-Phases 0–3 build and prove the PWA; native starts only if the gate finds a real reason for it.
+Phases 0–4 build and prove the PWA (Phase 3 adds accounts and the community); native starts only if the gate finds a real reason for it.
 
-| Layer | PWA phases (0–3) | Native phases (4–5) |
+**Free to use.** Planning, checklists, saving on your device and browsing the community need no account. An account is needed to save to the cloud, publish, rate, report and block.
+
+**Cost rule.** Running cost stays $0/month: every service must fit a free tier (Cloud Run, Firebase Hosting and Auth, a free Postgres host). A GCP card is on file with a budget alert; anything that would cost money needs the manager's approval.
+
+| Layer | PWA phases (0–4) | Native phases (5–6) |
 | --- | --- | --- |
 | Frontend | React + TypeScript + Vite, vite-plugin-pwa | React Native + TypeScript via Expo, Expo Router |
 | Backend | FastAPI + Pydantic | Same, unchanged |
 | Route parsing | gpxpy | Same |
 | Weather | Open-Meteo | Same |
 | Local storage | IndexedDB | AsyncStorage or expo-sqlite |
+| Accounts | Firebase Auth (Google) | + Sign in with Apple |
+| Database | PostgreSQL on a $0 host (chosen in 3.1), Alembic | Same |
 | Data fetching | TanStack Query + generated API client | Same |
-| CI / hosting | GitHub Actions, API on Cloud Run, web on Firebase Hosting or Vercel | + EAS Build for app binaries |
+| CI / hosting | GitHub Actions, API on Cloud Run, web on Firebase Hosting | + EAS Build for app binaries |
 
 Detailed per-step checklists, including the full API surface: Step checklists
 
@@ -205,46 +211,81 @@ Goal: an installable app that works without signal and that you actually rely on
   - **CI:** in `api-test`
   - **Checkpoint:** estimate within ±15% on the last 3 hikes
 
-## Phase 3 — Extend, then decide on native
+## Phase 3 — Accounts and community
 
-Goal: the features that make it more than a checklist, and a written go/no-go on native. Treat 3.1–3.7 as a menu; only 3.8 is required. Effort: open-ended, 2–6 weekends depending on picks.
+Goal: people sign in, keep their trips in the cloud, publish hikes with the packing list they actually used, find other people's hikes in a feed, rate them, and plan their own trip from one. Free to use; an account only for the cloud and community actions. Running cost $0. Effort: 6–8 weekends.
 
-**Exit checkpoint:** the decision document in 3.8 exists and is dated; every menu item you chose meets its checkpoint.
+**Exit checkpoint:** a second person on a second account finds your public hike in the feed, rates it, and builds their own checklist from it in ≤ 4 taps after opening it; the privacy tests pass (0 private or unlisted hikes in feed or search, 0 published points inside trimmed route ends, no email in any public response); the month's infrastructure bill is $0.00.
 
-- [ ] **3.1 Saved trips and history.** Trip list with search, and "same hike, new date" duplication.
-  - **Tests:** component tests for search and duplicate; Playwright: re-plan a saved trip
-  - **CI:** `web-test` and `e2e`
-  - **Checkpoint:** re-planning a past hike takes ≤ 3 taps
-- [ ] **3.2 Accounts and sync (optional).** Firebase Auth (Google sign-in); FastAPI verifies ID tokens; trips stored in PostgreSQL (Cloud SQL) with Alembic migrations; offline-first sync, last write wins per trip.
-  - **Tests:** API tests with mocked token verification (valid, expired, wrong project); users can't read each other's trips; sync conflict tests; migration up/down test against a Postgres service container
-  - **CI:** `api-test` gains a Postgres service container; a `migrations` job runs Alembic upgrade and downgrade on every PR
-  - **Checkpoint:** a trip created on the phone appears on the laptop in < 5 s; 10 of 10 offline-edit scenarios sync with 0 lost changes
-- [ ] **3.3 Gear inventory.** Your actual gear with weights, mapped to generic items ("rain shell" → your jacket); the checklist shows your names and total pack weight.
-  - **Tests:** mapping and fallback when no gear matches; weight totals including quantities
-  - **CI:** `api-test` and `web-test`
-  - **Checkpoint:** ≥ 80% of checklist items map to your own gear; computed pack weight within 5% of your packed bag on a scale
-- [ ] **3.4 Group profiles.** Kid (extra layers, snacks, slower pace factor), dog (water for the dog, leash, heat warning for paws), solo (share your route with someone).
-  - **Tests:** ≥ 3 tests per profile-specific rule; pace factor applied to the duration
-  - **CI:** `api-test`, inside the rules coverage gate
-  - **Checkpoint:** ≥ 3 profile-specific rules per profile, all tested
-- [ ] **3.5 Trail search from OpenStreetMap.** Search hiking route relations by name or near a location via the Overpass API; convert results into the same `RouteSummary` as GPX.
-  - **Tests:** recorded Overpass responses; conversion of relations with gaps or unordered ways
-  - **CI:** `api-test`; the weekly live-API workflow also queries Overpass once
-  - **Checkpoint:** finds ≥ 8 of 10 known hikes in your region by name; results in < 3 s
-- [ ] **3.6 Water sources.** OSM drinking-water and spring nodes within 100 m of the route; the water rule uses the longest stretch without a source.
-  - **Tests:** distance-to-route calculation; water rule with and without sources on fixture routes
-  - **CI:** `api-test`
-  - **Checkpoint:** lists the known water sources correctly on 3 routes you know
-- [ ] **3.7 API hardening.** `/v1` prefix, rate limiting (slowapi), structured JSON logs, Sentry for errors, one consistent error schema.
+- [ ] **3.1 Community design.** ADRs for auth, the database host ($0: Neon, Supabase or a Raspberry Pi, with the path to Cloud SQL), the data model, privacy and moderation; the API contract; UX and visual specs; privacy policy and terms drafts.
+  - **Tests:** none; this is design
+  - **CI:** none
+  - **Checkpoint:** ADRs accepted and dated; every Phase 3 endpoint in the contract sketch; cost at 100 users estimated at $0 with each free-tier limit and its headroom listed
+- [ ] **3.2 API hardening.** `/v1` prefix, rate limiting (slowapi) including per-user limits on writes, structured JSON logs, Sentry for errors, one consistent error schema. Moved from the old optional menu: required once the app takes user content.
   - **Tests:** rate limit returns 429 past the limit; every error type matches the schema; a load test with Locust
   - **CI:** `api-test`; a `load-test` workflow runs Locust against the PR's staging revision before merges to `main`
   - **Checkpoint:** p95 < 1 s at 20 requests/s; 0 unhandled 500s in a week of production logs
-- [ ] **3.8 Decision gate: go native?** A one-page document listing each feature you want next and whether a PWA can do it. Native is justified if ≥ 1 must-have can't be done as a PWA (e.g. background GPS, reliable iOS notifications, offline maps, a store listing).
+- [ ] **3.3 Accounts and database.** Firebase Auth (Google sign-in); FastAPI verifies ID tokens; profile with a unique handle; account deletion; terms accepted at first sign-in; PostgreSQL on the 3.1 host with Alembic migrations.
+  - **Tests:** API tests with mocked token verification (valid, expired, wrong project, missing); handle validation; account deletion removes every row the user owns; migration up/down test against a Postgres service container
+  - **CI:** `api-test` gains a Postgres service container; a `migrations` job runs Alembic upgrade and downgrade on every PR that touches migrations
+  - **Checkpoint:** sign-in in ≤ 3 taps; deleting an account leaves 0 of its rows; a backup restores into a clean database
+- [ ] **3.4 Cloud trips and sync.** Trips stored per user; offline-first sync, last write wins per trip; trips saved on a device before signing in can be uploaded.
+  - **Tests:** users can't read each other's trips; sync conflict tests
+  - **CI:** `api-test`, `web-test`, `migrations`
+  - **Checkpoint:** a trip created on the phone appears on the laptop in < 5 s; 10 of 10 offline-edit scenarios sync with 0 lost changes
+- [ ] **3.5 Publish a hike.** A snapshot of a saved trip (stats, trimmed route, the packing list as packed, the author's feedback) as private, unlisted or public; route ends trimmed by a pure function.
+  - **Tests:** no published point within the trim distance of the true start or end on all fixtures, plus a Hypothesis property test; visibility rules (private 404, unlisted by link only); only the author edits or unpublishes
+  - **CI:** `api-test`, `web-test`, `e2e`
+  - **Checkpoint:** publishing from a saved trip in ≤ 3 taps; 0 published points inside trimmed ends on all 10 fixtures
+- [ ] **3.6 Feed and hike page.** Public feed with cursor pagination, area and length filters, recent or top; a public hike page and profile page viewable signed out.
+  - **Tests:** pagination with no duplicates or gaps under inserts; filters; private, unlisted, hidden and blocked content never appears; component tests; Playwright: signed out, feed → hike page
+  - **CI:** `api-test`, `web-test`, `e2e` (axe on the new screens)
+  - **Checkpoint:** feed p95 < 500 ms with 1,000 seeded hikes; first feed page in < 2 s on your phone over mobile data
+- [ ] **3.7 Ratings.** 1–5 stars, one per user per hike, not on your own; average and count; "top" sorted by a Bayesian average.
+  - **Tests:** upsert, own-hike 403, signed-out 401, invalid stars 422; Bayesian average on fixed examples and a property test
+  - **CI:** `api-test`, `web-test`
+  - **Checkpoint:** rating takes 1 tap from the hike page; averages correct in every test scenario
+- [ ] **3.8 Plan this hike.** A fresh checklist for your date and forecast from a published route, with the author's "missing" and "didn't need" notes merged in by a pure function; saved on the device or synced.
+  - **Tests:** uses the planner's date and weather; author notes appear with their reason; private or unpublished hike 404; merge function on 5 scenarios; Playwright: hike page → plan → checklist
+  - **CI:** `api-test`, `web-test`, `e2e`
+  - **Checkpoint:** hike page to your own checklist in ≤ 4 taps; 100% of author-flagged items shown with their reason
+- [ ] **3.9 Safety and moderation.** Report, auto-hide at 3 distinct reporters, block, an admin queue for the manager, suspend; privacy policy and terms pages.
+  - **Tests:** hidden content gone for everyone but the author and admins; block both ways; admin endpoints 403 for everyone else; suspended users can't write; auto-hide threshold counts distinct users
+  - **CI:** `api-test`, `web-test`, `e2e`
+  - **Checkpoint:** a report reaches the admin queue in < 1 min; hiding takes effect in the feed in < 1 min; every App Store 1.2 / Google Play UGC requirement ticked in `docs/ugc-compliance.md`
+
+## Phase 4 — Extend, then decide on native
+
+Goal: the features that make it more than a checklist, and a written go/no-go on native. Treat 4.1–4.5 as a menu; only 4.6 is required. Effort: open-ended, 2–5 weekends depending on picks.
+
+**Exit checkpoint:** the decision document in 4.6 exists and is dated; every menu item you chose meets its checkpoint.
+
+- [ ] **4.1 Saved trips and history.** Trip list with search, and "same hike, new date" duplication.
+  - **Tests:** component tests for search and duplicate; Playwright: re-plan a saved trip
+  - **CI:** `web-test` and `e2e`
+  - **Checkpoint:** re-planning a past hike takes ≤ 3 taps
+- [ ] **4.2 Gear inventory.** Your actual gear with weights, mapped to generic items ("rain shell" → your jacket); the checklist shows your names and total pack weight.
+  - **Tests:** mapping and fallback when no gear matches; weight totals including quantities
+  - **CI:** `api-test` and `web-test`
+  - **Checkpoint:** ≥ 80% of checklist items map to your own gear; computed pack weight within 5% of your packed bag on a scale
+- [ ] **4.3 Group profiles.** Kid (extra layers, snacks, slower pace factor), dog (water for the dog, leash, heat warning for paws), solo (share your route with someone).
+  - **Tests:** ≥ 3 tests per profile-specific rule; pace factor applied to the duration
+  - **CI:** `api-test`, inside the rules coverage gate
+  - **Checkpoint:** ≥ 3 profile-specific rules per profile, all tested
+- [ ] **4.4 Trail search from OpenStreetMap.** Search hiking route relations by name or near a location via the Overpass API; convert results into the same `RouteSummary` as GPX.
+  - **Tests:** recorded Overpass responses; conversion of relations with gaps or unordered ways
+  - **CI:** `api-test`; the weekly live-API workflow also queries Overpass once
+  - **Checkpoint:** finds ≥ 8 of 10 known hikes in your region by name; results in < 3 s
+- [ ] **4.5 Water sources.** OSM drinking-water and spring nodes within 100 m of the route; the water rule uses the longest stretch without a source.
+  - **Tests:** distance-to-route calculation; water rule with and without sources on fixture routes
+  - **CI:** `api-test`
+  - **Checkpoint:** lists the known water sources correctly on 3 routes you know
+- [ ] **4.6 Decision gate: go native?** A one-page document listing each feature you want next and whether a PWA can do it. Include community features (e.g. push when your hike is rated). Native is justified if ≥ 1 must-have can't be done as a PWA (e.g. background GPS, reliable iOS notifications, offline maps, a store listing).
   - **Tests:** none; this is a decision
   - **CI:** none
   - **Checkpoint:** the document exists, every candidate feature is marked PWA yes/no, and the decision is dated
 
-## Phase 4 — Migrate to React Native (Expo)
+## Phase 5 — Migrate to React Native (Expo)
 
 Goal: the same app, native, at parity with the PWA. The backend doesn't change at all. Effort: 3–4 weekends.
 
@@ -261,77 +302,81 @@ What carries over and what gets rewritten:
 | Checklist and formatting logic, if kept out of components | Storage: AsyncStorage or expo-sqlite instead of IndexedDB |
 |  | Charts: a React Native chart library for the elevation profile |
 
-- [ ] **4.0 Extract shared code (in the PWA, before any native work).** Move the API client, types, data hooks, the trip-diff function and formatters into `packages/core`, with no DOM or browser imports.
+- [ ] **5.0 Extract shared code (in the PWA, before any native work).** Move the API client, types, data hooks, the sync engine, the trip-diff function and formatters into `packages/core`, with no DOM or browser imports.
   - **Tests:** core's unit tests move with it; the web app's full suite still passes
   - **CI:** new `core-test` job; an ESLint rule fails the build on any `react-dom`, `window` or `document` import in `packages/core`
   - **Checkpoint:** 0 DOM imports in core; web test suite 100% green after the move
-- [ ] **4.1 Expo app scaffold.** `mobile/` with Expo + TypeScript and Expo Router, linked to `packages/core` in the workspace; environment config per build profile (development, preview, production).
+- [ ] **5.1 Expo app scaffold.** `mobile/` with Expo + TypeScript and Expo Router, linked to `packages/core` in the workspace; environment config per build profile (development, preview, production).
   - **Tests:** Jest with React Native Testing Library set up; one test renders the home screen with a mocked `/health`
   - **CI:** `mobile-test` job: ESLint, `tsc`, Jest; `expo-doctor` checks dependency compatibility
   - **Checkpoint:** the app runs on your phone through Expo Go and shows the deployed API's version
-- [ ] **4.2 Data layer.** TanStack Query with core's hooks; trips stored in expo-sqlite (or AsyncStorage) behind the same repository interface the PWA uses.
+- [ ] **5.2 Data layer.** TanStack Query with core's hooks; trips stored in expo-sqlite (or AsyncStorage) behind the same repository interface the PWA uses.
   - **Tests:** the shared repository contract tests run against both the IndexedDB and SQLite implementations
   - **CI:** `core-test` and `mobile-test`
   - **Checkpoint:** 100% of core hooks reused unchanged; trips persist across app restarts
-- [ ] **4.3 Plan screen.** expo-document-picker for GPX (accept `*/*` and validate by content, since Android often reports GPX files with the wrong MIME type); native date and time pickers.
+- [ ] **5.3 Plan screen.** expo-document-picker for GPX (accept `*/*` and validate by content, since Android often reports GPX files with the wrong MIME type); native date and time pickers.
   - **Tests:** component tests; a Maestro flow: pick a fixture file, choose a date, reach the checklist
   - **CI:** `mobile-test`; an `e2e-mobile` workflow runs Maestro flows on an Android emulator in GitHub Actions
   - **Checkpoint:** picks GPX from Files and Downloads on both iOS and Android; all 10 fixtures accepted
-- [ ] **4.4 Route summary screen.** Elevation chart with a React Native chart library; weather strip.
+- [ ] **5.4 Route summary screen.** Elevation chart with a React Native chart library; weather strip.
   - **Tests:** component tests per fixture response; Maestro screenshot of the screen
   - **CI:** `mobile-test` and `e2e-mobile`
   - **Checkpoint:** numbers identical to the PWA for all fixtures; scrolling at 60 fps on your phone
-- [ ] **4.5 Checklist screen.** FlatList, tick with haptic feedback, same grouping and reasons as the PWA.
+- [ ] **5.5 Checklist screen.** FlatList, tick with haptic feedback, same grouping and reasons as the PWA.
   - **Tests:** tick, untick, progress count; Maestro: tick items, kill the app, reopen, ticks still there
   - **CI:** `mobile-test` and `e2e-mobile`
   - **Checkpoint:** 40-item list scrolls at 60 fps; tick < 100 ms; 100% of ticks survive an app kill
-- [ ] **4.6 Trip migration from the PWA.** Export trips from the PWA as JSON and import them in the app (or rely on sync if you built 3.2).
+- [ ] **5.6 Trip migration from the PWA.** Export trips from the PWA as JSON and import them in the app (signed-in users get their trips by sync from 3.4; import covers trips saved on a device while signed out).
   - **Tests:** import validates against the same JSON schema as the export; round-trip test
   - **CI:** `core-test`
   - **Checkpoint:** 100% of your PWA trips import correctly
-- [ ] **4.7 Parity check and development build.** EAS development build on your phone; a parity table listing every PWA feature.
+- [ ] **5.7 Sign-in and community screens.** Google and Sign in with Apple through Firebase Auth; feed, hike page, publish, rate, "Plan this hike", report and block, account menu with deletion; hike links open in the app.
+  - **Tests:** component tests for every screen state; sign-in with the auth module mocked; Maestro: feed → hike → plan → checklist, and report a hike
+  - **CI:** `mobile-test` and `e2e-mobile`
+  - **Checkpoint:** every Phase 3 community flow has a native equivalent; hike links open the app on iOS and Android
+- [ ] **5.8 Parity check and development build.** EAS development build on your phone; a parity table listing every PWA feature.
   - **Tests:** every PWA Playwright flow has a matching Maestro flow
   - **CI:** EAS Build runs on merges to `main` (preview profile); `e2e-mobile` becomes a required check
   - **Checkpoint:** parity table 100% green; native app used on 2 real hikes
 
-## Phase 5 — Native features and release
+## Phase 6 — Native features and release
 
-Goal: use what native unlocks, then ship to the stores. 5.2–5.4 are optional. Effort: 3–5 weekends, plus store review time.
+Goal: use what native unlocks, then ship to the stores. 6.2–6.4 are optional. Effort: 3–5 weekends, plus store review time.
 
 **Exit checkpoint:** live in ≥ 1 store; crash-free sessions ≥ 99% in the first month; every release goes out through CI with no manual build steps.
 
-- [ ] **5.1 Evening-before reminder.** A local notification the evening before a planned hike; a scheduled backend job (Cloud Scheduler) re-runs the checklist with the fresh forecast and sends a push through Expo's push service only if the list changed.
+- [ ] **6.1 Evening-before reminder.** A local notification the evening before a planned hike; a scheduled backend job (Cloud Scheduler) re-runs the checklist with the fresh forecast and sends a push through Expo's push service only if the list changed.
   - **Tests:** API tests for the scheduling job (changed vs unchanged list, deleted trip, expired push token); mobile tests for notification scheduling with the module mocked
   - **CI:** `api-test` and `mobile-test`; the scheduler job's container deploys through the existing `deploy-api` workflow
   - **Checkpoint:** reminder arrives within ±5 minutes of schedule; push sent only when the list changed, in 5 of 5 test scenarios
-- [ ] **5.2 Map view (optional).** Route line on a map (react-native-maps or MapLibre) with the high point and water sources marked.
+- [ ] **6.2 Map view (optional).** Route line on a map (react-native-maps or MapLibre) with the high point and water sources marked.
   - **Tests:** component test that the route converts to map coordinates correctly; Maestro screenshot
   - **CI:** `mobile-test` and `e2e-mobile`
   - **Checkpoint:** route renders for all 10 fixtures; map ready in < 2 s
-- [ ] **5.3 Offline map tiles (optional).** Download a tile pack for the route's bounding box when a trip is saved.
+- [ ] **6.3 Offline map tiles (optional).** Download a tile pack for the route's bounding box when a trip is saved.
   - **Tests:** bounding-box and pack-size calculations; Maestro: open a saved trip in airplane mode
   - **CI:** `mobile-test` and `e2e-mobile`
   - **Checkpoint:** map visible offline for saved trips; tile pack ≤ 50 MB for a typical day hike
-- [ ] **5.4 On-trail pace tracking (optional).** Background location compares progress with the plan and warns if the projected finish slips past sunset.
+- [ ] **6.4 On-trail pace tracking (optional).** Background location compares progress with the plan and warns if the projected finish slips past sunset.
   - **Tests:** the projection logic tested on recorded tracks (on pace, behind, stopped); permission-denied path
   - **CI:** `core-test` for the projection logic; `mobile-test`
   - **Checkpoint:** correct warning in 3 of 3 recorded-track simulations; battery use ≤ 5% per hour of tracking
-- [ ] **5.5 Release pipeline and beta.** EAS Build and EAS Submit from GitHub Actions: preview builds on every merge to `main`, production builds on version tags; Sentry for crash reporting with source maps uploaded by CI; EAS Update for JavaScript-only fixes.
+- [ ] **6.5 Release pipeline and beta.** EAS Build and EAS Submit from GitHub Actions: preview builds on every merge to `main`, production builds on version tags; Sentry for crash reporting with source maps uploaded by CI; EAS Update for JavaScript-only fixes.
   - **Tests:** the full Jest and Maestro suites gate every build
   - **CI/CD:** `release-mobile` workflow on tags: tests → EAS Build → EAS Submit to TestFlight and Google Play internal testing; version numbers bumped automatically from the tag
   - **Checkpoint:** a tag produces store-ready builds with 0 manual steps; ≥ 5 testers for 2 weeks; crash-free sessions ≥ 99%
-- [ ] **5.6 Store preparation.** Listings, screenshots, privacy policy (location, files), Google Play data-safety form, Apple privacy labels; developer accounts (Apple annual fee, Google one-time fee).
+- [ ] **6.6 Store preparation.** Listings, screenshots, privacy policy (location, files, account, published hikes), user-generated-content requirements (report, block, moderation — built in 3.9), Google Play data-safety form, Apple privacy labels; developer accounts (Apple annual fee, Google one-time fee).
   - **Tests:** Maestro flows capture the store screenshots, so they're reproducible
   - **CI:** a `screenshots` workflow regenerates them on demand
   - **Checkpoint:** submission accepted by ≥ 1 store, with ≤ 2 review rejections
-- [ ] **5.7 Release and PWA decision.** Publish, then decide whether the PWA stays as the web version or is retired.
+- [ ] **6.7 Release and PWA decision.** Publish, then decide whether the PWA stays as the web version or is retired.
   - **Tests:** a post-release smoke flow on a store-installed build
   - **CI:** release-please generates the changelog and store release notes from merged PRs
   - **Checkpoint:** live in ≥ 1 store; PWA decision recorded in the repo
 
 ## CI/CD at a glance
 
-By the end of Phase 5, the repo runs these automated checks. Required checks block merges to `main`.
+By the end of Phase 6, the repo runs these automated checks. Required checks block merges to `main`.
 
 | Workflow / job | Runs on | What it checks or does | Added in | Required |
 | --- | --- | --- | --- | --- |
@@ -346,19 +391,19 @@ By the end of Phase 5, the repo runs these automated checks. Required checks blo
 | PR previews | Every PR | Firebase preview URL; Lighthouse CI on it | 0.5, 1.11 | Yes (Lighthouse budgets) |
 | Nightly full run | Schedule | Entire suite against fresh dependencies | 0.6 | — |
 | Parser benchmark | PRs touching `api/` | Fails on > 20% parse-time regression | 1.2 | Yes |
-| `live-weather` | Weekly | Real Open-Meteo and Overpass calls, to catch format changes | 1.5, 3.5 | No |
-| `migrations` | PRs touching the database | Alembic upgrade and downgrade on Postgres | 3.2 | Yes |
-| `load-test` | Before merge to `main` | Locust against the staging revision | 3.7 | Yes |
-| `core-test` | PRs touching `packages/core` | Shared logic tests; no DOM imports | 4.0 | Yes |
-| `mobile-test` | PRs touching `mobile/` | ESLint, `tsc`, Jest, `expo-doctor` | 4.1 | Yes |
-| `e2e-mobile` | PRs touching `mobile/` or `core` | Maestro flows on an Android emulator | 4.3 | Yes (from 4.7) |
-| EAS preview build | Merge to `main` | Installable preview build | 4.7 | — |
-| `release-mobile` | Version tag | Tests → EAS Build → EAS Submit to beta tracks | 5.5 | — |
+| `live-weather` | Weekly | Real Open-Meteo and Overpass calls, to catch format changes | 1.5, 4.4 | No |
+| `migrations` | PRs touching the database | Alembic upgrade and downgrade on Postgres | 3.3 | Yes |
+| `load-test` | Before merge to `main` | Locust against the staging revision | 3.2 | Yes |
+| `core-test` | PRs touching `packages/core` | Shared logic tests; no DOM imports | 5.0 | Yes |
+| `mobile-test` | PRs touching `mobile/` | ESLint, `tsc`, Jest, `expo-doctor` | 5.1 | Yes |
+| `e2e-mobile` | PRs touching `mobile/` or `core` | Maestro flows on an Android emulator | 5.3 | Yes (from 5.8) |
+| EAS preview build | Merge to `main` | Installable preview build | 5.8 | — |
+| `release-mobile` | Version tag | Tests → EAS Build → EAS Submit to beta tracks | 6.5 | — |
 | release-please | Merge to `main` | Changelog, version bumps, release notes | 0.6 | — |
 
 ## Making the migration cheap, and the risks
 
-Decisions to make from day one so Phase 4 stays small:
+Decisions to make from day one so Phase 5 stays small:
 
 - Keep every decision (durations, weather lookups, rules) on the server; the frontend never calculates what to pack
 - Share types through the generated OpenAPI client instead of hand-written interfaces
@@ -372,4 +417,9 @@ Decisions to make from day one so Phase 4 stays small:
 | Messy GPX files (routes vs tracks, no elevation, huge files) | Normalise in the parser; fill elevation from an elevation API; test with exports from several apps |
 | Weather API terms | Open-Meteo's free tier is for non-commercial use; check its terms and pricing before any public release |
 | iOS PWA limits surprise you | Test the installed PWA on an iPhone early in Phase 2 |
-| Scope creep in Phase 3 | Treat Phase 3 as a menu; the decision gate is the only required item |
+| Scope creep in Phase 4 | Treat Phase 4 as a menu; the decision gate is the only required item |
+| Scope creep in the community (Phase 3) | The feature set is fixed: publish, feed, ratings, plan from a hike, report/block. Follows, comments, photos, messages and social notifications stay out until the manager adds them |
+| Published routes reveal where people live | Private by default; route ends trimmed by a tested pure function; no timestamps or email in public responses |
+| Abuse or unsafe content in a public feed | Report, auto-hide, block and an admin queue (3.9) before anyone else can see the feed; the app stores require them anyway |
+| Free tiers run out or change terms | Cost rule: $0 by default; free-tier limits and headroom tracked in the 3.1 database ADR; GCP budget alert; moving to Cloud SQL is a connection-string change |
+| Weather API terms with a public community | Open-Meteo's free tier is non-commercial; the app stays free. Re-check before any paid feature |

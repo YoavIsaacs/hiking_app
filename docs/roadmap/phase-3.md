@@ -1,38 +1,69 @@
-# Phase 3 — Extend and decide checklist
+# Phase 3 — Accounts and community checklist
 
-3.1–3.7 are a menu: pick what you want. 3.8 is required. If you skip 3.2 (accounts), the trip endpoints aren't needed and 3.1 stays client-side only.
+All steps are required. Order matters: 3.1 decides, 3.2–3.4 build the base, 3.5–3.8 build the community, 3.9 makes it safe to open.
 
-## 3.1 Saved trips and history
+**Free vs account (product rule).** Without an account you can plan, build checklists, save trips on this device
+(offline), browse the feed and public hike pages, and plan from a public hike. An account is needed to save trips to
+the cloud (sync across devices), publish, rate, report and block.
 
-- [ ] `/trips` list: name, date, distance, status (upcoming / past), sorted upcoming first
-- [ ] Search by name; filter upcoming / past
-- [ ] "Same hike, new date" → copies route and options, opens `/plan` prefilled with today's date
-- [ ] If accounts exist: `POST /v1/trips/{trip_id}/duplicate` returns the new trip
-- [ ] Test: search and filter logic
-- [ ] Test: duplicate copies route and options but not ticks or feedback
-- [ ] Playwright: duplicate a saved trip and build its checklist
-- [ ] Count taps to re-plan (≤ 3)
+**Cost rule.** Running cost stays $0/month. Every service must fit a free tier; anything that would cost money needs
+the manager's approval first.
 
-## 3.2 Accounts and sync (optional)
+## 3.1 Community design
+
+- [ ] ADR: auth — Firebase Auth (Google sign-in now; Sign in with Apple added in 5.7); FastAPI verifies ID tokens with firebase-admin
+- [ ] ADR: database — PostgreSQL on a $0 host (candidates: Neon free tier, Supabase free tier, the manager's Raspberry Pi); compare free-tier limits, cold-start/pausing, backups and restore, security exposure, and the move to Cloud SQL when outgrown (connection string only)
+- [ ] ADR: data model — `users`, `profiles`, `trips`, `feedback`, `published_hikes`, `ratings`, `reports`, `blocks`; ownership and soft-delete rules
+- [ ] ADR: privacy — visibility levels (private default, unlisted link, public); route-end trimming default and opt-out for trailhead starts; what a published hike exposes (never: email, GPX timestamps, raw track, untrimmed ends); how "Plan this hike" works on a trimmed route
+- [ ] ADR: moderation — report reasons, auto-hide threshold, admin role (Firebase custom claim, manager only), block semantics, account suspension
+- [ ] API contract sketch for every Phase 3 endpoint (paths, request/response models, auth, errors)
+- [ ] UX spec (`docs/ux/`): feed, hike page, publish flow, rating, "Plan this hike", sign-in prompts at gated actions, profile, account menu, report/block, terms; states, copy, accessibility, acceptance criteria
+- [ ] Visual spec: avatar fallback (initials, no photo uploads), rating stars, visibility badges, feed card
+- [ ] Drafts of the privacy policy and terms of use (manager approves the text)
+- [ ] Verify: monthly cost at 100 users estimated at $0, with each free-tier limit and its headroom listed
+
+## 3.2 API hardening (moved from the old 3.7; now required because the app accepts user content)
+
+- [ ] All public routes under `/v1` (already the case) with a router-level prefix
+- [ ] slowapi rate limits: e.g. 30/min per IP for `/v1/checklist`, 10/min for `/v1/routes/parse`; per-user limits on write endpoints (publish 10/h, rate 60/h, report 20/h)
+- [ ] Consistent `ErrorResponse` for 4xx and 5xx, including validation errors
+- [ ] Structured JSON logs with request ID, user ID (if any), latency; never log tokens or email
+- [ ] Sentry SDK for API and web (free plan); release = git SHA; source maps uploaded from CI
+- [ ] Cloud Run: staging service (`api-staging`) deployed from PRs with the `deploy` label
+- [ ] Locust scenario: parse + checklist + feed mix at 20 requests/s for 2 minutes
+- [ ] Tests: 429 after the limit; every error path matches `ErrorResponse`
+- [ ] CI: `load-test` workflow against staging; fails if p95 ≥ 1 s
+- [ ] Verify: a week of production logs with 0 unhandled 500s
+
+## 3.3 Accounts and database
 
 **Auth**
 
 - [ ] Firebase Auth with Google sign-in in the web app
-- [ ] `app/auth.py`: FastAPI dependency verifying the Firebase ID token (firebase-admin), returning `CurrentUser`
-- [ ] `GET /v1/me` → `{user_id, email, display_name, created_at}`
-- [ ] Signed-out mode keeps working exactly as in Phase 2
+- [ ] `app/auth.py`: FastAPI dependency verifying the Firebase ID token (firebase-admin), returning `CurrentUser`; an optional variant for endpoints that also serve signed-out users
+- [ ] `GET /v1/me` → `{user_id, email, handle, display_name, created_at}`
+- [ ] `PUT /v1/me/profile` → `{handle, display_name, bio}`; handle unique, 3–20 chars `[a-z0-9_]`; bio ≤ 160 chars
+- [ ] `DELETE /v1/me` deletes the account and everything it owns (trips, published hikes, ratings, reports filed, blocks) and the Firebase user
+- [ ] Terms of use accepted at first sign-in; acceptance stored with its version
+- [ ] Signed-out mode keeps working exactly as in Phase 2; sign-in is asked for only at a gated action
 - [ ] Tests: valid token, expired token, wrong project, missing header → 200 / 401 / 401 / 401
+- [ ] Tests: handle validation and uniqueness; account deletion removes 100% of the user's rows
 
 **Database**
 
-- [ ] Cloud SQL Postgres instance (smallest tier); connection via the Cloud Run connector; password in Secret Manager
-- [ ] SQLAlchemy 2.0 async models: `users`, `trips`, `feedback`, plus `gear`, `profiles` if 3.3 / 3.4 chosen
-- [ ] `trips` columns: `id` (uuid), `user_id`, `name`, `date`, `start_time`, `options` (jsonb), `route` (jsonb), `checklist` (jsonb), `ticks` (jsonb), `rules_version`, `created_at`, `updated_at`, `deleted_at` (soft delete for sync)
+- [ ] PostgreSQL on the host chosen in 3.1; connection string in Secret Manager; backups per the ADR
+- [ ] SQLAlchemy 2.0 async models for the 3.1 data model
 - [ ] Alembic initialised; first migration
 - [ ] Local Postgres via `docker compose` for development
+- [ ] Tests: Alembic upgrade head → downgrade base → upgrade head on a clean Postgres
+- [ ] CI: Postgres service container in `api-test`
+- [ ] CI: `migrations` job (required when `api/migrations/**` changes)
+- [ ] CI: deploy runs `alembic upgrade head` before shifting traffic
+- [ ] Verify: sign-in to account menu in ≤ 3 taps; a backup restores into a clean database
 
-**Endpoints**
+## 3.4 Cloud trips and sync
 
+- [ ] `trips` columns: `id` (uuid), `user_id`, `name`, `date`, `start_time`, `options` (jsonb), `route` (jsonb), `checklist` (jsonb), `ticks` (jsonb), `rules_version`, `created_at`, `updated_at`, `deleted_at` (soft delete for sync)
 - [ ] `GET /v1/trips` (paginated, `?updated_since=`)
 - [ ] `POST /v1/trips`
 - [ ] `GET /v1/trips/{trip_id}`
@@ -40,85 +71,64 @@
 - [ ] `DELETE /v1/trips/{trip_id}` (soft delete)
 - [ ] `POST /v1/trips/{trip_id}/refresh` → new checklist + server-side diff
 - [ ] `POST /v1/sync` — request: `{cursor, changes[]}`; response: `{cursor, changes[], conflicts[]}`; last write wins per trip by `updated_at`
-
-**Client**
-
 - [ ] Sync engine in the web app: local changes queued in Dexie, pushed on reconnect and on app focus
-- [ ] Sign-in screen and account menu; sign-out clears synced data from the device
+- [ ] First sign-in on a device: offer to upload the trips already saved on it
+- [ ] Sign-out clears synced data from the device
 - [ ] Tests: user A can't read, update or delete user B's trip (403/404)
 - [ ] Tests: sync — 10 scenarios (create offline, edit offline on two devices, delete vs edit, etc.)
-- [ ] Tests: Alembic upgrade head → downgrade base → upgrade head on a clean Postgres
-- [ ] CI: Postgres service container in `api-test`
-- [ ] CI: `migrations` job (required when `api/migrations/**` changes)
-- [ ] CI: deploy runs `alembic upgrade head` before shifting traffic
 - [ ] Verify: phone → laptop sync < 5 s
 
-## 3.3 Gear inventory
+## 3.5 Publish a hike
 
-- [ ] `GearItem` model: `id`, `name`, `generic_key` (matches a rule item `key`), `weight_g`, `notes`
-- [ ] `GET /v1/gear`, `POST /v1/gear`, `PUT /v1/gear/{gear_id}`, `DELETE /v1/gear/{gear_id}` (or Dexie-only if no accounts)
-- [ ] `/gear` screen: list, add, edit, delete; pick the generic item from a dropdown of known keys
-- [ ] Checklist shows your gear name under the generic name when mapped
-- [ ] Pack weight total (quantities included; water counted at 1 kg/L)
-- [ ] Unmapped items listed so you can add gear for them
-- [ ] Tests: mapping, multiple gear for one key (pick the default), unmapped fallback
-- [ ] Tests: weight total with quantities
-- [ ] Verify: ≥ 80% of a typical checklist maps; weigh your packed bag and compare (within 5%)
+- [ ] From a saved trip: title (≤ 80), description (≤ 2,000), region (free text), visibility `private` (default) / `unlisted` / `public`
+- [ ] A published hike is a snapshot, not a live view of the trip: route summary and down-sampled points (trimmed), stats, timing, the checklist as packed (ticked items), and the author's feedback (missing, didn't need, actual duration)
+- [ ] Never published: email, GPX timestamps, the raw track, ticks of items not packed, points inside the trimmed ends
+- [ ] Route-end trimming: `redact_route(route, trim_m) -> RouteSummary` as a pure function; default and opt-out per the 3.1 privacy ADR
+- [ ] `POST /v1/hikes`, `GET /v1/hikes/{hike_id}`, `PATCH /v1/hikes/{hike_id}` (text, visibility), `DELETE /v1/hikes/{hike_id}` (unpublish → 404 for everyone else)
+- [ ] Publish screen from the trip page; visibility badge on published trips; "copy link"
+- [ ] Tests: no published point lies within `trim_m` of the true start or end, on all 10 fixtures; Hypothesis property test over random routes
+- [ ] Tests: private hike → 404 for other users and signed out; unlisted → 200 by link, absent from feed and search; only the author can edit or delete (403/404)
+- [ ] Tests: editing or deleting the source trip doesn't change the published snapshot
+- [ ] Verify: publishing from a saved trip takes ≤ 3 taps
 
-## 3.4 Group profiles
+## 3.6 Feed and hike page
 
-- [ ] Extend `TripOptions`: `kids: list[{age_years}]`, `dog: bool`, `solo: bool`, `pace_factor: float`
-- [ ] `GET /v1/profiles`, `PUT /v1/profiles` — stored defaults (or Dexie-only)
-- [ ] Kid rules: extra layer, extra snacks, comfort item, slower pace factor by age
-- [ ] Dog rules: extra water for the dog, bowl, leash, paw-heat warning above a temperature
-- [ ] Solo rules: share your route and ETA with someone, emergency whistle/beacon
-- [ ] Plan screen: profile toggles prefilled from defaults
-- [ ] Tests: ≥ 3 per rule (triggers / doesn't / threshold); pace factor reaches the duration estimate
+- [ ] `GET /v1/feed?cursor=&near=lat,lon&radius_km=&min_km=&max_km=&sort=recent|top` — cursor pagination, public hikes only; excludes hidden content and users blocked in either direction
+- [ ] `GET /v1/users/{handle}` → public profile and their public hikes
+- [ ] `/feed` screen: cards with title, author, distance, gain, duration, rating, region; infinite scroll; filters for area and length; empty and offline states (last page cached)
+- [ ] `/h/{hike_id}` hike page, viewable signed out: stats, elevation profile, trimmed route, the author's packing list with their notes, rating, "Plan this hike"
+- [ ] `/u/{handle}` profile page
+- [ ] Tests: pagination has no duplicates or gaps while new hikes are inserted; each filter; private, unlisted, hidden and blocked content never appears
+- [ ] Tests: component tests for feed, card and hike page states; Playwright: signed out, open feed → open a hike
+- [ ] Verify: feed p95 < 500 ms with 1,000 seeded hikes; first feed page visible in < 2 s on your phone over mobile data
 
-## 3.5 Trail search from OpenStreetMap
+## 3.7 Ratings
 
-- [ ] `app/trails/overpass.py` — Overpass client with timeout and a polite User-Agent
-- [ ] Query hiking relations (`route=hiking`) by name within a bounding box, or near a point
-- [ ] Assemble ways into one ordered line; handle gaps and reversed ways
-- [ ] Convert to `RouteSummary` (elevation via 1.3 backfill)
-- [ ] `GET /v1/trails/search?q=&lat=&lon=&radius_km=` → list of `{osm_relation_id, name, distance_m, from, to}`
-- [ ] `GET /v1/trails/{osm_relation_id}` → `RouteSummary`
-- [ ] Cache results (24 h) to respect Overpass usage policy
-- [ ] Search UI on `/plan` as an alternative to GPX upload; use device location if permitted
-- [ ] Tests: recorded Overpass responses; way assembly with gaps and reversed ways; empty results
-- [ ] Add one Overpass call to the weekly `live-weather` workflow (rename it `live-apis`)
-- [ ] Verify: ≥ 8 of 10 known regional hikes found by name; < 3 s
-- [ ] Attribution: "© OpenStreetMap contributors" shown wherever OSM data appears
+- [ ] 1–5 stars, one rating per user per hike (setting it again replaces it); no written reviews in this phase
+- [ ] `PUT /v1/hikes/{hike_id}/rating` `{stars}`, `DELETE /v1/hikes/{hike_id}/rating`
+- [ ] Hike shows average and count; `sort=top` uses a Bayesian average (a pure function), so 1 five-star rating doesn't beat 40 four-star ones
+- [ ] Tests: upsert keeps one rating per user; rating your own hike → 403; signed out → 401; out-of-range stars → 422; a deleted account's ratings leave the average
+- [ ] Tests: Bayesian average on fixed examples, plus a Hypothesis property (result stays within 1–5)
+- [ ] Verify: rating takes 1 tap from the hike page
 
-## 3.6 Water sources
+## 3.8 Plan this hike
 
-- [ ] Overpass query: `amenity=drinking_water`, `natural=spring`, `man_made=water_tap` within the route's bounding box
-- [ ] Keep sources within 100 m of the route; compute each one's distance along the route
-- [ ] Add `water_sources: list[{lat, lon, kind, dist_along_m}]` and `longest_dry_stretch_m` to `RouteSummary`
-- [ ] Water rule uses the longest dry stretch instead of total time when sources exist
-- [ ] Show sources on the elevation profile as markers
-- [ ] Tests: point-to-line distance; along-route distance; dry-stretch calculation
-- [ ] Tests: water rule with and without sources
-- [ ] Verify on 3 routes you know
+- [ ] `POST /v1/hikes/{hike_id}/plan` `{date, start_time, options}` → a fresh `ChecklistResponse` for your date and forecast, computed server-side from the hike's stored route
+- [ ] The author's experience merged in by a pure function: items they logged as missing are added as "consider" with the reason "The author wished they'd had this"; items they marked as not needed are flagged with the author's note
+- [ ] The new trip saves on the device when signed out, and syncs when signed in; the hike's "planned N times" count goes up
+- [ ] Tests: the checklist uses the planner's date and weather, not the author's; author-missing items appear with their reason; private or unpublished hike → 404; the merge function on 5 scenarios
+- [ ] Playwright: hike page → Plan this hike → pick date → checklist visible
+- [ ] Verify: hike page to your own checklist in ≤ 4 taps; 100% of author-flagged items show with their reason
 
-## 3.7 API hardening
+## 3.9 Safety and moderation
 
-- [ ] All public routes under `/v1` (already the case) with a router-level prefix
-- [ ] slowapi rate limits: e.g. 30/min per IP for `/v1/checklist`, 10/min for `/v1/routes/parse`
-- [ ] Consistent `ErrorResponse` for 4xx and 5xx, including validation errors
-- [ ] Structured JSON logs with request ID, user ID (if any), latency
-- [ ] Sentry SDK for API and web; release = git SHA; source maps uploaded from CI
-- [ ] Cloud Run: staging service (`api-staging`) deployed from PRs with the `deploy` label
-- [ ] Locust scenario: parse + checklist mix at 20 requests/s for 2 minutes
-- [ ] Tests: 429 after the limit; every error path matches `ErrorResponse`
-- [ ] CI: `load-test` workflow against staging; fails if p95 ≥ 1 s
-- [ ] Verify: a week of production logs with 0 unhandled 500s
-
-## 3.8 Decision gate: go native?
-
-- [ ] `docs/decisions/0001-native-app.md` (ADR format)
-- [ ] List every wanted next feature
-- [ ] For each: can a PWA do it on iOS and Android? (yes / partly / no, with reason)
-- [ ] Mark which are must-haves
-- [ ] Decision: go native if ≥ 1 must-have is "no"
-- [ ] Date and commit the decision
+- [ ] Report a hike or a profile: reason (spam, offensive, unsafe advice, private information, other) + optional note
+- [ ] Auto-hide after reports from 3 distinct users, until an admin decides
+- [ ] Block a user: their content disappears for you and yours for them, everywhere
+- [ ] Admin role via Firebase custom claim (manager only): report queue, hide/restore content, suspend a user
+- [ ] `POST /v1/reports`, `POST /v1/blocks`, `DELETE /v1/blocks/{user_id}`, `GET /v1/admin/reports`, `POST /v1/admin/hikes/{hike_id}/hide`, `POST /v1/admin/users/{user_id}/suspend`
+- [ ] Privacy policy and terms pages on the web app, linked from the account menu and the sign-in prompt
+- [ ] Account deletion (3.3) reachable from the account menu
+- [ ] Tests: hidden content is gone from feed, profile and hike page for everyone except the author and admins; block works both ways; non-admin → 403 on every admin endpoint; suspended user's writes → 403
+- [ ] Tests: auto-hide at exactly 3 distinct reporters, not at 3 reports from one user
+- [ ] Verify: a report reaches the admin queue in < 1 min; hiding takes effect in the feed in < 1 min; `docs/ugc-compliance.md` ticks every App Store guideline 1.2 and Google Play UGC requirement

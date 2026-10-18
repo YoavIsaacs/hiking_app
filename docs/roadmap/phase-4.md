@@ -1,93 +1,71 @@
-# Phase 4 — Migrate to React Native checklist
+# Phase 4 — Extend and decide checklist
 
-No backend endpoints change in this phase. Every item here is frontend, shared code or CI.
+4.1–4.5 are a menu: pick what you want. 4.6 is required. Accounts, cloud trips and the community features are no longer optional; they moved to Phase 3.
 
-## 4.0 Extract shared code
+## 4.1 Saved trips and history
 
-- [ ] Create `packages/core` with its own `package.json`, `tsconfig.json` (no DOM lib), Vitest config
-- [ ] Move: generated `schema.d.ts` and the openapi-fetch client (base URL injected, not read from `import.meta.env`)
-- [ ] Move: TanStack Query hooks (`useParseRoute`, `useChecklist`, `useTrips`, `useRefreshTrip`, etc.)
-- [ ] Move: `TripRepository` interface and its contract test suite
-- [ ] Move: `diffChecklists`, formatters (distance, duration, temperature), sunset-margin logic, Zustand trip store
-- [ ] Update `gen:api` to write into `packages/core`
-- [ ] Web app imports everything from `@hikeprep/core`
-- [ ] ESLint in core: `no-restricted-globals` for `window`, `document`, `localStorage`; `no-restricted-imports` for `react-dom`
-- [ ] TypeScript `lib: ["ES2022"]` only in core, so DOM types fail to compile
-- [ ] CI: `core-test` job (lint, `tsc`, Vitest, coverage ≥ 85%)
-- [ ] Verify: full web suite and Playwright green after the move
+- [ ] `/trips` list: name, date, distance, status (upcoming / past), sorted upcoming first
+- [ ] Search by name; filter upcoming / past
+- [ ] "Same hike, new date" → copies route and options, opens `/plan` prefilled with today's date
+- [ ] Signed in: `POST /v1/trips/{trip_id}/duplicate` returns the new trip; signed out: duplicated in Dexie
+- [ ] Test: search and filter logic
+- [ ] Test: duplicate copies route and options but not ticks or feedback
+- [ ] Playwright: duplicate a saved trip and build its checklist
+- [ ] Count taps to re-plan (≤ 3)
 
-## 4.1 Expo app scaffold
+## 4.2 Gear inventory
 
-- [ ] `pnpm create expo-app mobile` with the TypeScript template
-- [ ] Expo Router with routes: `(tabs)/index` (plan), `(tabs)/trips`, `trip/[id]`, `settings`
-- [ ] Metro configured for the pnpm monorepo (watch folders, `node-linker` settings as Expo's monorepo guide describes)
-- [ ] `app.config.ts` with build profiles: development, preview, production; `API_URL` per profile
-- [ ] Bundle identifier / package name chosen (e.g. `com.yourname.hikeprep`)
-- [ ] App icon and splash screen
-- [ ] Jest (jest-expo preset) + React Native Testing Library + MSW for React Native
-- [ ] Test: home screen renders the API version from mocked `/health`
-- [ ] CI: `mobile-test` job — ESLint, `tsc`, Jest, `npx expo-doctor`
-- [ ] Verify: Expo Go on your phone shows the deployed API version
+- [ ] `GearItem` model: `id`, `name`, `generic_key` (matches a rule item `key`), `weight_g`, `notes`
+- [ ] `GET /v1/gear`, `POST /v1/gear`, `PUT /v1/gear/{gear_id}`, `DELETE /v1/gear/{gear_id}` for signed-in users (Dexie only when signed out)
+- [ ] `/gear` screen: list, add, edit, delete; pick the generic item from a dropdown of known keys
+- [ ] Checklist shows your gear name under the generic name when mapped
+- [ ] Pack weight total (quantities included; water counted at 1 kg/L)
+- [ ] Unmapped items listed so you can add gear for them
+- [ ] Tests: mapping, multiple gear for one key (pick the default), unmapped fallback
+- [ ] Tests: weight total with quantities
+- [ ] Verify: ≥ 80% of a typical checklist maps; weigh your packed bag and compare (within 5%)
 
-## 4.2 Data layer
+## 4.3 Group profiles
 
-- [ ] TanStack Query provider with React Native focus and online managers (AppState, NetInfo)
-- [ ] expo-sqlite implementation of `TripRepository` with the same schema as Dexie's v2
-- [ ] SQLite migrations runner (version table)
-- [ ] Run core's `TripRepository` contract tests against the SQLite implementation
-- [ ] Persist the trip store with the SQLite repository
-- [ ] Verify: 0 changes to core hooks were needed; trips survive app restarts
+- [ ] Extend `TripOptions`: `kids: list[{age_years}]`, `dog: bool`, `solo: bool`, `pace_factor: float`
+- [ ] `GET /v1/profiles`, `PUT /v1/profiles` — stored defaults for signed-in users (Dexie only when signed out)
+- [ ] Kid rules: extra layer, extra snacks, comfort item, slower pace factor by age
+- [ ] Dog rules: extra water for the dog, bowl, leash, paw-heat warning above a temperature
+- [ ] Solo rules: share your route and ETA with someone, emergency whistle/beacon
+- [ ] Plan screen: profile toggles prefilled from defaults
+- [ ] Tests: ≥ 3 per rule (triggers / doesn't / threshold); pace factor reaches the duration estimate
 
-## 4.3 Plan screen
+## 4.4 Trail search from OpenStreetMap
 
-- [ ] expo-document-picker with `type: '*/*'`, `copyToCacheDirectory: true`
-- [ ] Upload the picked file to `POST /v1/routes/parse` as multipart from its local URI
-- [ ] Native date picker (limited range) and time picker (@react-native-community/datetimepicker)
-- [ ] Options toggles; keyboard-safe layout
-- [ ] Same error messages as the web app (shared mapping from core)
-- [ ] Component tests for validation and errors
-- [ ] `mobile/.maestro/plan_flow.yaml`: pick fixture → date → build → checklist visible
-- [ ] Push fixture GPX files onto the emulator in the Maestro setup step
-- [ ] CI: `e2e-mobile` workflow — build a debug APK, start an Android emulator (reactivecircus/android-emulator-runner), run Maestro, upload recordings on failure
-- [ ] Verify on a real iPhone and Android: pick from Files and Downloads; all 10 fixtures accepted
+- [ ] `app/trails/overpass.py` — Overpass client with timeout and a polite User-Agent
+- [ ] Query hiking relations (`route=hiking`) by name within a bounding box, or near a point
+- [ ] Assemble ways into one ordered line; handle gaps and reversed ways
+- [ ] Convert to `RouteSummary` (elevation via 1.3 backfill)
+- [ ] `GET /v1/trails/search?q=&lat=&lon=&radius_km=` → list of `{osm_relation_id, name, distance_m, from, to}`
+- [ ] `GET /v1/trails/{osm_relation_id}` → `RouteSummary`
+- [ ] Cache results (24 h) to respect Overpass usage policy
+- [ ] Search UI on `/plan` as an alternative to GPX upload; use device location if permitted
+- [ ] Tests: recorded Overpass responses; way assembly with gaps and reversed ways; empty results
+- [ ] Add one Overpass call to the weekly `live-weather` workflow (rename it `live-apis`)
+- [ ] Verify: ≥ 8 of 10 known regional hikes found by name; < 3 s
+- [ ] Attribution: "© OpenStreetMap contributors" shown wherever OSM data appears
 
-## 4.4 Route summary screen
+## 4.5 Water sources
 
-- [ ] Stat cards, finish-vs-sunset margin, warnings banner
-- [ ] Elevation chart (victory-native or react-native-gifted-charts; pick one)
-- [ ] Weather strip as a horizontal list
-- [ ] Component tests: renders all fixture responses
-- [ ] Test: numbers match the web app's for each fixture (same formatter from core)
-- [ ] Maestro screenshot step for 2 fixtures
-- [ ] Verify: 60 fps scrolling (React Native performance monitor)
+- [ ] Overpass query: `amenity=drinking_water`, `natural=spring`, `man_made=water_tap` within the route's bounding box
+- [ ] Keep sources within 100 m of the route; compute each one's distance along the route
+- [ ] Add `water_sources: list[{lat, lon, kind, dist_along_m}]` and `longest_dry_stretch_m` to `RouteSummary`
+- [ ] Water rule uses the longest dry stretch instead of total time when sources exist
+- [ ] Show sources on the elevation profile as markers
+- [ ] Tests: point-to-line distance; along-route distance; dry-stretch calculation
+- [ ] Tests: water rule with and without sources
+- [ ] Verify on 3 routes you know
 
-## 4.5 Checklist screen
+## 4.6 Decision gate: go native?
 
-- [ ] `SectionList` grouped by category
-- [ ] Item row: checkbox, name, quantity, priority badge, reason, your gear name if mapped
-- [ ] Haptic feedback on tick (expo-haptics)
-- [ ] "More ideas" collapsed section
-- [ ] Progress header
-- [ ] Tests: tick/untick, counts, every item has a reason
-- [ ] `mobile/.maestro/ticks_persist.yaml`: tick 3 → kill app → relaunch → 3 still ticked
-- [ ] Verify: 40-item list at 60 fps; tick < 100 ms
-
-## 4.6 Trip migration from the PWA
-
-- [ ] Import screen in settings: pick the PWA's JSON export
-- [ ] Validate against `export.schema.json` (shared from core)
-- [ ] Merge rule for duplicates (same trip id → newer `updatedAt` wins)
-- [ ] If accounts exist: signing in syncs instead, and the import screen is hidden
-- [ ] Tests: valid file, invalid file, duplicate handling, round-trip (export from web → import to native → identical)
-- [ ] Verify: 100% of your PWA trips import
-
-## 4.7 Parity check and development build
-
-- [ ] `eas.json` with development, preview and production profiles
-- [ ] EAS development build installed on your phone
-- [ ] `docs/parity.md`: table of every PWA feature with native status
-- [ ] For every Playwright flow, a matching Maestro flow exists
-- [ ] CI: EAS preview build on merge to `main` (expo/expo-github-action with `EXPO_TOKEN` secret)
-- [ ] Make `e2e-mobile` a required check
-- [ ] Use the native app on 2 real hikes; log them in `field-notes.md`
-- [ ] Verify: parity table 100% green
+- [ ] `docs/decisions/0001-native-app.md` (ADR format)
+- [ ] List every wanted next feature, including community ones (e.g. push notifications when your hike is rated or planned)
+- [ ] For each: can a PWA do it on iOS and Android? (yes / partly / no, with reason)
+- [ ] Mark which are must-haves
+- [ ] Decision: go native if ≥ 1 must-have is "no"
+- [ ] Date and commit the decision

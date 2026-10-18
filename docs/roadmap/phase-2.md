@@ -33,7 +33,7 @@
 - [ ] Add Dexie; `web/src/db/schema.ts` with version 1
 - [ ] Table `trips`: `id` (uuid), `name`, `date`, `startTime`, `options`, `route`, `checklist` (full response), `ticks` (item keys), `createdAt`, `updatedAt`, `rulesVersion`
 - [ ] Table `feedback`: `tripId`, `missing[]`, `unneeded[]`, `actualDurationMin`, `notes`, `createdAt`
-- [ ] `TripRepository` interface: `list`, `get`, `save`, `delete`, `setTicks` (this interface is reused by the native app in Phase 4)
+- [ ] `TripRepository` interface: `list`, `get`, `save`, `delete`, `setTicks` (this interface is reused by the native app in Phase 5)
 - [ ] Dexie implementation of `TripRepository`
 - [ ] "Save trip" automatically after a checklist is built
 - [ ] Ticks written on every change (debounced ≤ 200 ms)

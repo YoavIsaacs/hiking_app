@@ -1,0 +1,97 @@
+name: Preview
+
+# ADR 0002 section 3: one Firebase Hosting preview channel per PR, URL commented
+# on the PR. Trigger is `pull_request` only, never `pull_request_target`.
+# Fork and Dependabot PRs cannot get an OIDC token, so they are skipped.
+# The deploy job holds id-token only; the comment job holds pull-requests: write
+# only and never checks out or runs PR code.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: preview-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    name: preview-deploy
+    # A skip, not a security control (ADR 0002 section 1).
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.user.login != 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+      CHANNEL: pr-${{ github.event.pull_request.number }}
+      FIREBASE_TOOLS_VERSION: "15.34.0"
+    outputs:
+      url: ${{ steps.channel.outputs.url }}
+      expires: ${{ steps.channel.outputs.expires }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # Same production build as deploy-web: previews talk to the production API.
+      - name: Build
+        run: pnpm --filter web build
+
+      - name: Authenticate to Google Cloud (WIF, no keys)
+        uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
+          service_account: ${{ vars.WEB_DEPLOY_SA }}
+
+      - uses: google-github-actions/setup-gcloud@v3
+
+      - name: Deploy preview channel
+        id: channel
+        run: |
+          npx --yes "firebase-tools@$FIREBASE_TOOLS_VERSION" hosting:channel:deploy "$CHANNEL" \
+            --expires 7d --no-authorized-domains --project "$PROJECT_ID" --json > "$RUNNER_TEMP/channel.json"
+          cat "$RUNNER_TEMP/channel.json"
+          {
+            echo "url=$(jq -r '[.result[]][0].url' "$RUNNER_TEMP/channel.json")"
+            echo "expires=$(jq -r '[.result[]][0].expireTime' "$RUNNER_TEMP/channel.json")"
+          } >> "$GITHUB_OUTPUT"
+
+  comment:
+    name: preview-comment
+    needs: deploy
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      pull-requests: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      PR_NUMBER: ${{ github.event.pull_request.number }}
+      PREVIEW_URL: ${{ needs.deploy.outputs.url }}
+      PREVIEW_EXPIRES: ${{ needs.deploy.outputs.expires }}
+    steps:
+      - name: Comment the preview URL on the PR
+        run: |
+          {
+            echo "Preview deployed: $PREVIEW_URL"
+            echo
+            echo "Expires: $PREVIEW_EXPIRES (a new push resets the timer)."
+            echo "It talks to the production API."
+          } > "$RUNNER_TEMP/comment.md"
+          gh pr comment "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" \
+            --edit-last --create-if-none --body-file "$RUNNER_TEMP/comment.md"

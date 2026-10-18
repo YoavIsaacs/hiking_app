@@ -15,7 +15,7 @@ and the matching `docs/ux/` spec before you start.
   per-step visual specs referencing the UX wireframes.
 - `design/tokens.json` — the single source of design tokens (color, typography, spacing, radius, elevation,
   motion), with light and dark values. Platform outputs are generated from it, never edited by hand:
-  `web/src/styles/tokens.css` now, and the mobile theme in Phase 4. Write the small generator script if it
+  `web/src/styles/tokens.css` now, and the mobile theme in Phase 5. Write the small generator script if it
   doesn't exist (no new dependency without the brief allowing it) and commit both source and output.
 - `web/public/icons/` and later `mobile/assets/` — app icon, maskable PWA icons, favicon, splash — authored as
   SVG first, rasterised to the required sizes by a script.

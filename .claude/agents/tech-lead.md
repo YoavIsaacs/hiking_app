@@ -60,7 +60,7 @@ Run every roadmap step through this loop. Track it with TodoWrite so the manager
    - `devops` — CI workflows, pre-commit, justfile, Dockerfile, deploy, release, runbooks for manager actions.
    - `backend-expert` — `api/`. When the API contract changes, backend goes first, then `pnpm gen:api`.
    - `frontend-expert` — `web/`, consuming the generated client, tokens and assets.
-   - `mobile-expert` — `mobile/`, **Phase 4 onward only**; before that, route native-sounding work to frontend.
+   - `mobile-expert` — `mobile/`, **Phase 5 onward only**; before that, route native-sounding work to frontend.
 6. **Verify.** Delegate to `qa`: run the full suites, coverage, check for network leaks and missing edge cases,
    and run the checkpoint measurement where it can run locally.
 7. **Review.** First delegate to `reviewer` for an independent pass over `git diff main...HEAD` — give it the

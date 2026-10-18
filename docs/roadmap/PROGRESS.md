@@ -9,16 +9,24 @@ The tech lead keeps this file true. A step moves to Done only with checkpoint ev
 | 0.2 | FastAPI skeleton | done | [#6](https://github.com/YoavIsaacs/hiking_app/pull/6) | On `main` @ 77726b0: `uv run pytest` 35 passed, coverage 100% (gate 85%, `--disable-socket`); `mypy app tests` strict → 0 errors (15 files); CodeQL run [38527140518](https://github.com/YoavIsaacs/hiking_app/actions/runs/38527140518) → 0 results, 0 open alerts; `/health` local latency n=300 after warm-up p50 1.20 ms / p95 1.64 ms / max 2.34 ms (< 50 ms). Docker (QA, branch): non-root uid 10001, `/health` returns build `GIT_SHA`/`VERSION`. Required checks on `main` (`gh api …/rules/branches/main`): `lint`, `api-test`, `Analyze (python)` (GitHub Actions). | 2026-10-14 |
 | 0.3 | React app | done | [#7](https://github.com/YoavIsaacs/hiking_app/pull/7) | On `main` @ c4202b1: `tsc -b --noEmit` → 0 errors; size-limit 108.25 kB gzipped (limit 200 kB; gate proven to fail at 50 KB by QA on branch); Vitest 43 passed / 11 files incl. the 3 named tests (render version, 500 error state, loading), coverage 96.34 stmts / 96.36 branches / 98.59 lines (gate 80); Playwright `just e2e` 6 passed (Chromium, Pixel 7, iPhone 14 WebKit); CI run [38560446752](https://github.com/YoavIsaacs/hiking_app/actions/runs/38560446752) lint/api-test/web-test/e2e green; CodeQL run [38560446633](https://github.com/YoavIsaacs/hiking_app/actions/runs/38560446633) green, 0 open alerts. Required on `main`: `lint`, `api-test`, `Analyze (python)`, `web-test`, `e2e`, `Analyze (javascript-typescript)`. | 2026-10-14 |
 | 0.4 | Generated API client | done | [#9](https://github.com/YoavIsaacs/hiking_app/pull/9) | On `main` @ 3688c57: `grep type Health|interface Health|isHealth web/src` → none (API types only via generated `components['schemas']`); `just gen-api` → tree clean; `tsc -b` 0 errors; API pytest 83 passed, 100% coverage; Vitest 58 passed. Deliberate break (field added without regenerating) → `api-contract` red in run [38565760255](https://github.com/YoavIsaacs/hiking_app/actions/runs/38565760255), reverted → green; `main` CI run [38568116619](https://github.com/YoavIsaacs/hiking_app/actions/runs/38568116619) and CodeQL [38568116652](https://github.com/YoavIsaacs/hiking_app/actions/runs/38568116652) green. `api-contract` required on `main`. | 2026-10-14 |
-| 0.5 | Deployment | in progress — briefing (manager decisions pending) | | | |
+| 0.5 | Deployment | in progress — build, paused (Open decisions 2–7 pending) | | | |
 | 0.6 | Pipeline rules | not started | | | |
 
 ## Current state (handoff for a fresh session)
 Read this, then `docs/steps/<current step>.md`. Nothing here lives only in chat.
 
 - **Current step:** 0.5 Deployment on branch `step/0.5-deployment`. Brief: `docs/steps/0.5.md`. Stage: see its Status line.
+  **Next session starts here:** ask the manager for 0.5 Open decisions 2–7 (decision 1 is decided: option A, $1 budget alert).
+- **Roadmap change (2026-10-18, manager):** community pivot — new Phase 3 "Accounts and community", old Phase 3 → 4,
+  native → 5–6. In PR #10 (`roadmap/community-phase`), not yet on `main`; the master doc still needs updating (manager).
+  Product rules: free without an account (plan, checklist, save on device, browse, plan from a public hike); account
+  for cloud save, publish, rate, report, block. First version: profiles, publish (private/unlisted/public), feed with
+  area filter, 1–5 ratings, plan this hike, report/block; no follows, comments, photos. Google sign-in now, Apple at
+  native. Cost rule $0/month; database host decided in 3.1 (Neon / Supabase / Raspberry Pi).
 - **`main` protection:** branch ruleset `main` (active, no bypass): required checks `lint`, `api-test`,
   `Analyze (python)`, `web-test`, `e2e`, `Analyze (javascript-typescript)`, `api-contract`; deletion and force-push blocked. PR-required, linear history etc. arrive in 0.6.
-- **Open PRs:** none (0.4 merged as #9).
+- **Open PRs:** #10 roadmap change (manager merges). Dependabot #8 (`actions/cache` 5→6): checks predate the `api-contract`
+  requirement — needs a rebase/re-run before merge.
 - **Local leftovers (manager may delete):** temp clones `%TEMP%\tmp.7qIrHpAUnP`, `%TEMP%\tmp.GMVXYXKa6R`;
   Docker images `hike-api:qa`, `hike-api:test`.
 

@@ -1,6 +1,6 @@
 # 0002 — Deployment: WIF identities, candidate → traffic, Firebase Hosting, CORS, settings prefix
 
-Status: Accepted (tech lead, 2026-10-14; `firebase-tools` CI use pending manager approval) · Date: 2026-10-14 · Step: 0.5
+Status: Accepted (tech lead, 2026-10-14; `firebase-tools` CI use pending manager approval; max instances amended 3 → 1 on 2026-10-18, ADR 0003) · Date: 2026-10-14 · Step: 0.5
 
 ## Context
 Step 0.5 puts the API on Cloud Run and the web app on Firebase Hosting. Both deploy from `main` through GitHub
@@ -106,7 +106,9 @@ Steps:
    `--build-arg GIT_SHA=$GITHUB_SHA` and `--build-arg VERSION=$VERSION`, then `docker push`. The image is
    `<REGION>-docker.pkg.dev/<PROJECT_ID>/hike/api:<full 40-char SHA>`. There is no `latest` tag.
 5. Deploy:
-   `gcloud run deploy hike-api --image=<image> --region=<REGION> --service-account=<API_RUNTIME_SA> --no-traffic --tag=candidate --min-instances=0 --max-instances=3 --memory=512Mi --cpu=1 --concurrency=80 --cpu-boost --no-invoker-iam-check --set-env-vars=HIKE_ENV=production,HIKE_LOG_LEVEL=INFO,HIKE_CORS_ORIGINS=[],HIKE_CORS_FIREBASE_SITE=<PROJECT_ID> --quiet`.
+   `gcloud run deploy hike-api --image=<image> --region=<REGION> --service-account=<API_RUNTIME_SA> --no-traffic --tag=candidate --min-instances=0 --max-instances=1 --memory=512Mi --cpu=1 --concurrency=80 --cpu-boost --no-invoker-iam-check --set-env-vars=HIKE_ENV=production,HIKE_LOG_LEVEL=INFO,HIKE_CORS_ORIGINS=[],HIKE_CORS_FIREBASE_SITE=<PROJECT_ID> --quiet`.
+   *Amended 2026-10-18:* `--max-instances` 3 → 1. This is a manager-approved deviation (brief 0.5, "Decisions and
+   deviations"); see ADR 0003.
    `--set-env-vars` replaces every env var on each deploy, so the config stays declarative. `GIT_SHA` and
    `VERSION` live in the image, so the smoke test proves which image is running.
 6. Describe again and save to `after.json`. `tools.deploy tagged --tag candidate` returns `candidate_url` and
@@ -330,8 +332,8 @@ The new actions `google-github-actions/auth` and `setup-gcloud` are the same kin
   success, which is fine.
 - Harder later: `--edit-last` edits the bot's last comment. When Lighthouse (1.11) comments too, switch to a
   marker-based upsert.
-- Harder later: previews hit the production API, so a preview that misbehaves generates real load (max 3 instances
-  caps it).
+- Harder later: previews hit the production API, so a preview that misbehaves generates real load (max 1 instance
+  caps it; amended 2026-10-18, ADR 0003).
 - **Cost:**
   - Linking billing auto-upgrades Firebase to **Blaze**. The brief assumed Spark. Hosting keeps a no-cost quota.
   - Cloud Run is request-billed at min 0, well within the free tier (180k vCPU-s / 360k GiB-s / 2M req per month;
@@ -382,8 +384,8 @@ The new actions `google-github-actions/auth` and `setup-gcloud` are the same kin
    `<REPO_ID>`/`<OWNER_ID>`.
 8. Grant `roles/iam.workloadIdentityUser` with the §1 subject bindings: one on `api-deploy`, two on `web-deploy`.
 9. Bootstrap the service with your own credentials:
-   `gcloud run deploy hike-api --image=us-docker.pkg.dev/cloudrun/container/hello --region=<REGION> --service-account=api-runtime@<PROJECT_ID>.iam.gserviceaccount.com --no-invoker-iam-check --min-instances=0 --max-instances=3 --memory=512Mi --concurrency=80`.
-   Send `status.url` to the tech lead, who has frontend put it in `web/.env.production`.
+   `gcloud run deploy hike-api --image=us-docker.pkg.dev/cloudrun/container/hello --region=<REGION> --service-account=api-runtime@<PROJECT_ID>.iam.gserviceaccount.com --no-invoker-iam-check --min-instances=0 --max-instances=1 --memory=512Mi --concurrency=80`.
+   (*Amended 2026-10-18:* max instances 3 → 1; see ADR 0003.) Send `status.url` to the tech lead, who has frontend put it in `web/.env.production`.
 10. GitHub: add the repository variables and the environment `production` (branch rule `main`, plus its two
     variables) as listed in §9.
 11. After merge, watch `deploy-api` and `deploy-web`, then do the phone timing checks.

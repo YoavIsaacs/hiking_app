@@ -23,6 +23,10 @@ Read this, then `docs/steps/<current step>.md`. Nothing here lives only in chat.
   for cloud save, publish, rate, report, block. First version: profiles, publish (private/unlisted/public), feed with
   area filter, 1–5 ratings, plan this hike, report/block; no follows, comments, photos. Google sign-in now, Apple at
   native. Cost rule $0/month; database host decided in 3.1 (Neon / Supabase / Raspberry Pi).
+- **Master roadmap doc:** https://claude.ai/code/artifact/846e4975-e790-41bf-8d40-801761d22191 (Claude Doc).
+  **Pending (manager asked 2026-10-18):** tech lead syncs it from `docs/roadmap/` on `main` (6ba84ed) via the Claude Docs
+  tools — patch the changed sections only, don't overwrite the doc. Then add the link to `docs/roadmap/README.md` and drop its
+  "mirror is the newer copy" note.
 - **`main` protection:** branch ruleset `main` (active, no bypass): required checks `lint`, `api-test`,
   `Analyze (python)`, `web-test`, `e2e`, `Analyze (javascript-typescript)`, `api-contract`; deletion and force-push blocked. PR-required, linear history etc. arrive in 0.6.
 - **Open PRs:** Dependabot #8 (`actions/cache` 5→6): rebase requested via `@dependabot rebase` on 2026-10-18; merge once

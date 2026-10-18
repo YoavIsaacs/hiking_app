@@ -86,7 +86,7 @@ jobs:
             --region="$REGION" \
             --service-account="$RUNTIME_SA" \
             --no-traffic --tag=candidate \
-            --min-instances=0 --max-instances=3 \
+            --min-instances=0 --max-instances=1 \
             --memory=512Mi --cpu=1 --concurrency=80 --cpu-boost \
             --no-invoker-iam-check \
             --set-env-vars="HIKE_ENV=production,HIKE_LOG_LEVEL=INFO,HIKE_CORS_ORIGINS=[],HIKE_CORS_FIREBASE_SITE=$PROJECT_ID" \

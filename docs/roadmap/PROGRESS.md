@@ -18,15 +18,15 @@ Read this, then `docs/steps/<current step>.md`. Nothing here lives only in chat.
 - **Current step:** 0.5 Deployment on branch `step/0.5-deployment`. Brief: `docs/steps/0.5.md`. Stage: see its Status line.
   **Next session starts here:** ask the manager for 0.5 Open decisions 2–7 (decision 1 is decided: option A, $1 budget alert).
 - **Roadmap change (2026-10-18, manager):** community pivot — new Phase 3 "Accounts and community", old Phase 3 → 4,
-  native → 5–6. In PR #10 (`roadmap/community-phase`), not yet on `main`; the master doc still needs updating (manager).
+  native → 5–6. Merged to `main` as #10 (6ba84ed); the master doc still needs updating (manager).
   Product rules: free without an account (plan, checklist, save on device, browse, plan from a public hike); account
   for cloud save, publish, rate, report, block. First version: profiles, publish (private/unlisted/public), feed with
   area filter, 1–5 ratings, plan this hike, report/block; no follows, comments, photos. Google sign-in now, Apple at
   native. Cost rule $0/month; database host decided in 3.1 (Neon / Supabase / Raspberry Pi).
 - **`main` protection:** branch ruleset `main` (active, no bypass): required checks `lint`, `api-test`,
   `Analyze (python)`, `web-test`, `e2e`, `Analyze (javascript-typescript)`, `api-contract`; deletion and force-push blocked. PR-required, linear history etc. arrive in 0.6.
-- **Open PRs:** #10 roadmap change (manager merges). Dependabot #8 (`actions/cache` 5→6): checks predate the `api-contract`
-  requirement — needs a rebase/re-run before merge.
+- **Open PRs:** Dependabot #8 (`actions/cache` 5→6): rebase requested via `@dependabot rebase` on 2026-10-18; merge once
+  its checks (incl. `api-contract`) are green.
 - **Local leftovers (manager may delete):** temp clones `%TEMP%\tmp.7qIrHpAUnP`, `%TEMP%\tmp.GMVXYXKa6R`;
   Docker images `hike-api:qa`, `hike-api:test`.
 

@@ -9,14 +9,14 @@ The tech lead keeps this file true. A step moves to Done only with checkpoint ev
 | 0.2 | FastAPI skeleton | done | [#6](https://github.com/YoavIsaacs/hiking_app/pull/6) | On `main` @ 77726b0: `uv run pytest` 35 passed, coverage 100% (gate 85%, `--disable-socket`); `mypy app tests` strict → 0 errors (15 files); CodeQL run [38527140518](https://github.com/YoavIsaacs/hiking_app/actions/runs/38527140518) → 0 results, 0 open alerts; `/health` local latency n=300 after warm-up p50 1.20 ms / p95 1.64 ms / max 2.34 ms (< 50 ms). Docker (QA, branch): non-root uid 10001, `/health` returns build `GIT_SHA`/`VERSION`. Required checks on `main` (`gh api …/rules/branches/main`): `lint`, `api-test`, `Analyze (python)` (GitHub Actions). | 2026-10-14 |
 | 0.3 | React app | done | [#7](https://github.com/YoavIsaacs/hiking_app/pull/7) | On `main` @ c4202b1: `tsc -b --noEmit` → 0 errors; size-limit 108.25 kB gzipped (limit 200 kB; gate proven to fail at 50 KB by QA on branch); Vitest 43 passed / 11 files incl. the 3 named tests (render version, 500 error state, loading), coverage 96.34 stmts / 96.36 branches / 98.59 lines (gate 80); Playwright `just e2e` 6 passed (Chromium, Pixel 7, iPhone 14 WebKit); CI run [38560446752](https://github.com/YoavIsaacs/hiking_app/actions/runs/38560446752) lint/api-test/web-test/e2e green; CodeQL run [38560446633](https://github.com/YoavIsaacs/hiking_app/actions/runs/38560446633) green, 0 open alerts. Required on `main`: `lint`, `api-test`, `Analyze (python)`, `web-test`, `e2e`, `Analyze (javascript-typescript)`. | 2026-10-14 |
 | 0.4 | Generated API client | done | [#9](https://github.com/YoavIsaacs/hiking_app/pull/9) | On `main` @ 3688c57: `grep type Health|interface Health|isHealth web/src` → none (API types only via generated `components['schemas']`); `just gen-api` → tree clean; `tsc -b` 0 errors; API pytest 83 passed, 100% coverage; Vitest 58 passed. Deliberate break (field added without regenerating) → `api-contract` red in run [38565760255](https://github.com/YoavIsaacs/hiking_app/actions/runs/38565760255), reverted → green; `main` CI run [38568116619](https://github.com/YoavIsaacs/hiking_app/actions/runs/38568116619) and CodeQL [38568116652](https://github.com/YoavIsaacs/hiking_app/actions/runs/38568116652) green. `api-contract` required on `main`. | 2026-10-14 |
-| 0.5 | Deployment | in progress — build (manager running runbook 2–4, 6–10; kill switch dropped) | | | |
+| 0.5 | Deployment | in progress — PR (kill switch deferred) | | | |
 | 0.6 | Pipeline rules | not started | | | |
 
 ## Current state (handoff for a fresh session)
 Read this, then `docs/steps/<current step>.md`. Nothing here lives only in chat.
 
 - **Current step:** 0.5 Deployment on branch `step/0.5-deployment`. Brief: `docs/steps/0.5.md` (see its Status and
-  "Session handoff"). Stage: review round 1 fixes (qa → backend → devops), then re-review → PR → merge → live checks.
+  "Session handoff"). Stage: PR open, waiting on CI + preview (first live WIF run) → merge → live checks.
   Kill switch (ADR 0003) **deferred** by the manager 2026-10-19 — no `ops/`, no `ops-test`.
 - **GCP:** project `hike-prep` (number 1484623023), region `me-west1`, billing linked, budget 5 ILS/month
   (manager, 2026-10-19). Runbook steps 1–4, 5–10 done (manager) and verified (tech lead): Firebase site `hike-prep`, WIF provider `hiking-app`, SAs, env `production` (branch `main` only), API URL `https://hike-api-zr6tmbe2ya-zf.a.run.app` (sample image until the first deploy).
@@ -43,7 +43,7 @@ Read this, then `docs/steps/<current step>.md`. Nothing here lives only in chat.
   header comment should show `--build-arg VERSION`. Consider Dependabot `docker` ecosystem for `api/`.
   Secret scanning + push protection: already enabled (public repo, checked 2026-10-14); the fake-key check
   deferred from 0.1 can be run in 0.5. README still says "run everything from Git Bash" — no longer required (nit).
-- **0.6:** `--fail-if-no-match` on every `pnpm --filter` in CI and pre-commit; pin CI actions to SHAs; caching (`api-test` already has setup-uv cache); confirm Dependabot handles
+- **0.6:** fix `deploy-api.yml` describe-error text ("Service cannot describe service"); remove the dead `.invalid` guard in `deploy-web.yml`; `--fail-if-no-match` on every `pnpm --filter` in CI and pre-commit; pin CI actions to SHAs; caching (`api-test` already has setup-uv cache); confirm Dependabot handles
   the pnpm 12 lockfile.
 - **Before Phase 3 (or when there is something to show):** custom domain for the web app (Firebase Hosting custom domain; buying a domain costs money → manager approval) and optionally `/api/**` Hosting rewrite to Cloud Run (check `me-west1` support). Revisit the deferred ADR 0003 kill switch.
 - **Before Phase 1 screens:** UX §6 44×44 px targets (deferred from 0.3); no visual identity or tokens exist yet (`design/tokens.json`, `docs/design/` absent).

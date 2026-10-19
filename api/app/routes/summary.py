@@ -47,7 +47,13 @@ def summarise_gpx(
             lat=p.lat, lon=p.lon, elev_m=p.elev_m if has_elevation else None
         )
 
-    kept = simplify(points, keep=keep, max_points=params.max_points)
+    kept = simplify(
+        points,
+        keep=keep,
+        max_points=params.max_points,
+        prethin_max_points=params.prethin_max_points,
+        dist_m=dist,
+    )
     return RouteSummary(
         name=route_name(raw.metadata_name, raw.track_name, filename),
         distance_m=dist[-1],

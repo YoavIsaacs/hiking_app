@@ -1,8 +1,10 @@
 """Ranked Ramer-Douglas-Peucker simplification (ADR 0004 §3.5)."""
 
 import math
+from bisect import bisect_left
 from collections.abc import Collection, Sequence
 
+from app.routes.geo import cumulative_distance
 from app.routes.params import DEFAULT_PARAMS, EARTH_RADIUS_M, RDP_TIE_TOLERANCE_M
 from app.routes.track import RawPoint
 
@@ -43,8 +45,29 @@ def prethin(
     min_points: int = DEFAULT_PARAMS.max_points,
     max_points: int = DEFAULT_PARAMS.prethin_max_points,
 ) -> tuple[int, ...]:
-    """O(n) pre-thinning to at most max_points candidate indices (ADR 0004 3.5)."""
-    raise NotImplementedError
+    """O(n) pre-thinning to at most max_points candidate indices (ADR 0004 3.5).
+
+    Forced indices F = {0, n-1} + keep, M = min_points. M evenly strided interior
+    indices guarantee at least M + 2 candidates; the rest of the budget goes to
+    indices at evenly spaced distances, so sparse stretches of a dense recording
+    survive.
+    """
+    if min_points < 1 or max_points < 2 * min_points:
+        raise ValueError("max_points must be at least 2 * min_points")
+    n = len(dist_m)
+    if n <= max_points:
+        return tuple(range(n))
+    forced = {0, n - 1, *keep}
+    if len(forced) > min_points:
+        raise ValueError("more forced points than min_points")
+    picks = set(forced)
+    picks.update(1 + j * (n - 2) // min_points for j in range(min_points))
+    total = dist_m[-1]
+    spare = max_points - len(forced) - min_points
+    if total > 0 and spare > 0:
+        for j in range(1, spare + 1):
+            picks.add(bisect_left(dist_m, j * total / (spare + 1)))
+    return tuple(sorted(picks))
 
 
 def rdp_significance(
@@ -52,8 +75,10 @@ def rdp_significance(
 ) -> tuple[float, ...]:
     """inf at both ends; iterative, no recursion.
 
-    Splitting (a, b) at the farthest point i gives sig(i) = min(d_max, sig(parent)),
-    so {i : sig(i) > eps} is exactly the output of RDP(eps) for every eps.
+    Splitting (a, b) at a point i gives sig(i) = min(d_i, sig(parent)), so
+    {i : sig(i) > eps} is exactly the output of RDP(eps) for every eps. The split
+    point is the one nearest the midpoint among those within tie_tolerance_m of the
+    farthest (smaller index on a tie): collinear runs halve (m log m, not m^2).
     """
     n = len(points)
     sig = [math.inf] * n
@@ -66,14 +91,14 @@ def rdp_significance(
         if b - a < 2:
             continue
         pa, pb = xy[a], xy[b]
-        # Ties split nearest the midpoint: collinear runs halve (n log n, not n^2).
+        dists = [_segment_distance(xy[i], pa, pb) for i in range(a + 1, b)]
+        floor = max(dists) - tie_tolerance_m
         mid = (a + b) / 2
-        far, far_d = a + 1, -1.0
-        for i in range(a + 1, b):
-            d = _segment_distance(xy[i], pa, pb)
-            if d > far_d or (d == far_d and abs(i - mid) < abs(far - mid)):
-                far, far_d = i, d
-        sig[far] = min(far_d, parent)
+        far = min(
+            (i for i in range(a + 1, b) if dists[i - a - 1] >= floor),
+            key=lambda i: (abs(i - mid), i),
+        )
+        sig[far] = min(dists[far - a - 1], parent)
         stack.append((a, far, sig[far]))
         stack.append((far, b, sig[far]))
     return tuple(sig)
@@ -87,13 +112,31 @@ def simplify(
     prethin_max_points: int = DEFAULT_PARAMS.prethin_max_points,
     dist_m: Sequence[float] | None = None,
 ) -> tuple[int, ...]:
-    """Sorted indices, len == min(n, max_points); start, end and `keep` stay in."""
+    """Sorted indices, len == min(n, max_points); start, end and `keep` stay in.
+
+    Above prethin_max_points, RDP ranks only the pre-thinned candidates; the result
+    still holds full-track indices.
+    """
     n = len(points)
     if n <= max_points:
         return tuple(range(n))
     forced = {0, n - 1, *keep}
     if len(forced) > max_points:
         raise ValueError("more forced points than the point budget")
-    sig = rdp_significance(points)
-    rest = sorted((i for i in range(n) if i not in forced), key=lambda i: (-sig[i], i))
-    return tuple(sorted(forced | set(rest[: max_points - len(forced)])))
+    if n > prethin_max_points:
+        full_dist = cumulative_distance(points) if dist_m is None else dist_m
+        candidates = prethin(
+            full_dist,
+            keep=forced,
+            min_points=max_points,
+            max_points=prethin_max_points,
+        )
+    else:
+        candidates = tuple(range(n))
+    sig = rdp_significance([points[i] for i in candidates])
+    rest = sorted(
+        (k for k, i in enumerate(candidates) if i not in forced),
+        key=lambda k: (-sig[k], candidates[k]),
+    )
+    chosen = {candidates[k] for k in rest[: max_points - len(forced)]}
+    return tuple(sorted(forced | chosen))

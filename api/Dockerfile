@@ -17,8 +17,7 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 FROM python:3.12-slim AS runtime
 ARG GIT_SHA=unknown
 ARG VERSION=0.0.0-dev
-# TEMPORARY (step 0.5 checkpoint): wrong SHA on purpose so the candidate smoke fails; reverted in the next PR.
-ENV HIKE_GIT_SHA=deliberately-wrong-sha-checkpoint-0.5 \
+ENV HIKE_GIT_SHA=${GIT_SHA} \
     HIKE_VERSION=${VERSION} \
     PATH="/app/.venv/bin:$PATH" \
     PYTHONUNBUFFERED=1 \

@@ -8,6 +8,7 @@ for ``$GITHUB_OUTPUT`` (``version`` prints the bare version). Exit codes: 0 ok,
 from __future__ import annotations
 
 import argparse
+import http.client
 import json
 import sys
 import time
@@ -147,7 +148,7 @@ def smoke(
             result = fetch(url + "/health", headers, SMOKE_TIMEOUT_S)
             check_health(result, expected_sha, origin)
             return
-        except (DeployCheckError, OSError) as error:
+        except (DeployCheckError, OSError, http.client.HTTPException) as error:
             reason = str(error)
             print(f"smoke attempt {attempt}/{attempts}: {reason}", file=sys.stderr)
         if attempt < attempts:

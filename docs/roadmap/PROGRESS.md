@@ -10,16 +10,16 @@ The tech lead keeps this file true. A step moves to Done only with checkpoint ev
 | 0.3 | React app | done | [#7](https://github.com/YoavIsaacs/hiking_app/pull/7) | On `main` @ c4202b1: `tsc -b --noEmit` → 0 errors; size-limit 108.25 kB gzipped (limit 200 kB; gate proven to fail at 50 KB by QA on branch); Vitest 43 passed / 11 files incl. the 3 named tests (render version, 500 error state, loading), coverage 96.34 stmts / 96.36 branches / 98.59 lines (gate 80); Playwright `just e2e` 6 passed (Chromium, Pixel 7, iPhone 14 WebKit); CI run [38560446752](https://github.com/YoavIsaacs/hiking_app/actions/runs/38560446752) lint/api-test/web-test/e2e green; CodeQL run [38560446633](https://github.com/YoavIsaacs/hiking_app/actions/runs/38560446633) green, 0 open alerts. Required on `main`: `lint`, `api-test`, `Analyze (python)`, `web-test`, `e2e`, `Analyze (javascript-typescript)`. | 2026-10-14 |
 | 0.4 | Generated API client | done | [#9](https://github.com/YoavIsaacs/hiking_app/pull/9) | On `main` @ 3688c57: `grep type Health|interface Health|isHealth web/src` → none (API types only via generated `components['schemas']`); `just gen-api` → tree clean; `tsc -b` 0 errors; API pytest 83 passed, 100% coverage; Vitest 58 passed. Deliberate break (field added without regenerating) → `api-contract` red in run [38565760255](https://github.com/YoavIsaacs/hiking_app/actions/runs/38565760255), reverted → green; `main` CI run [38568116619](https://github.com/YoavIsaacs/hiking_app/actions/runs/38568116619) and CodeQL [38568116652](https://github.com/YoavIsaacs/hiking_app/actions/runs/38568116652) green. `api-contract` required on `main`. | 2026-10-14 |
 | 0.5 | Deployment | done (part deferred) | [#11](https://github.com/YoavIsaacs/hiking_app/pull/11), [#16](https://github.com/YoavIsaacs/hiking_app/pull/16), [#17](https://github.com/YoavIsaacs/hiking_app/pull/17) | Both live on HTTPS: API `https://hike-api-zr6tmbe2ya-zf.a.run.app/health` 200, `git_sha` 5e8e157 == `main` HEAD, `env: production`; web `https://hike-prep.web.app` 200 `no-cache`, HTTP → 301 HTTPS; hashed assets `immutable` (preview channel check). Deploys from `main` via WIF, no keys: Deploy API [39233736461](https://github.com/YoavIsaacs/hiking_app/actions/runs/39233736461), Deploy Web [39233736800](https://github.com/YoavIsaacs/hiking_app/actions/runs/39233736800) (live Playwright 6 passed). **Broken deploy rolls back with no manual step:** #16 (wrong `git_sha` on purpose) → run [39243336412](https://github.com/YoavIsaacs/hiking_app/actions/runs/39243336412) failed at candidate smoke 6/6, promote skipped, traffic 100 % on `hike-api-00002-mef`, live `/health` kept 3398338; fix-forward #17 → run [39244521177](https://github.com/YoavIsaacs/hiking_app/actions/runs/39244521177) green, 100 % on `hike-api-00005-ruw`. PR preview: #11 `https://hike-prep--pr-11-ehfnijw0.web.app` commented. CORS: `hike-prep.web.app` allowed, `evil.web.app` no ACAO. **Phone (manager):** < 5 s cold / < 1 s warm passed — numbers not recorded (manager: "roughly correct"). No new required checks; required on `main` (`gh api …/rules/branches/main`): `lint`, `api-test`, `Analyze (python)`, `web-test`, `e2e`, `Analyze (javascript-typescript)`, `api-contract`. **Deferred by manager:** $1 hard stop / kill switch (ADR 0003) — revisit before Phase 3. | 2026-10-19 |
-| 0.6 | Pipeline rules | not started | | | |
+| 0.6 | Pipeline rules | done | [#18](https://github.com/YoavIsaacs/hiking_app/pull/18), [#23](https://github.com/YoavIsaacs/hiking_app/pull/23) | **0 ways to push to `main` without green checks:** ruleset `main` (`gh api …/rules/branches/main`): `deletion`, `non_fast_forward`, `pull_request` (0 approvals, squash only), `required_linear_history`, `required_status_checks` = `lint`, `api-test`, `web-test`, `e2e`, `api-contract`, `Analyze (python)`, `Analyze (javascript-typescript)`, `pr-title`; bypass list empty. Manager's direct push of a test commit (admin) → `GH013 … Changes must be made through a pull request`, rejected. Failing-test PR #19 → `api-test` red, `BLOCKED`. Repo: squash only, message = PR title. **PR pipeline:** 95 s wall (#18, all jobs), 88 s (#19) — < 5 min. Path filters: #20 web-only / #21 api-only / #22 docs-only skipped the other area's jobs, still `CLEAN`; #22 non-conventional title → `pr-title` red, retitled → green. **Merge → live:** #18 merged 12:41:40Z; Deploy API [39254055437](https://github.com/YoavIsaacs/hiking_app/actions/runs/39254055437) 78 s, Deploy Web [39254055323](https://github.com/YoavIsaacs/hiking_app/actions/runs/39254055323) 106 s → live ≈ 1 m 50 s (< 10 min); `/health` `git_sha` 53fa3cb. **Release:** release-please (GitHub App token) opened #23 with CI running; merged → tag + release `v0.1.0`, `CHANGELOG.md`. **Nightly:** dispatch [39254396266](https://github.com/YoavIsaacs/hiking_app/actions/runs/39254396266) green on fresh deps (e.g. fastapi 0.143.2 → 0.148.0); forced failure opened #25, second forced run commented on it (closed). 429 probe: 0 × 429 at 100 concurrent (`max-instances=1` kept). New required check: `pr-title`. | 2026-10-19 |
 
 ## Current state (handoff for a fresh session)
 Read this, then `docs/steps/<current step>.md`. Nothing here lives only in chat.
 
-- **Current step:** 0.6 Pipeline rules on branch `step/0.6-pipeline-rules` (created 2026-10-19; brief `docs/steps/0.6.md`; draft PR #18).
-  **Next session starts here:** step loop 1–2 for 0.6 — write `docs/steps/0.6.md` from `docs/roadmap/phase-0.md` + `overview.md`
-  0.6, folding in the 0.6 carry-forward list below; triage Dependabot #12–#15.
-  0.5 closed 2026-10-19. Open Dependabot PRs #12–#15 held during 0.5: **#13 (python 3.12 → 3.14 image) must not be
-  merged** (stack is 3.12; 0.6 adds a Dependabot ignore for Python majors); #12, #14, #15 to check in 0.6.
+- **Current step:** 1.1 GPX test corpus on branch `step/1.1-gpx-test-corpus` (created 2026-10-19 from `main` @ e9a85e8,
+  carries this 0.6 close-out). Phase 0 complete; `v0.1.0` released.
+  **Next session starts here:** confirm 1.1 with the manager, then step loop 1–2 — write `docs/steps/1.1.md` from
+  `docs/roadmap/phase-1.md` § 1.1 + `overview.md` 1.1. Triage Dependabot #24 (actions minor group) and **#26
+  (`astral-sh/setup-uv` 7.6 → 10.3, a major — read its changelog before merging)**.
 - **GCP:** project `hike-prep` (number 1484623023), region `me-west1`, billing linked, budget 5 ILS/month
   (manager, 2026-10-19). Runbook steps 1–4, 5–10 done (manager) and verified (tech lead): Firebase site `hike-prep`, WIF provider `hiking-app`, SAs, env `production` (branch `main` only), API URL `https://hike-api-zr6tmbe2ya-zf.a.run.app` (sample image until the first deploy).
 - **Roadmap change (2026-10-18, manager):** community pivot — new Phase 3 "Accounts and community", old Phase 3 → 4,
@@ -33,20 +33,21 @@ Read this, then `docs/steps/<current step>.md`. Nothing here lives only in chat.
   in that session). Next: read the doc (connector, or a Markdown export in the scratchpad) and diff it section by section
   against `docs/roadmap/` on `main` (6ba84ed); report differences, patch only those. Then add the link to
   `docs/roadmap/README.md` and drop its "mirror is the newer copy" note.
-- **Step branch:** `main` (incl. #10) merged into `step/0.5-deployment` on 2026-10-18, so the roadmap mirror there has phases 0–6.
-- **`main` protection:** branch ruleset `main` (active, no bypass): required checks `lint`, `api-test`,
-  `Analyze (python)`, `web-test`, `e2e`, `Analyze (javascript-typescript)`, `api-contract`; deletion and force-push blocked. PR-required, linear history etc. arrive in 0.6.
-- **Open PRs:** Dependabot #12–#15 (see Current step). Dependabot #8 (`actions/cache` 5→6) merged 2026-10-18 (09f8763) and merged into the step branch.
+- **`main` protection (0.6):** ruleset `main` (active, no bypass): PR required (0 approvals, squash only), linear
+  history, deletion and force-push blocked; required checks `lint`, `api-test`, `web-test`, `e2e`, `api-contract`,
+  `Analyze (python)`, `Analyze (javascript-typescript)`, `pr-title`. Repo: squash merge only, commit = PR title (body blank).
+  The ruleset UI also set `require_extra_approval_for_unattributed_changes: true` (not in the runbook) — harmless so far; first suspect if a PR is blocked unexpectedly.
+- **Releases:** release-please (GitHub App `hike-release-please`; var `RELEASE_APP_CLIENT_ID`, secret
+  `RELEASE_APP_PRIVATE_KEY`) keeps a release PR open; the manager merges it to cut a release. Nightly 02:43 UTC on fresh deps; failures go to one open `nightly-failure` issue.
+- **Open PRs:** Dependabot #24, #26 (see Current step).
 - **Local leftovers (manager may delete):** temp clones `%TEMP%\tmp.7qIrHpAUnP`, `%TEMP%\tmp.GMVXYXKa6R`;
   Docker images `hike-api:qa`, `hike-api:test`.
 
 ### Carry-forward (decided items waiting for their step)
-- **0.5:** decide an env-var prefix for API settings (ADR) — `ENV`, `VERSION` are collision-prone. Dockerfile
-  header comment should show `--build-arg VERSION`. Consider Dependabot `docker` ecosystem for `api/`.
-  Secret scanning + push protection: already enabled (public repo, checked 2026-10-14); the fake-key check
-  deferred from 0.1 can be run in 0.5. README still says "run everything from Git Bash" — no longer required (nit).
-- **0.6:** Dependabot: ignore `python` docker major/minor bumps (stack 3.12; #13 opened 3.14); check whether `max-instances=1` causes 429 `Rate exceeded` on bursts (seen once right after a failed deploy, 2026-10-19) — measure, don't raise without a decision; fix `deploy-api.yml` describe-error text ("Service cannot describe service"); remove the dead `.invalid` guard in `deploy-web.yml`; `--fail-if-no-match` on every `pnpm --filter` in CI and pre-commit; pin CI actions to SHAs; caching (`api-test` already has setup-uv cache); confirm Dependabot handles
-  the pnpm 12 lockfile.
+- **From 0.6 (needs a decision when it matters):** API `/health` `version` comes from `api/pyproject.toml`, not the
+  release-please version (`.release-please-manifest.json`) — wire them together (release-please `extra-files` + `uv.lock`
+  sync) or accept the drift; raise before the next release. When `design/tokens.json` exists, add `design/**` to the CI
+  `web` path filter. QA: web pre-commit hooks don't run in a bare `git worktree` (needs its own `pnpm install`, short path).
 - **Before Phase 3 (or when there is something to show):** custom domain for the web app (Firebase Hosting custom domain; buying a domain costs money → manager approval) and optionally `/api/**` Hosting rewrite to Cloud Run (check `me-west1` support). Revisit the deferred ADR 0003 kill switch.
 - **Before Phase 1 screens:** UX §6 44×44 px targets (deferred from 0.3); no visual identity or tokens exist yet (`design/tokens.json`, `docs/design/` absent).
   Phase 1 needs a graphic-designer pass before the first real screen.
@@ -103,6 +104,12 @@ Read this, then `docs/steps/<current step>.md`. Nothing here lives only in chat.
   - **Tech lead commits while an agent is running** (0.4, 0.5) → `.claude/agents/tech-lead.md` step 5 changed (manager-approved 2026-10-19).
   - **Verification that doesn't exercise the real path** (devops 0.4 inherited PATH; 0.5 runbook self-check read config,
     never exchanged a token) → `.claude/agents/devops.md` "Verify the real path" rule added (manager-approved 2026-10-19).
+- 0.6: devops 1 review round (reviewer: release-please would have cut v1.0.0 — `0.0.0` manifest means "no release";
+  shared concurrency group could cancel pending `main` runs; runbook squash message `PR_BODY` contradicted D1). QA's
+  verification PRs and 429 probe were clean. Devops added Dependabot commit prefixes + a README hint (accepted) and ran
+  `actionlint` ad hoc (not added). Manager stored a variable as a secret (caught by tech lead's read-only check); the
+  first direct-push command was bash syntax in PowerShell — runbook commands for the manager must be PowerShell-safe.
+  Tech lead's own direct-push attempt was blocked by tool permissions (correct; manager ran it). No repeated pattern.
 - **Repeated patterns → changes (manager-approved and applied 2026-10-14):**
   1. QA missed failure-path gaps twice (0.1, 0.2) → `.claude/agents/qa.md`: treat every untested failure path
      of a checklist item as a *finding*, not a follow-up; always probe negatives and false positives

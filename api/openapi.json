@@ -1,6 +1,98 @@
 {
   "components": {
     "schemas": {
+      "Body_parseRoute": {
+        "properties": {
+          "file": {
+            "contentMediaType": "application/octet-stream",
+            "description": "GPX 1.0/1.1 file, at most 10 MB",
+            "title": "File",
+            "type": "string"
+          }
+        },
+        "required": [
+          "file"
+        ],
+        "title": "Body_parseRoute",
+        "type": "object"
+      },
+      "ErrorResponse": {
+        "properties": {
+          "code": {
+            "enum": [
+              "bad_request",
+              "not_found",
+              "method_not_allowed",
+              "file_too_large",
+              "invalid_gpx",
+              "too_few_points",
+              "validation_error",
+              "http_error",
+              "internal_error"
+            ],
+            "title": "Code",
+            "type": "string"
+          },
+          "detail": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/FieldError"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Detail"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "message",
+          "detail"
+        ],
+        "title": "ErrorResponse",
+        "type": "object"
+      },
+      "FieldError": {
+        "properties": {
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "title": "Loc",
+            "type": "array"
+          },
+          "msg": {
+            "title": "Msg",
+            "type": "string"
+          },
+          "type": {
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "FieldError",
+        "type": "object"
+      },
       "HealthResponse": {
         "properties": {
           "env": {
@@ -29,6 +121,218 @@
         ],
         "title": "HealthResponse",
         "type": "object"
+      },
+      "LatLonElev": {
+        "additionalProperties": false,
+        "properties": {
+          "elev_m": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Elev M"
+          },
+          "lat": {
+            "maximum": 90.0,
+            "minimum": -90.0,
+            "title": "Lat",
+            "type": "number"
+          },
+          "lon": {
+            "maximum": 180.0,
+            "minimum": -180.0,
+            "title": "Lon",
+            "type": "number"
+          }
+        },
+        "required": [
+          "lat",
+          "lon",
+          "elev_m"
+        ],
+        "title": "LatLonElev",
+        "type": "object"
+      },
+      "RouteSummary": {
+        "additionalProperties": false,
+        "properties": {
+          "distance_m": {
+            "minimum": 0.0,
+            "title": "Distance M",
+            "type": "number"
+          },
+          "elevation_source": {
+            "enum": [
+              "file",
+              "lookup",
+              "none"
+            ],
+            "title": "Elevation Source",
+            "type": "string"
+          },
+          "end": {
+            "$ref": "#/components/schemas/LatLonElev"
+          },
+          "gain_m": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Gain M"
+          },
+          "has_elevation": {
+            "title": "Has Elevation",
+            "type": "boolean"
+          },
+          "high_point": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/LatLonElev"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "is_loop": {
+            "title": "Is Loop",
+            "type": "boolean"
+          },
+          "loss_m": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Loss M"
+          },
+          "max_elev_m": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Elev M"
+          },
+          "min_elev_m": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Min Elev M"
+          },
+          "name": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "point_count_original": {
+            "minimum": 2.0,
+            "title": "Point Count Original",
+            "type": "integer"
+          },
+          "points": {
+            "items": {
+              "$ref": "#/components/schemas/TrackPoint"
+            },
+            "maxItems": 500,
+            "minItems": 2,
+            "title": "Points",
+            "type": "array"
+          },
+          "source_format": {
+            "enum": [
+              "trk",
+              "rte"
+            ],
+            "title": "Source Format",
+            "type": "string"
+          },
+          "start": {
+            "$ref": "#/components/schemas/LatLonElev"
+          }
+        },
+        "required": [
+          "name",
+          "distance_m",
+          "gain_m",
+          "loss_m",
+          "min_elev_m",
+          "max_elev_m",
+          "high_point",
+          "start",
+          "end",
+          "is_loop",
+          "points",
+          "has_elevation",
+          "elevation_source",
+          "source_format",
+          "point_count_original"
+        ],
+        "title": "RouteSummary",
+        "type": "object"
+      },
+      "TrackPoint": {
+        "additionalProperties": false,
+        "properties": {
+          "dist_m": {
+            "minimum": 0.0,
+            "title": "Dist M",
+            "type": "number"
+          },
+          "elev_m": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Elev M"
+          },
+          "lat": {
+            "maximum": 90.0,
+            "minimum": -90.0,
+            "title": "Lat",
+            "type": "number"
+          },
+          "lon": {
+            "maximum": 180.0,
+            "minimum": -180.0,
+            "title": "Lon",
+            "type": "number"
+          }
+        },
+        "required": [
+          "lat",
+          "lon",
+          "elev_m",
+          "dist_m"
+        ],
+        "title": "TrackPoint",
+        "type": "object"
       }
     }
   },
@@ -54,6 +358,77 @@
           }
         },
         "summary": "Get Health"
+      }
+    },
+    "/v1/routes/parse": {
+      "post": {
+        "operationId": "parseRoute",
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_parseRoute"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RouteSummary"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request Entity Too Large"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "summary": "Parse a GPX file into a route summary",
+        "tags": [
+          "routes"
+        ]
       }
     }
   }

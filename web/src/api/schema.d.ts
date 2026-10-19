@@ -21,10 +21,65 @@ export interface paths {
     patch?: never
     trace?: never
   }
+  '/v1/routes/parse': {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    get?: never
+    put?: never
+    /** Parse a GPX file into a route summary */
+    post: operations['parseRoute']
+    delete?: never
+    options?: never
+    head?: never
+    patch?: never
+    trace?: never
+  }
 }
 export type webhooks = Record<string, never>
 export interface components {
   schemas: {
+    /** Body_parseRoute */
+    Body_parseRoute: {
+      /**
+       * File
+       * @description GPX 1.0/1.1 file, at most 10 MB
+       */
+      file: string
+    }
+    /** ErrorResponse */
+    ErrorResponse: {
+      /**
+       * Code
+       * @enum {string}
+       */
+      code:
+        | 'bad_request'
+        | 'not_found'
+        | 'method_not_allowed'
+        | 'file_too_large'
+        | 'invalid_gpx'
+        | 'too_few_points'
+        | 'validation_error'
+        | 'http_error'
+        | 'internal_error'
+      /** Detail */
+      detail: components['schemas']['FieldError'][] | null
+      /** Message */
+      message: string
+    }
+    /** FieldError */
+    FieldError: {
+      /** Loc */
+      loc: (string | number)[]
+      /** Msg */
+      msg: string
+      /** Type */
+      type: string
+    }
     /** HealthResponse */
     HealthResponse: {
       /** Env */
@@ -38,6 +93,62 @@ export interface components {
       status: 'ok'
       /** Version */
       version: string
+    }
+    /** LatLonElev */
+    LatLonElev: {
+      /** Elev M */
+      elev_m: number | null
+      /** Lat */
+      lat: number
+      /** Lon */
+      lon: number
+    }
+    /** RouteSummary */
+    RouteSummary: {
+      /** Distance M */
+      distance_m: number
+      /**
+       * Elevation Source
+       * @enum {string}
+       */
+      elevation_source: 'file' | 'lookup' | 'none'
+      end: components['schemas']['LatLonElev']
+      /** Gain M */
+      gain_m: number | null
+      /** Has Elevation */
+      has_elevation: boolean
+      high_point: components['schemas']['LatLonElev'] | null
+      /** Is Loop */
+      is_loop: boolean
+      /** Loss M */
+      loss_m: number | null
+      /** Max Elev M */
+      max_elev_m: number | null
+      /** Min Elev M */
+      min_elev_m: number | null
+      /** Name */
+      name: string
+      /** Point Count Original */
+      point_count_original: number
+      /** Points */
+      points: components['schemas']['TrackPoint'][]
+      /**
+       * Source Format
+       * @enum {string}
+       */
+      source_format: 'trk' | 'rte'
+      start: components['schemas']['LatLonElev']
+    }
+    /** TrackPoint */
+    TrackPoint: {
+      /** Dist M */
+      dist_m: number
+      /** Elev M */
+      elev_m: number | null
+      /** Lat */
+      lat: number
+      /** Lon */
+      lon: number
     }
   }
   responses: never
@@ -64,6 +175,66 @@ export interface operations {
         }
         content: {
           'application/json': components['schemas']['HealthResponse']
+        }
+      }
+    }
+  }
+  parseRoute: {
+    parameters: {
+      query?: never
+      header?: never
+      path?: never
+      cookie?: never
+    }
+    requestBody: {
+      content: {
+        'multipart/form-data': components['schemas']['Body_parseRoute']
+      }
+    }
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          'application/json': components['schemas']['RouteSummary']
+        }
+      }
+      /** @description Bad Request */
+      400: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          'application/json': components['schemas']['ErrorResponse']
+        }
+      }
+      /** @description Request Entity Too Large */
+      413: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          'application/json': components['schemas']['ErrorResponse']
+        }
+      }
+      /** @description Unprocessable Entity */
+      422: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          'application/json': components['schemas']['ErrorResponse']
+        }
+      }
+      /** @description Internal Server Error */
+      500: {
+        headers: {
+          [name: string]: unknown
+        }
+        content: {
+          'application/json': components['schemas']['ErrorResponse']
         }
       }
     }

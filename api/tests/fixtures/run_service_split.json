@@ -1,0 +1,13 @@
+{
+  "apiVersion": "serving.knative.dev/v1",
+  "kind": "Service",
+  "metadata": {"name": "hike-api"},
+  "status": {
+    "url": "https://hike-api-123456789012.me-west1.run.app",
+    "traffic": [
+      {"revisionName": "hike-api-00007-abc", "percent": 90},
+      {"revisionName": "hike-api-00008-def", "percent": 10, "tag": "candidate",
+       "url": "https://candidate---hike-api-123456789012.me-west1.run.app"}
+    ]
+  }
+}

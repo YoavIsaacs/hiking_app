@@ -8,6 +8,11 @@ updates:
       python-minor-patch:
         update-types: [minor, patch]
 
+  - package-ecosystem: docker
+    directory: /api
+    schedule:
+      interval: weekly
+
   - package-ecosystem: npm
     directory: /
     schedule:

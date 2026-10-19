@@ -1,0 +1,14 @@
+{
+  "apiVersion": "serving.knative.dev/v1",
+  "kind": "Service",
+  "metadata": {"name": "hike-api", "namespace": "123456789012"},
+  "spec": {"traffic": [{"latestRevision": true, "percent": 100}]},
+  "status": {
+    "url": "https://hike-api-123456789012.me-west1.run.app",
+    "latestReadyRevisionName": "hike-api-00007-abc",
+    "latestCreatedRevisionName": "hike-api-00007-abc",
+    "traffic": [
+      {"latestRevision": true, "percent": 100, "revisionName": "hike-api-00007-abc"}
+    ]
+  }
+}

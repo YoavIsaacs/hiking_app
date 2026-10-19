@@ -68,9 +68,16 @@ def test_export_is_unaffected_by_version_git_sha_and_env_variables(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     baseline = _export(tmp_path / "base.json")
-    monkeypatch.setenv("VERSION", "123.456.789")
-    monkeypatch.setenv("GIT_SHA", "deadbeef")
-    monkeypatch.setenv("ENV", "production")
+    for name, value in (
+        ("VERSION", "123.456.789"),
+        ("GIT_SHA", "deadbeef"),
+        ("ENV", "production"),
+    ):
+        monkeypatch.setenv(name, value)
+        monkeypatch.setenv(f"HIKE_{name}", value)
+    monkeypatch.setenv("HIKE_CORS_ORIGINS", '["https://odd.test"]')
+    monkeypatch.setenv("HIKE_CORS_FIREBASE_SITE", "hike-prep-abc")
+    monkeypatch.setenv("HIKE_OPEN_METEO_BASE_URL", "http://odd.test")
     assert _export(tmp_path / "changed.json") == baseline
 
 
@@ -81,7 +88,10 @@ def test_export_ignores_a_stray_dotenv_in_the_working_directory(
     workdir = tmp_path / "work"
     workdir.mkdir()
     (workdir / ".env").write_text(
-        "VERSION=9.9.9\nGIT_SHA=feedface\nENV=prod\n", encoding="utf-8"
+        "VERSION=9.9.9\nGIT_SHA=feedface\nENV=prod\n"
+        "HIKE_VERSION=8.8.8\nHIKE_GIT_SHA=cafe\nHIKE_ENV=prod\n"
+        'HIKE_CORS_FIREBASE_SITE=hike-prep-abc\nHIKE_CORS_ORIGINS=["https://odd.test"]\n',
+        encoding="utf-8",
     )
     monkeypatch.chdir(workdir)
     assert _export(tmp_path / "changed.json") == baseline

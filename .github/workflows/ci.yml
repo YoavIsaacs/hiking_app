@@ -4,7 +4,7 @@ name: CI
 # main and callers such as nightly.yml run everything. A job skipped by its job-level
 # `if:` is reported as "skipped", which GitHub counts as passing for required checks.
 # If `changes` itself fails, the gated jobs run rather than skip, so a broken filter can never hide a test.
-# Job names are required-check contracts: lint, api-test, web-test, e2e, api-contract.
+# Job names are required-check contracts: lint, api-test, web-test, e2e, api-contract, benchmark.
 
 on:
   pull_request:
@@ -146,6 +146,118 @@ jobs:
         run: uv run --frozen mypy app tools tests
       - name: pytest
         run: uv run --frozen pytest
+
+  # Parse-time regression gate (ADR 0004 section 5). On a PR the base SHA and the head SHA are timed one
+  # after the other on this runner (A/B), because shared runners differ by 10-30 % between runs, so a
+  # stored number from another machine would flake. On main the head result is appended to a history
+  # kept in actions/cache. Skipped for nightly (fresh-deps) so other dependency versions stay out of it.
+  benchmark:
+    name: benchmark
+    timeout-minutes: 15
+    needs: changes
+    if: ${{ !cancelled() && !inputs.fresh-deps && (needs.changes.result != 'success' || needs.changes.outputs.api == 'true') }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      BENCH_NAME: gpx-parse
+      BENCH_CEILING_S: "2.0" # absolute checkpoint ceiling for the head's min
+    steps:
+      # Two separate checkouts, each with its own .venv from its own uv.lock: nothing of the head's
+      # environment can leak into the base run. Only uv's download cache is shared (wheels, not envs).
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: head
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: github.event_name == 'pull_request'
+        with:
+          path: base
+          ref: ${{ github.event.pull_request.base.sha }}
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          python-version: "3.12"
+          enable-cache: true
+          cache-dependency-glob: |
+            head/api/uv.lock
+            base/api/uv.lock
+
+      - name: Does the base have the benchmark test?
+        id: base
+        if: github.event_name == 'pull_request'
+        run: |
+          if [ -f base/api/tests/routes/test_benchmark.py ]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::The base commit has no benchmark test (this PR introduces it): skipping the base/head comparison. The absolute ${BENCH_CEILING_S} s check still runs."
+          fi
+
+      - name: Benchmark the base SHA
+        if: steps.base.outputs.present == 'true'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          uv sync --frozen --directory base/api
+          bash head/.github/scripts/bench.sh run base bench/base.json
+          # Recorded under the base SHA. The action decides "previous result" by commit id, and on a
+          # pull_request event it reads the head SHA for every run, so running the action twice would
+          # make both entries the same commit and silently disable the comparison. Seeding the file
+          # with the base entry keeps the commits distinct.
+          bash head/.github/scripts/bench.sh seed bench/base.json bench/ab.json "$BASE_SHA"
+
+      - name: Restore benchmark history
+        if: github.event_name != 'pull_request'
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: bench/history.json
+          key: benchmark-${{ github.sha }}
+          restore-keys: benchmark-
+
+      - name: Benchmark the head SHA
+        run: |
+          uv sync --frozen --directory head/api
+          bash head/.github/scripts/bench.sh run head bench/head.json
+          bash head/.github/scripts/bench.sh check bench/head.json "$BENCH_CEILING_S"
+          if [ "${{ steps.base.outputs.present }}" = "true" ]; then
+            bash head/.github/scripts/bench.sh ratio bench/base.json bench/head.json
+          fi
+
+      # PR: head vs the base entry, fail above 120 % (ratio of the min times). Nothing is written back.
+      - name: Compare head with base
+        if: steps.base.outputs.present == 'true'
+        uses: benchmark-action/github-action-benchmark@4322e5726e6334590d251fc4f92bec0efafc45dc # v1.22.2
+        with:
+          name: ${{ env.BENCH_NAME }}
+          tool: customSmallerIsBetter
+          output-file-path: bench/head.json
+          external-data-json-path: bench/ab.json
+          save-data-file: false
+          alert-threshold: "120%"
+          fail-threshold: "120%"
+          fail-on-alert: true
+          summary-always: true
+
+      # main: append the head result to the history; the PR already gated, so never fail here.
+      - name: Append to benchmark history
+        if: github.event_name == 'push'
+        uses: benchmark-action/github-action-benchmark@4322e5726e6334590d251fc4f92bec0efafc45dc # v1.22.2
+        with:
+          name: ${{ env.BENCH_NAME }}
+          tool: customSmallerIsBetter
+          output-file-path: bench/head.json
+          external-data-json-path: bench/history.json
+          save-data-file: true
+          alert-threshold: "120%"
+          fail-on-alert: false
+          summary-always: true
+
+      - name: Save benchmark history
+        if: github.event_name == 'push'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: bench/history.json
+          key: benchmark-${{ github.sha }}
 
   api-contract:
     name: api-contract

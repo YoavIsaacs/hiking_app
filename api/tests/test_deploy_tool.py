@@ -7,6 +7,7 @@ http.server (127.0.0.1 is the only host pytest-socket allows).
 from __future__ import annotations
 
 import copy
+import http.client
 import json
 import threading
 import time
@@ -376,6 +377,52 @@ def test_smoke_never_really_sleeps(monkeypatch: pytest.MonkeyPatch) -> None:
 
     with pytest.raises(DeployCheckError):
         run_smoke(FakeFetch([health(status=503)]), FakeSleep())
+
+
+HTTP_ERRORS: list[http.client.HTTPException] = [
+    http.client.IncompleteRead(b"par", 10),
+    http.client.BadStatusLine("garbage"),
+]
+
+
+@pytest.mark.parametrize("error", HTTP_ERRORS, ids=lambda e: type(e).__name__)
+def test_smoke_retries_when_fetch_raises_an_http_protocol_error(
+    error: http.client.HTTPException,
+) -> None:
+    fetch = FakeFetch([error, error, health()])
+    sleep = FakeSleep()
+
+    run_smoke(fetch, sleep)
+
+    assert len(fetch.calls) == 3
+    assert sleep.calls == [5.0, 5.0]
+
+
+@pytest.mark.parametrize("error", HTTP_ERRORS, ids=lambda e: type(e).__name__)
+def test_smoke_http_protocol_errors_that_never_clear_end_in_deploy_check_error(
+    error: http.client.HTTPException,
+) -> None:
+    fetch = FakeFetch([error])
+
+    with pytest.raises(DeployCheckError, match="smoke failed after 2 attempts"):
+        run_smoke(fetch, FakeSleep(), attempts=2)
+
+    assert len(fetch.calls) == 2
+
+
+def test_cli_smoke_exits_1_with_message_not_a_traceback_on_http_protocol_error(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    fetch = FakeFetch([http.client.IncompleteRead(b"par", 10)])
+    monkeypatch.setattr(deploy, "urllib_fetch", fetch)
+    monkeypatch.setattr(time, "sleep", FakeSleep())
+
+    code = run_main(["smoke", "--url", CANDIDATE_URL, "--expected-sha", SHA])
+
+    captured = capsys.readouterr()
+    assert code == 1
+    assert "error: smoke failed after 6 attempts" in captured.err
+    assert "Traceback" not in captured.err
 
 
 # --- read_version ---

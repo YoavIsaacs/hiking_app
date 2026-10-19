@@ -3,10 +3,11 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import Settings
 from app.cors import cors_policy
+from app.errors import install_error_handlers
 from app.logging_config import configure_logging
 from app.middleware import REQUEST_ID_HEADER, RequestIdMiddleware
 from app.operation_ids import check_operation_ids, operation_id
-from app.routers import health
+from app.routers import health, routes
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -32,6 +33,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # Added last so it is outermost: every response (incl. CORS preflights) gets an ID.
     app.add_middleware(RequestIdMiddleware)
 
+    install_error_handlers(app)
     app.include_router(health.router)
+    app.include_router(routes.router)
     check_operation_ids(app)
     return app

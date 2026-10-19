@@ -1,4 +1,6 @@
-"""At most 2 parses run at once per app instance (ADR 0004 section 3.10).
+"""At most MAX_CONCURRENT_PARSES parses run at once per app (ADR 0004 3.10).
+
+The tests follow the constant, so they hold for any value >= 1.
 
 Real wiring: ``create_app`` -> ``UploadLimitRoute`` router -> ``parse_route`` ->
 ``anyio.to_thread.run_sync(..., limiter=app.state.parse_limiter)``. Only the pure
@@ -25,6 +27,7 @@ from tests.routes.http_helpers import URL
 VALID = gpx_bytes([out_and_back()])
 HOLD = "hold.gpx"  # the stub blocks on this filename only
 FREE = "free.gpx"
+N = MAX_CONCURRENT_PARSES
 
 
 class Gate:
@@ -94,12 +97,8 @@ async def wait_until(predicate: Callable[[], bool], what: str) -> None:
     assert predicate(), what
 
 
-def test_the_limit_is_two() -> None:
-    assert MAX_CONCURRENT_PARSES == 2
-
-
 @pytest.mark.anyio
-async def test_only_two_of_four_simultaneous_parses_run_and_all_finish_200(
+async def test_only_the_limit_of_n_plus_two_simultaneous_parses_run_and_all_finish_200(
     settings: Settings,
     gate: Gate,
     app_client: Callable[[FastAPI], httpx.AsyncClient],
@@ -108,19 +107,19 @@ async def test_only_two_of_four_simultaneous_parses_run_and_all_finish_200(
     statuses: list[int] = []
     try:
         async with anyio.create_task_group() as group:
-            for _ in range(4):
+            for _ in range(N + 2):
                 group.start_soon(post, client, HOLD, statuses)
-            await wait_until(lambda: gate.snapshot()[0] == 2, "two parses in flight")
-            await anyio.sleep(0.3)  # time for a third to (wrongly) start
+            await wait_until(lambda: gate.snapshot()[0] == N, "limit parses in flight")
+            await anyio.sleep(0.3)  # time for one more to (wrongly) start
             in_flight, peak, calls = gate.snapshot()
-            assert (in_flight, peak, calls) == (2, 2, 2)
+            assert (in_flight, peak, calls) == (N, N, N)
             assert statuses == []  # nothing has answered yet: the others wait
             gate.release.set()
     finally:
         gate.release.set()
-    assert statuses == [200, 200, 200, 200]
+    assert statuses == [200] * (N + 2)
     in_flight, peak, calls = gate.snapshot()
-    assert (in_flight, peak, calls) == (0, 2, 4)
+    assert (in_flight, peak, calls) == (0, N, N + 2)
 
 
 @pytest.mark.anyio
@@ -133,17 +132,17 @@ async def test_a_waiting_request_is_served_as_soon_as_a_slot_frees(
     statuses: list[int] = []
     try:
         async with anyio.create_task_group() as group:
-            for _ in range(2):
+            for _ in range(N):
                 group.start_soon(post, client, HOLD, statuses)
-            await wait_until(lambda: gate.snapshot()[0] == 2, "both slots held")
+            await wait_until(lambda: gate.snapshot()[0] == N, "all slots held")
             group.start_soon(post, client, FREE, statuses)
             await anyio.sleep(0.3)
-            assert gate.snapshot()[2] == 2  # the third has not reached the parser
+            assert gate.snapshot()[2] == N  # the extra one has not reached the parser
             gate.release.set()
     finally:
         gate.release.set()
-    assert statuses == [200, 200, 200]
-    assert gate.snapshot()[1] == 2
+    assert statuses == [200] * (N + 1)
+    assert gate.snapshot()[1] == N
 
 
 @pytest.mark.anyio
@@ -164,7 +163,7 @@ async def test_a_slot_is_freed_when_a_parse_fails(
 
 
 @pytest.mark.anyio
-async def test_a_fresh_app_has_its_own_limiter_with_two_tokens(
+async def test_a_fresh_app_has_its_own_limiter_with_n_tokens(
     settings: Settings,
 ) -> None:
     first, second = create_app(settings), create_app(settings)
@@ -185,13 +184,13 @@ async def test_saturating_one_app_does_not_block_another_app(
     free: list[int] = []
     try:
         async with anyio.create_task_group() as group:
-            for _ in range(2):
+            for _ in range(N):
                 group.start_soon(post, busy, HOLD, held)
-            await wait_until(lambda: gate.snapshot()[0] == 2, "busy app saturated")
+            await wait_until(lambda: gate.snapshot()[0] == N, "busy app saturated")
             with anyio.fail_after(5):
                 await post(other, FREE, free)  # would hang on a shared limiter
             assert free == [200]
             gate.release.set()
     finally:
         gate.release.set()
-    assert held == [200, 200]
+    assert held == [200] * N

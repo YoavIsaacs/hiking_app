@@ -1,0 +1,44 @@
+name: PR title
+
+# release-please reads the squash-merge commit, which is the PR title (squash-only,
+# default message = PR title). The title must therefore be a Conventional Commit.
+#
+# Trigger is `pull_request`, not `pull_request_target`: the action only reads the title
+# from the event payload, so it needs no write token, and `pull_request` never hands a
+# privileged token to code from a fork. No checkout; nothing from the PR is executed.
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
+
+permissions: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  pr-title:
+    name: pr-title
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      pull-requests: read
+    steps:
+      - uses: amannn/action-semantic-pull-request@48f256284bd46cdaab1048c3721360e808335d50 # v6.1.1
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        with:
+          types: |
+            feat
+            fix
+            docs
+            test
+            ci
+            build
+            chore
+            refactor
+            perf
+            revert
+            style
+          requireScope: false

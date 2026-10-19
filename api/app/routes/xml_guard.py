@@ -1,6 +1,47 @@
-"""Stdlib-only XML prolog guard: forbids DTDs, checks the root is <gpx>."""
+"""Stdlib-only XML prolog guard: forbids DTDs, checks the root is <gpx> (ADR 0004)."""
+
+from xml.parsers import expat
+
+from app.routes.errors import InvalidGpx
+
+
+class _RootSeenError(Exception):
+    """Raised by the start-element handler to stop the scan after the root."""
+
+
+def _local_name(name: str) -> str:
+    # With namespace_separator expat reports "uri|local"; plain names are bare.
+    return name.rsplit("|", 1)[-1]
 
 
 def check_gpx_prolog(data: bytes) -> None:
-    """Raise InvalidGpx on DTD/entity, malformed prolog, no root, or root != gpx."""
-    raise NotImplementedError
+    """Raise InvalidGpx on DTD/entity, malformed prolog, no root, or root != gpx.
+
+    Drives expat over the raw bytes only until the root element starts. A DOCTYPE
+    can only precede the root, so the cost is the size of the prolog.
+    """
+    parser = expat.ParserCreate(namespace_separator="|")
+    root: list[str] = []
+
+    def reject_dtd(*_args: object) -> None:
+        raise InvalidGpx("DTDs and entity declarations are not allowed in GPX files.")
+
+    def on_start(name: str, _attrs: dict[str, str]) -> None:
+        root.append(_local_name(name))
+        raise _RootSeenError
+
+    parser.StartDoctypeDeclHandler = reject_dtd
+    parser.EntityDeclHandler = reject_dtd
+    parser.StartElementHandler = on_start
+    try:
+        parser.Parse(data, True)
+    except _RootSeenError:
+        pass
+    except expat.ExpatError as exc:
+        raise InvalidGpx(
+            f"The file is not well-formed XML (line {exc.lineno}, column {exc.offset})."
+        ) from exc
+    if not root:
+        raise InvalidGpx("The file has no XML root element.")
+    if root[0] != "gpx":
+        raise InvalidGpx("The file is not GPX (the root element is not <gpx>).")

@@ -41,6 +41,10 @@ def check_gpx_prolog(data: bytes) -> None:
         raise InvalidGpx(
             f"The file is not well-formed XML (line {exc.lineno}, column {exc.offset})."
         ) from exc
+    except (LookupError, ValueError) as exc:
+        # expat: unknown encoding name -> LookupError; multi-byte/unsupported ones
+        # (utf-32, utf-7, shift_jis, ...) -> ValueError. Our handlers raise neither.
+        raise InvalidGpx("The file declares an unsupported XML encoding.") from exc
     if not root:
         raise InvalidGpx("The file has no XML root element.")
     if root[0] != "gpx":

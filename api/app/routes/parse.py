@@ -8,6 +8,7 @@ from gpxpy.gpx import GPX, GPXRoutePoint, GPXTrackPoint
 
 from app.models.route import SourceFormat
 from app.routes.errors import InvalidGpx
+from app.routes.params import MAX_PLAUSIBLE_ELEV_M, MIN_PLAUSIBLE_ELEV_M
 from app.routes.track import RawPoint, RawTrack
 from app.routes.xml_guard import check_gpx_prolog
 
@@ -40,7 +41,10 @@ def _to_raw_point(point: _GpxPoint) -> RawPoint:
     if not (math.isfinite(lon) and -180.0 <= lon <= 180.0):
         raise InvalidGpx("A track point has a longitude outside -180..180.")
     ele = point.elevation
-    return RawPoint(lat, lon, ele if ele is not None and math.isfinite(ele) else None)
+    plausible = (
+        ele is not None and MIN_PLAUSIBLE_ELEV_M <= ele <= MAX_PLAUSIBLE_ELEV_M
+    )  # False for NaN and +-inf too
+    return RawPoint(lat, lon, ele if plausible else None)
 
 
 def parse_gpx(data: bytes) -> RawTrack:

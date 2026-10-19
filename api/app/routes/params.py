@@ -10,6 +10,9 @@ MAX_SUMMARY_POINTS: Final = 500
 EARTH_RADIUS_M: Final = 6_371_008.8
 MAX_NAME_LENGTH: Final = 200
 UNTITLED_ROUTE_NAME: Final = "Untitled route"
+# An <ele> outside this range (inclusive) is treated as missing (ADR 0004 3.1 step 7).
+MIN_PLAUSIBLE_ELEV_M: Final = -1000.0
+MAX_PLAUSIBLE_ELEV_M: Final = 10000.0
 
 
 @dataclass(frozen=True, slots=True)

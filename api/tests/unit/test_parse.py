@@ -153,3 +153,42 @@ def test_malformed_prolog_reports_the_position() -> None:
 
 def test_the_guard_stops_at_the_root_and_ignores_a_broken_body() -> None:
     check_gpx_prolog(b"<gpx><trk><<<<<")
+
+
+# --- implausible elevations and unsupported encodings ------------------------------
+
+
+def _ele_doc(ele: str) -> bytes:
+    return (
+        f'<gpx><trk><trkseg><trkpt lat="1" lon="1"><ele>{ele}</ele></trkpt>'
+        '<trkpt lat="1.001" lon="1"/></trkseg></trk></gpx>'
+    ).encode()
+
+
+@pytest.mark.parametrize(
+    ("ele", "expected"),
+    [
+        ("-1000", -1000.0),
+        ("10000", 10000.0),
+        ("-1000.0001", None),
+        ("10000.0001", None),
+        ("1e308", None),
+        ("-1e308", None),
+        ("nan", None),
+        ("inf", None),
+        ("0", 0.0),
+    ],
+)
+def test_elevation_bounds_are_inclusive_and_outside_becomes_none(
+    ele: str, expected: float | None
+) -> None:
+    assert parse_gpx(_ele_doc(ele)).points[0].elev_m == expected
+
+
+@pytest.mark.parametrize(
+    "encoding", ["utf-32", "utf-7", "x-mac-hebrew", "", "nope", "shift_jis", "big5"]
+)
+def test_unsupported_xml_encoding_is_invalid_gpx(encoding: str) -> None:
+    data = f'<?xml version="1.0" encoding="{encoding}"?><gpx/>'.encode()
+    with pytest.raises(InvalidGpx, match="encoding|well-formed"):
+        check_gpx_prolog(data)

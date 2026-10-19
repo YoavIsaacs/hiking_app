@@ -28,3 +28,6 @@ def test_unknown_route_404_still_carries_request_id(client: TestClient) -> None:
 
     assert response.status_code == 404
     assert response.headers["x-request-id"] == "req-404"
+
+
+# 0.6 path-filter verification: api-only change (comment, no behaviour).

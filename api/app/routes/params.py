@@ -31,7 +31,7 @@ class ParseParams:
     gain_threshold_m: float = 9.5
     loop_threshold_m: float = 200.0
     max_points: int = MAX_SUMMARY_POINTS  # 3 <= max_points <= MAX_SUMMARY_POINTS
-    # >= 2 * max_points (check not implemented yet: contract stub)
+    # >= 2 * max_points, so pre-thinning always leaves RDP room to fill its budget
     prethin_max_points: int = PRETHIN_MAX_POINTS
 
     def __post_init__(self) -> None:
@@ -46,6 +46,8 @@ class ParseParams:
                 raise ValueError(f"{name} must be a non-negative finite number")
         if not 3 <= self.max_points <= MAX_SUMMARY_POINTS:
             raise ValueError(f"max_points must be within 3..{MAX_SUMMARY_POINTS}")
+        if self.prethin_max_points < 2 * self.max_points:
+            raise ValueError("prethin_max_points must be at least 2 * max_points")
 
 
 DEFAULT_PARAMS: Final = ParseParams()

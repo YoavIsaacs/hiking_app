@@ -38,15 +38,25 @@ def too_large() -> ApiError:
 class UploadLimitRoute(APIRoute):
     max_body_bytes: ClassVar[int] = MAX_UPLOAD_BYTES + MULTIPART_OVERHEAD_BYTES
 
-    # Any: FastAPI's signature
-    def get_route_handler(self) -> Callable[[Request], Coroutine[Any, Any, Response]]:
+    def get_route_handler(
+        self,
+    ) -> Callable[[Request], Coroutine[Any, Any, Response]]:  # Any: FastAPI's signature
         original = super().get_route_handler()
         limit = self.max_body_bytes
 
         async def handler(request: Request) -> Response:
             declared = request.headers.get("content-length", "")
-            if declared.isdigit() and int(declared) > limit:
-                raise too_large()
+            # str.isdigit() accepts '²', which int() rejects: such a header is a
+            # 400. A value longer than 19 digits is over any limit, and skipping int()
+            # keeps huge headers clear of the int/str conversion limit. Anything else
+            # non-numeric is left to the streaming cap.
+            if declared.isdigit():
+                if not declared.isascii():
+                    raise ApiError(
+                        400, "bad_request", "The Content-Length header is invalid."
+                    )
+                if len(declared) > 19 or int(declared) > limit:
+                    raise too_large()
             limited = BodyLimitRequest(
                 request.scope, request.receive, max_body_bytes=limit
             )

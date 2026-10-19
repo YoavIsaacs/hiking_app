@@ -1,9 +1,15 @@
 """Stdlib-only XML prolog guard: forbids DTDs, checks the root is <gpx> (ADR 0004)."""
 
+import re
+from itertools import islice
+from typing import Final
 from xml.parsers import expat
 
 from app.routes.errors import InvalidGpx
 from app.routes.params import MAX_RAW_POINTS
+
+# <trkpt / <rtept start tags, optionally prefixed (<gpx:trkpt>); over-counting is safe.
+_POINT_START_TAG: Final = re.compile(rb"<(?:[^\s<>/]*:)?(?:trkpt|rtept)[\s/>]")
 
 
 class _RootSeenError(Exception):
@@ -53,5 +59,9 @@ def check_gpx_prolog(data: bytes) -> None:
 
 
 def exceeds_point_cap(data: bytes, *, max_points: int = MAX_RAW_POINTS) -> bool:
-    """True when data has more than max_points point start tags (ADR 0004 3.12)."""
-    raise NotImplementedError
+    """True when data has more than max_points point start tags (ADR 0004 3.12).
+
+    Linear: one pass of a compiled regex, stopping at the first max_points + 1 matches.
+    """
+    matches = islice(_POINT_START_TAG.finditer(data), max_points + 1)
+    return sum(1 for _ in matches) > max_points

@@ -70,8 +70,9 @@ def install_error_handlers(app: FastAPI) -> None:
     app.add_exception_handler(RequestValidationError, _handle_validation_error)
 
 
-# Any: FastAPI's `responses=` parameter type
-ERROR_RESPONSES: Final[dict[int | str, dict[str, Any]]] = {
+ERROR_RESPONSES: Final[
+    dict[int | str, dict[str, Any]]  # Any: FastAPI's `responses=` parameter type
+] = {
     400: {"model": ErrorResponse},
     413: {"model": ErrorResponse},
     422: {"model": ErrorResponse},

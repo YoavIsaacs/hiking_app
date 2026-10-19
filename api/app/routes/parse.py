@@ -7,10 +7,14 @@ import gpxpy
 from gpxpy.gpx import GPX, GPXRoutePoint, GPXTrackPoint
 
 from app.models.route import SourceFormat
-from app.routes.errors import InvalidGpx
-from app.routes.params import MAX_PLAUSIBLE_ELEV_M, MIN_PLAUSIBLE_ELEV_M
+from app.routes.errors import InvalidGpx, TooManyPoints
+from app.routes.params import (
+    MAX_PLAUSIBLE_ELEV_M,
+    MAX_RAW_POINTS,
+    MIN_PLAUSIBLE_ELEV_M,
+)
 from app.routes.track import RawPoint, RawTrack
-from app.routes.xml_guard import check_gpx_prolog
+from app.routes.xml_guard import check_gpx_prolog, exceeds_point_cap
 
 _GpxPoint = GPXTrackPoint | GPXRoutePoint
 
@@ -52,6 +56,12 @@ def parse_gpx(data: bytes) -> RawTrack:
     if not data:
         raise InvalidGpx("The file is empty.")
     check_gpx_prolog(data)
+    if b"\x00" in data:
+        # XML 1.0 forbids U+0000; NUL-interleaved UTF-16 would hide tags from the
+        # ASCII point-cap scan below.
+        raise InvalidGpx("The file must be UTF-8 encoded.")
+    if exceeds_point_cap(data):
+        raise TooManyPoints(f"The file has more than {MAX_RAW_POINTS:,} track points.")
     try:
         text = data.decode("utf-8-sig")
     except UnicodeDecodeError as exc:

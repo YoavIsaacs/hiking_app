@@ -38,6 +38,8 @@ jobs:
       DEPLOY_TOOL: uv run --frozen --directory api python -m tools.deploy
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
 
       - uses: astral-sh/setup-uv@v7
         with:
@@ -62,7 +64,7 @@ jobs:
         run: |
           if ! gcloud run services describe "$SERVICE" --region="$REGION" --project="$PROJECT_ID" \
             --format=json > "$RUNNER_TEMP/before.json"; then
-            echo "::error::Service $SERVICE not found: run the runbook bootstrap step first"
+            echo "::error::Service cannot describe service $SERVICE (missing, or no permission): see runbook step 9"
             exit 1
           fi
           $DEPLOY_TOOL serving --service-json "$RUNNER_TEMP/before.json" >> "$GITHUB_OUTPUT"
@@ -115,6 +117,7 @@ jobs:
             --to-revisions="$CANDIDATE_REVISION=100" --quiet
 
       - name: Smoke the live service
+        id: live
         run: |
           LIVE_URL=$(gcloud run services describe "$SERVICE" --region="$REGION" --project="$PROJECT_ID" \
             --format='value(status.url)')
@@ -122,7 +125,7 @@ jobs:
             --origin "https://$PROJECT_ID.web.app"
 
       - name: Roll back to the previous revision
-        if: failure() && steps.promote.outcome == 'success'
+        if: always() && steps.promote.outcome == 'success' && steps.live.outcome != 'success'
         env:
           PREVIOUS_REVISION: ${{ steps.before.outputs.previous_revision }}
         run: |

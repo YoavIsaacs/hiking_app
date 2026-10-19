@@ -8,6 +8,7 @@ name: Preview
 
 on:
   pull_request:
+    branches: [main]
     types: [opened, synchronize, reopened]
 
 permissions:
@@ -38,6 +39,8 @@ jobs:
       expires: ${{ steps.channel.outputs.expires }}
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
 
       - uses: pnpm/action-setup@v6
 
@@ -63,13 +66,23 @@ jobs:
 
       - name: Deploy preview channel
         id: channel
+        shell: bash # explicit bash gives -eo pipefail
         run: |
           npx --yes "firebase-tools@$FIREBASE_TOOLS_VERSION" hosting:channel:deploy "$CHANNEL" \
             --expires 7d --no-authorized-domains --project "$PROJECT_ID" --json > "$RUNNER_TEMP/channel.json"
           cat "$RUNNER_TEMP/channel.json"
+          URL=$(jq -er '[.result[]][0].url' "$RUNNER_TEMP/channel.json")
+          EXPIRES=$(jq -er '[.result[]][0].expireTime' "$RUNNER_TEMP/channel.json")
+          case "$URL" in
+            "https://$PROJECT_ID--"*) ;;
+            *)
+              echo "::error::Unexpected preview URL: $URL"
+              exit 1
+              ;;
+          esac
           {
-            echo "url=$(jq -r '[.result[]][0].url' "$RUNNER_TEMP/channel.json")"
-            echo "expires=$(jq -r '[.result[]][0].expireTime' "$RUNNER_TEMP/channel.json")"
+            echo "url=$URL"
+            echo "expires=$EXPIRES"
           } >> "$GITHUB_OUTPUT"
 
   comment:

@@ -41,6 +41,8 @@ jobs:
       FIREBASE_TOOLS_VERSION: "15.34.0"
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
 
       - uses: pnpm/action-setup@v6
 

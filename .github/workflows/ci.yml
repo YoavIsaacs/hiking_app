@@ -52,7 +52,7 @@ jobs:
       - name: ruff format
         run: uv run --frozen ruff format --check .
       - name: mypy
-        run: uv run --frozen mypy app tests
+        run: uv run --frozen mypy app tools tests
       - name: pytest
         run: uv run --frozen pytest
 

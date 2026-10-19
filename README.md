@@ -40,7 +40,11 @@ just gen-api      # regenerate api/openapi.json + web/src/api/schema.d.ts; needs
 
 ## Deploy
 
-Deployment arrives in step 0.5.
+- Web: https://hike-prep.web.app (Firebase Hosting).
+- API: https://hike-api-zr6tmbe2ya-zf.a.run.app (Cloud Run, me-west1).
+- Deploys run from `main` via `.github/workflows/deploy-api.yml` and `deploy-web.yml`.
+- Each PR gets a Firebase Hosting preview channel, with its URL commented on the PR.
+- One-time setup: `docs/runbooks/0.5-gcp-firebase-setup.md`. Decisions: `docs/adr/0002-deployment.md`.
 
 ## Troubleshooting
 

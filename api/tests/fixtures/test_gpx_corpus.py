@@ -1,7 +1,9 @@
 """Guards the GPX corpus: files and expected.json agree, each file is its edge case."""
 
+import codecs
 import json
 import re
+import unicodedata
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
@@ -130,6 +132,25 @@ def test_loader_rejects_wrongly_typed_values(tmp_path: Path) -> None:
         load_expected(tmp_path)
 
 
+def test_loader_rejects_duplicate_keys(tmp_path: Path) -> None:
+    entry = json.dumps(_blank_entry())
+    (tmp_path / EXPECTED_FILE).write_text(
+        f'{{"a.gpx": {entry}, "a.gpx": {entry}}}', encoding="utf-8"
+    )
+    with pytest.raises(ValueError, match="duplicate"):
+        load_expected(tmp_path)
+
+
+def test_checker_flags_stray_non_gpx_file(tmp_path: Path) -> None:
+    _write_corpus(tmp_path, ["a.gpx"], {"a.gpx": _blank_entry()})
+    (tmp_path / "notes.txt").write_text("x", encoding="utf-8")
+    (tmp_path / "b.gpx.bak").write_text("<x/>", encoding="utf-8")
+    assert corpus_problems(tmp_path) == [
+        "b.gpx.bak: unexpected non-.gpx file in corpus",
+        "notes.txt: unexpected non-.gpx file in corpus",
+    ]
+
+
 def test_checker_flags_file_without_entry(tmp_path: Path) -> None:
     _write_corpus(tmp_path, ["a.gpx", "b.gpx"], {"a.gpx": _blank_entry()})
     assert corpus_problems(tmp_path) == ["b.gpx: file has no expected.json entry"]
@@ -219,3 +240,42 @@ def test_malformed_file_fails_xml_parsing() -> None:
 def test_kml_file_is_valid_xml_with_a_non_gpx_root() -> None:
     root = ET.parse(GPX_DIR / "derived-modiin-hills-south-kml.gpx").getroot()
     assert re.sub(r"^\{.*\}", "", root.tag) == "kml"
+
+
+# Reference values, inheritance and Hebrew names in the real corpus.
+
+
+def test_derived_entries_inherit_parent_reference_values() -> None:
+    entries = load_expected()
+    for name, e in entries.items():
+        if e.derived_from is None or e.expected_error is not None:
+            continue
+        parent = entries[e.derived_from]
+        assert e.reference_distance_m == parent.reference_distance_m, name
+        if e.has_elevation:
+            assert e.reference_gain_m == parent.reference_gain_m, name
+
+
+def test_real_files_carry_manager_supplied_alltrails_values() -> None:
+    entries = load_expected()
+    got = {
+        n: (e.reference_distance_m, e.reference_gain_m)
+        for n, e in entries.items()
+        if e.derived_from is None
+    }
+    assert got == {
+        "alltrails-modiin-hills-south-double-loop.gpx": (8500, 198),
+        "alltrails-ben-shemen-hertzl-singletrack.gpx": (10600, 200),
+        "alltrails-tel-hadid-loop.gpx": (6400, 103),
+    }
+
+
+def test_hebrew_original_names_round_trip_as_nfc_utf8_without_bom() -> None:
+    raw = (GPX_DIR / EXPECTED_FILE).read_bytes()
+    assert not raw.startswith(codecs.BOM_UTF8)
+    names = [e.original_name for e in load_expected().values() if e.original_name]
+    assert len(names) == 3
+    for n in names:
+        assert unicodedata.normalize("NFC", n) == n
+        assert any("֐" <= c <= "׿" for c in n)
+        assert n.encode("utf-8").decode("utf-8") == n

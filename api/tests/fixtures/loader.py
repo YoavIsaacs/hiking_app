@@ -76,9 +76,20 @@ def _build(entry: dict[str, object]) -> Expected:
     )
 
 
+def _no_duplicate_keys(pairs: list[tuple[str, object]]) -> dict[str, object]:
+    keys = [k for k, _ in pairs]
+    dupes = sorted({k for k in keys if keys.count(k) > 1})
+    if dupes:
+        raise ValueError(f"duplicate keys in {EXPECTED_FILE}: {dupes}")
+    return dict(pairs)
+
+
 def load_expected(directory: Path = GPX_DIR) -> dict[str, Expected]:
     """``expected.json`` entries by file name; raises on unknown or missing keys."""
-    raw = json.loads((directory / EXPECTED_FILE).read_text(encoding="utf-8"))
+    raw = json.loads(
+        (directory / EXPECTED_FILE).read_text(encoding="utf-8"),
+        object_pairs_hook=_no_duplicate_keys,
+    )
     if not isinstance(raw, dict):
         raise TypeError(f"{EXPECTED_FILE} must be a JSON object keyed by file name")
     result: dict[str, Expected] = {}
@@ -114,6 +125,11 @@ def corpus_problems(directory: Path = GPX_DIR) -> list[str]:
     entries = load_expected(directory)
     files = {p.name for p in directory.glob("*.gpx")}
     problems = [
+        f"{p.name}: unexpected non-.gpx file in corpus"
+        for p in sorted(directory.iterdir())
+        if p.name != EXPECTED_FILE and p.suffix != ".gpx"
+    ]
+    problems += [
         f"{n}: file has no expected.json entry" for n in sorted(files - entries.keys())
     ]
     problems += [

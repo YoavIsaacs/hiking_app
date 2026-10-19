@@ -6,8 +6,9 @@
 #   bench.sh seed  <bench.json> <out.json> <sha>    write a github-action-benchmark data file whose only
 #                                                   entry is <bench.json> recorded under commit <sha>
 #   bench.sh check <bench.json> <limit-seconds>     fail if any min >= limit (the absolute ceiling)
-#   bench.sh names <base.json> <head.json>          fail unless both files hold the same, non-empty set of
-#                                                   benchmark names (the action skips unmatched names silently)
+#   bench.sh names <base.json> <head.json>          fail if head is empty or base and head share no name; else
+#                                                   warn about one-sided names and filter both files to the shared ones.
+#                                                   A rename is two PRs: add the new name (keep the old), then remove the old.
 #   bench.sh ratio <base.json> <head.json>          print base/head min and head/base (log only)
 set -euo pipefail
 
@@ -60,12 +61,29 @@ check)
   echo "absolute check passed: $(jq -c '[.[].value]' "$1") s < $2 s"
   ;;
 names)
-  if ! jq -e -n --slurpfile b "$1" --slurpfile h "$2"     '($b[0] | map(.name) | sort) as $bn | ($h[0] | map(.name) | sort) as $hn |
-     ($bn | length) > 0 and $bn == $hn' >/dev/null; then
-    echo "::error::benchmark names differ or are empty: base $(jq -c 'map(.name) | sort' "$1"), head $(jq -c 'map(.name) | sort' "$2"). The comparison action skips unmatched names, so this would be a silent no-op; rename the test on the base first or update the gate deliberately."
+  # Rewrites both files in place to the benchmarks they share (sorted by name), so the comparison
+  # only sees comparable entries. Names on one side only are reported as a warning, not an error.
+  hn="$(jq -c 'map(.name) | sort' "$2")"
+  bn="$(jq -c 'map(.name) | sort' "$1")"
+  if [ "$hn" = "[]" ]; then
+    echo "::error::the head produced no benchmarks"
     exit 1
   fi
-  echo "benchmark names match: $(jq -c 'map(.name) | sort' "$2")"
+  common="$(jq -nc --argjson b "$bn" --argjson h "$hn" '$b - ($b - $h)')"
+  if [ "$common" = "[]" ]; then
+    echo "::error::base and head share no benchmark name (base $bn, head $hn), so nothing is comparable and the gate would be a no-op. Rename in two PRs: add the new name keeping the old, then remove the old."
+    exit 1
+  fi
+  only_base="$(jq -nc --argjson b "$bn" --argjson c "$common" '$b - $c')"
+  only_head="$(jq -nc --argjson h "$hn" --argjson c "$common" '$h - $c')"
+  if [ "$only_base" != "[]" ] || [ "$only_head" != "[]" ]; then
+    echo "::warning::benchmark names differ; comparing only $common. Only in base (removed or renamed): $only_base. Only in head (new, not compared this time): $only_head."
+  fi
+  for f in "$1" "$2"; do
+    jq --argjson c "$common" 'map(select(.name as $n | $c | index($n))) | sort_by(.name)' "$f" >"$f.tmp"
+    mv "$f.tmp" "$f"
+  done
+  echo "benchmarks compared: $common"
   ;;
 ratio)
   jq -rn --slurpfile b "$1" --slurpfile h "$2" \

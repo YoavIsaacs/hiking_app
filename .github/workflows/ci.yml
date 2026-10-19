@@ -196,16 +196,9 @@ jobs:
 
       - name: Benchmark the base SHA
         if: steps.base.outputs.present == 'true'
-        env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
           uv sync --frozen --directory base/api
           bash head/.github/scripts/bench.sh run base bench/base.json
-          # Recorded under the base SHA. The action decides "previous result" by commit id, and on a
-          # pull_request event it reads the head SHA for every run, so running the action twice would
-          # make both entries the same commit and silently disable the comparison. Seeding the file
-          # with the base entry keeps the commits distinct.
-          bash head/.github/scripts/bench.sh seed bench/base.json bench/ab.json "$BASE_SHA"
 
       - name: Restore benchmark history
         if: github.event_name != 'pull_request'
@@ -216,13 +209,21 @@ jobs:
           restore-keys: benchmark-
 
       - name: Benchmark the head SHA
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
           uv sync --frozen --directory head/api
           bash head/.github/scripts/bench.sh run head bench/head.json
           bash head/.github/scripts/bench.sh check bench/head.json "$BENCH_CEILING_S"
           if [ "${{ steps.base.outputs.present }}" = "true" ]; then
+            # Filters both files to the shared names, so seed (and the action) only see those.
             bash head/.github/scripts/bench.sh names bench/base.json bench/head.json
             bash head/.github/scripts/bench.sh ratio bench/base.json bench/head.json
+            # Recorded under the base SHA. The action decides "previous result" by commit id, and on a
+            # pull_request event it reads the head SHA for every run, so running the action twice would
+            # make both entries the same commit and silently disable the comparison. Seeding the file
+            # with the base entry keeps the commits distinct.
+            bash head/.github/scripts/bench.sh seed bench/base.json bench/ab.json "$BASE_SHA"
           fi
 
       # PR: head vs the base entry, fail above 120 % (ratio of the min times). Nothing is written back.

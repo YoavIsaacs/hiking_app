@@ -8,6 +8,7 @@ from starlette.requests import Request
 from starlette.responses import Response
 from starlette.types import Receive, Scope
 
+from app.errors import ApiError
 from app.routes.params import MAX_UPLOAD_BYTES, MULTIPART_OVERHEAD_BYTES
 
 
@@ -17,9 +18,21 @@ class BodyLimitRequest(Request):
         self.max_body_bytes = max_body_bytes
 
     async def stream(self) -> AsyncGenerator[bytes, None]:
-        """Contract: raises ApiError(413, "file_too_large") past the limit."""
-        raise NotImplementedError
-        yield b""  # unreachable; makes this an async generator to match the signature
+        """Yield the body, raising ApiError(413, "file_too_large") past the limit."""
+        total = 0
+        async for chunk in super().stream():
+            total += len(chunk)
+            if total > self.max_body_bytes:
+                raise too_large()
+            yield chunk
+
+
+def too_large() -> ApiError:
+    return ApiError(
+        413,
+        "file_too_large",
+        f"The upload is larger than {MAX_UPLOAD_BYTES // (1024 * 1024)} MB.",
+    )
 
 
 class UploadLimitRoute(APIRoute):
@@ -27,5 +40,16 @@ class UploadLimitRoute(APIRoute):
 
     # Any: FastAPI's signature
     def get_route_handler(self) -> Callable[[Request], Coroutine[Any, Any, Response]]:
-        # Stub: no limit yet (runs at route construction, so it must not raise).
-        return super().get_route_handler()
+        original = super().get_route_handler()
+        limit = self.max_body_bytes
+
+        async def handler(request: Request) -> Response:
+            declared = request.headers.get("content-length", "")
+            if declared.isdigit() and int(declared) > limit:
+                raise too_large()
+            limited = BodyLimitRequest(
+                request.scope, request.receive, max_body_bytes=limit
+            )
+            return await original(limited)
+
+        return handler

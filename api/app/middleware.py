@@ -7,6 +7,7 @@ from starlette.datastructures import Headers, MutableHeaders
 from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
+from app.errors import error_body
 from app.logging_config import LOGGED_MARK, request_id_var
 
 REQUEST_ID_HEADER = "X-Request-ID"
@@ -60,7 +61,8 @@ class RequestIdMiddleware:
             setattr(exc, LOGGED_MARK, True)
             if not response_started:
                 response = JSONResponse(
-                    {"detail": "Internal Server Error"}, status_code=500
+                    error_body("internal_error", "Internal Server Error"),
+                    status_code=500,
                 )
                 await response(scope, receive, send_with_id)
             raise

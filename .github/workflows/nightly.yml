@@ -1,0 +1,76 @@
+name: Nightly
+
+# Full suite (the same lint, api-test, web-test, e2e, api-contract jobs as CI, reused via
+# workflow_call) against fresh dependencies: ci.yml first runs `uv lock --upgrade` and
+# `pnpm update` (newest versions allowed by the declared ranges, nothing is committed),
+# so drift in a dependency shows up here before Dependabot's weekly PR does.
+# On failure one open issue labelled `nightly-failure` collects a comment per failed run.
+
+on:
+  schedule:
+    - cron: "43 2 * * *" # daily 02:43 UTC, off-peak and off the :00 rush
+  workflow_dispatch:
+    inputs:
+      force_failure:
+        description: "Make the run fail on purpose to prove the issue-opening path"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nightly
+  cancel-in-progress: false
+
+jobs:
+  suite:
+    name: suite
+    uses: ./.github/workflows/ci.yml
+    with:
+      fresh-deps: true
+    permissions:
+      contents: read
+      pull-requests: read
+
+  forced-failure:
+    name: forced-failure
+    if: inputs.force_failure
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    permissions: {}
+    steps:
+      - run: |
+          echo "::error::force_failure was set: failing on purpose to exercise the issue path"
+          exit 1
+
+  report-failure:
+    name: report-failure
+    needs: [suite, forced-failure]
+    if: ${{ failure() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+      LABEL: nightly-failure
+    steps:
+      - name: Open or update the nightly failure issue
+        run: |
+          gh label create "$LABEL" --repo "$GITHUB_REPOSITORY" --color B60205 \
+            --description "The nightly full-suite run failed" 2>/dev/null || true
+          existing=$(gh issue list --repo "$GITHUB_REPOSITORY" --label "$LABEL" --state open \
+            --json number --jq '.[0].number // empty')
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --repo "$GITHUB_REPOSITORY" \
+              --body "The nightly run failed again: $RUN_URL"
+          else
+            gh issue create --repo "$GITHUB_REPOSITORY" --label "$LABEL" \
+              --title "Nightly full-suite run failed" \
+              --body "The nightly run (fresh dependencies) failed: $RUN_URL
+
+          Close this issue once the cause is fixed; the next failure opens a new one."
+          fi

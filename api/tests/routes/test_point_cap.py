@@ -1,12 +1,11 @@
-"""The raw point cap (ADR 0004 section 3.12): a byte scan that runs before gpxpy.
+"""The raw point cap (ADR 0004 section 3.12): counted during the one expat pass, which
+stops at the 100,001st point.
 
-Unit tests of ``exceeds_point_cap``, the cap inside ``parse_gpx`` (including error
-precedence), and the endpoint answer (422 ``too_many_points``).
+The cap inside ``parse_gpx`` (``max_points=3`` for the tables, the real 100,000 for the
+boundary), what counts and what does not, error precedence in document order, and the
+endpoint answer (422 ``too_many_points``).
 """
 
-import time
-
-import gpxpy
 import pytest
 from fastapi.testclient import TestClient
 
@@ -14,172 +13,237 @@ from app.routes.errors import InvalidGpx, RouteParseError, TooManyPoints
 from app.routes.params import MAX_RAW_POINTS
 from app.routes.parse import parse_gpx
 from app.routes.summary import summarise_gpx
-from app.routes.xml_guard import exceeds_point_cap
 from tests.routes.http_helpers import URL, assert_error
 
 POINT = b'<trkpt lat="0" lon="0"/>'
-CAP = 3  # small cap for the table-driven unit tests
+RTEPT = b'<rtept lat="0" lon="0"/>'
+CAP = 3  # small cap for the table-driven tests
+GPX_NS = b"http://www.topografix.com/GPX/1/1"
 
 
 def gpx_with(points: bytes, *, prolog: bytes = b"") -> bytes:
     return prolog + b"<gpx><trk><trkseg>" + points + b"</trkseg></trk></gpx>"
 
 
-# --- exceeds_point_cap: the boundary -----------------------------------------------
+def rte_with(points: bytes) -> bytes:
+    return b"<gpx><rte>" + points + b"</rte></gpx>"
+
+
+def prefixed(body: bytes) -> bytes:
+    return b'<g:gpx xmlns:g="' + GPX_NS + b'">' + body + b"</g:gpx>"
+
+
+# --- the boundary ---
 
 
 def test_the_real_cap_is_one_hundred_thousand() -> None:
     assert MAX_RAW_POINTS == 100_000
 
 
-@pytest.mark.parametrize(("count", "expected"), [(0, False), (3, False), (4, True)])
-def test_the_cap_boundary_is_exclusive_of_max_points(
-    count: int, expected: bool
-) -> None:
-    assert exceeds_point_cap(POINT * count, max_points=CAP) is expected
+def test_max_points_is_keyword_only() -> None:
+    with pytest.raises(TypeError):
+        parse_gpx(gpx_with(POINT * 2), 3)  # type: ignore[call-arg]  # pins keyword-only
 
 
-def test_exactly_100000_tags_pass_and_100001_exceed_at_the_default_cap() -> None:
-    assert exceeds_point_cap(POINT * 100_000) is False
-    assert exceeds_point_cap(POINT * 100_001) is True
+@pytest.mark.parametrize("count", [0, 1, 2, 3])
+def test_up_to_max_points_points_parse(count: int) -> None:
+    assert len(parse_gpx(gpx_with(POINT * count), max_points=CAP).points) == count
 
 
-# --- what counts --------------------------------------------------------------------
+@pytest.mark.parametrize("count", [4, 5, 40])
+def test_more_than_max_points_points_raise_too_many_points(count: int) -> None:
+    with pytest.raises(TooManyPoints):
+        parse_gpx(gpx_with(POINT * count), max_points=CAP)
+
+
+def test_the_cap_message_does_not_echo_the_file() -> None:
+    data = gpx_with(POINT * 4 + b"<name>SECRET-MARKER-8841</name>")
+    with pytest.raises(TooManyPoints) as excinfo:
+        parse_gpx(data, max_points=CAP)
+    assert "SECRET-MARKER-8841" not in excinfo.value.message
+
+
+def test_exactly_100000_points_parse_and_100001_raise_at_the_default_cap() -> None:
+    assert len(parse_gpx(gpx_with(POINT * 100_000)).points) == 100_000
+    with pytest.raises(TooManyPoints):
+        parse_gpx(gpx_with(POINT * 100_001))
+
+
+# --- what counts (a point element the pass reads, valid or not) ---
 
 COUNTED_FORMS = [
-    pytest.param(b"<trkpt>", id="bare-open-tag"),
-    pytest.param(b"<trkpt/>", id="self-closed"),
-    pytest.param(b'<trkpt lat="1" lon="2">', id="with-attributes"),
-    pytest.param(b"<trkpt\nlat='1' lon='2'/>", id="newline-after-name"),
-    pytest.param(b"<trkpt\tlat='1' lon='2'/>", id="tab-after-name"),
-    pytest.param(b'<gpx:trkpt lat="1" lon="2"/>', id="prefixed"),
-    pytest.param(b"<a:b:trkpt/>", id="double-prefix"),
-    pytest.param(b"<rtept/>", id="rtept"),
-    pytest.param(b'<rtept lat="1" lon="2">', id="rtept-attributes"),
-    pytest.param(b"<gpx:rtept/>", id="prefixed-rtept"),
-    pytest.param(b"<!-- <trkpt/> -->", id="inside-a-comment-over-counts"),
-    pytest.param(b"<![CDATA[<trkpt/>]]>", id="inside-cdata-over-counts"),
+    pytest.param(b'<trkpt lat="1" lon="2"/>', id="self-closed"),
+    pytest.param(b'<trkpt lat="1" lon="2"></trkpt>', id="open-and-close"),
+    pytest.param(b'<trkpt\nlat="1" lon="2"/>', id="newline-after-name"),
+    pytest.param(b'<trkpt\tlat="1" lon="2"/>', id="tab-after-name"),
+    pytest.param(b"<trkpt lat='1' lon='2'/>", id="single-quoted-attributes"),
+    pytest.param(b'<trkpt lat="1" lon="2"><ele>5</ele></trkpt>', id="with-ele"),
+    pytest.param(
+        b'<trkpt lat="1" lon="2"><extensions><a/></extensions></trkpt>',
+        id="with-extensions",
+    ),
 ]
 
 
 @pytest.mark.parametrize("form", COUNTED_FORMS)
-def test_each_counted_form_is_counted_exactly_once(form: bytes) -> None:
-    assert exceeds_point_cap(form * 3, max_points=CAP) is False
-    assert exceeds_point_cap(form * 4, max_points=CAP) is True
+def test_each_counted_trkpt_form_is_counted_exactly_once(form: bytes) -> None:
+    assert len(parse_gpx(gpx_with(form * 3), max_points=CAP).points) == 3
+    with pytest.raises(TooManyPoints):
+        parse_gpx(gpx_with(form * 4), max_points=CAP)
 
 
-def test_comment_over_count_is_the_documented_behaviour() -> None:
-    """Pinned, not endorsed: 4 tags in comments reject a file with 0 real points."""
-    data = gpx_with(b"<!-- <trkpt/><trkpt/><trkpt/><trkpt/> -->")
-    assert exceeds_point_cap(data, max_points=CAP) is True
+def test_a_bare_trkpt_start_tag_is_counted_even_though_it_is_not_valid() -> None:
+    """Counted at the start tag, valid or not (3.12): 4 are too many, 3 are invalid."""
+    with pytest.raises(TooManyPoints):
+        parse_gpx(gpx_with(b"<trkpt>" * 4), max_points=CAP)
+    with pytest.raises(InvalidGpx):
+        parse_gpx(gpx_with(b"<trkpt/>" * 3), max_points=CAP)
 
 
-def test_trkpt_and_rtept_are_counted_together() -> None:
-    assert exceeds_point_cap(b"<trkpt/><trkpt/><rtept/>", max_points=CAP) is False
+@pytest.mark.parametrize(
+    "form",
+    [
+        pytest.param(b'<rtept lat="1" lon="2"/>', id="rtept"),
+        pytest.param(b'<rtept\nlat="1" lon="2"></rtept>', id="rtept-open-close"),
+    ],
+)
+def test_rtept_forms_are_counted_exactly_once(form: bytes) -> None:
+    assert len(parse_gpx(rte_with(form * 3), max_points=CAP).points) == 3
+    with pytest.raises(TooManyPoints):
+        parse_gpx(rte_with(form * 4), max_points=CAP)
+
+
+def test_a_prefixed_point_in_the_root_namespace_is_counted_and_parsed() -> None:
+    point = b'<g:trkpt lat="1" lon="2"/>'
+    body = b"<g:trk><g:trkseg>" + point * 3 + b"</g:trkseg></g:trk>"
+    assert len(parse_gpx(prefixed(body), max_points=CAP).points) == 3
+    over = b"<g:trk><g:trkseg>" + point * 4 + b"</g:trkseg></g:trk>"
+    with pytest.raises(TooManyPoints):
+        parse_gpx(prefixed(over), max_points=CAP)
+
+
+def test_a_prefixed_rtept_in_the_root_namespace_is_counted() -> None:
+    point = b'<g:rtept lat="1" lon="2"/>'
     assert (
-        exceeds_point_cap(b"<trkpt/><trkpt/><rtept/><rtept/>", max_points=CAP) is True
+        len(
+            parse_gpx(
+                prefixed(b"<g:rte>" + point * 3 + b"</g:rte>"), max_points=CAP
+            ).points
+        )
+        == 3
     )
+    with pytest.raises(TooManyPoints):
+        parse_gpx(prefixed(b"<g:rte>" + point * 4 + b"</g:rte>"), max_points=CAP)
 
 
-def test_tags_are_counted_across_tracks_routes_and_segments() -> None:
+def test_trk_and_rte_points_are_counted_together() -> None:
+    both = (
+        b"<trk><trkseg>" + POINT * 2 + b"</trkseg></trk><rte>" + RTEPT * 2 + b"</rte>"
+    )
+    with pytest.raises(TooManyPoints):
+        parse_gpx(b"<gpx>" + both + b"</gpx>", max_points=CAP)
+    assert parse_gpx(b"<gpx>" + both + b"</gpx>", max_points=4).points
+
+
+def test_points_are_counted_across_tracks_routes_and_segments() -> None:
     data = (
         b"<gpx><trk><trkseg><trkpt/></trkseg><trkseg><trkpt/></trkseg></trk>"
         b"<trk><trkseg><trkpt/></trkseg></trk><rte><rtept/></rte></gpx>"
     )
-    assert exceeds_point_cap(data, max_points=CAP) is True
-    assert exceeds_point_cap(data, max_points=4) is False
-
-
-NOT_COUNTED_FORMS = [
-    pytest.param(b"</trkpt>", id="closing-tag"),
-    pytest.param(b"</rtept>", id="closing-rtept"),
-    pytest.param(b"<trkptx/>", id="longer-name"),
-    pytest.param(b"<trkpt2>", id="name-plus-digit"),
-    pytest.param(b"<TRKPT/>", id="upper-case"),
-    pytest.param(b"<Trkpt/>", id="mixed-case"),
-    pytest.param(b"<trkseg>", id="trkseg"),
-    pytest.param(b"<wpt lat='1' lon='2'/>", id="waypoint"),
-    pytest.param(b"<rte>", id="rte-element"),
-    pytest.param(b"<gpx:trkptx/>", id="prefixed-longer-name"),
-    pytest.param(b"trkpt/> trkpt ", id="no-angle-bracket"),
-]
-
-
-@pytest.mark.parametrize("form", NOT_COUNTED_FORMS)
-def test_other_tags_are_not_counted(form: bytes) -> None:
-    assert exceeds_point_cap(form * 50, max_points=CAP) is False
-
-
-def test_a_closing_tag_next_to_a_real_one_does_not_double_count() -> None:
-    data = b"<trkpt></trkpt>" * 3  # 3 real points, 3 closing tags
-    assert exceeds_point_cap(data, max_points=CAP) is False
-
-
-# --- linear time on adversarial bytes -------------------------------------------------
-
-TEN_MIB = 10 * 1024 * 1024
-WALL_BOUND_S = 2.0  # generous: the scan takes ~0.1-0.5 s; a quadratic one takes minutes
-
-
-def _adversarial() -> dict[str, bytes]:
-    return {
-        "short-runs-of-a": b"<a" * (TEN_MIB // 2),
-        "runs-of-50": (b"<" + b"a" * 50) * (TEN_MIB // 51),
-        "runs-of-5000": (b"<" + b"a" * 5000) * (TEN_MIB // 5001),
-        "one-giant-run": b"<" + b"a" * TEN_MIB,
-        "prefix-colons": b"<" + b"a:" * (TEN_MIB // 2),
-        "only-angle-brackets": b"<" * TEN_MIB,
-        "long-prefix-then-near-miss": (b"<" + b"a:" * 2000 + b"trkp")
-        * (TEN_MIB // 4005),
-        "prefixed-points": b"<gpx:trkpt/>" * (TEN_MIB // 12),
-    }
-
-
-@pytest.mark.parametrize("name", list(_adversarial()))
-def test_the_scan_is_linear_on_ten_mib_of_adversarial_input(name: str) -> None:
-    data = _adversarial()[name]
-    started = time.perf_counter()
-    exceeds_point_cap(data)
-    assert time.perf_counter() - started < WALL_BOUND_S
-
-
-# --- parse_gpx: the cap runs before gpxpy ---------------------------------------------
-
-
-@pytest.fixture
-def gpxpy_calls(monkeypatch: pytest.MonkeyPatch) -> list[int]:
-    """Replaces ``gpxpy.parse`` with a recorder that fails if it is ever reached."""
-    calls: list[int] = []
-
-    def forbidden(*_args: object, **_kwargs: object) -> None:
-        calls.append(1)
-        raise AssertionError("gpxpy.parse must not run for an over-cap file")
-
-    monkeypatch.setattr(gpxpy, "parse", forbidden)
-    return calls
-
-
-def test_100001_points_raise_too_many_points_without_calling_gpxpy(
-    gpxpy_calls: list[int],
-) -> None:
     with pytest.raises(TooManyPoints):
-        parse_gpx(gpx_with(POINT * 100_001))
-    assert gpxpy_calls == []
+        parse_gpx(data, max_points=CAP)
+    with pytest.raises(InvalidGpx):  # 4 counted, within a cap of 4, but no lat/lon
+        parse_gpx(data, max_points=4)
 
 
-def test_the_cap_counts_trk_and_rte_points_together_before_gpxpy(
-    gpxpy_calls: list[int],
-) -> None:
+def test_fifty_thousand_trk_plus_fifty_thousand_rte_points_are_rejected() -> None:
     data = (
         b"<gpx><trk><trkseg>"
         + POINT * 50_001
         + b"</trkseg></trk><rte>"
-        + b'<rtept lat="0" lon="0"/>' * 50_000
+        + RTEPT * 50_000
         + b"</rte></gpx>"
     )
     with pytest.raises(TooManyPoints):
         parse_gpx(data)
-    assert gpxpy_calls == []
+
+
+def test_sixty_thousand_of_each_kind_is_rejected_rte_first() -> None:
+    data = (
+        b"<gpx><rte>"
+        + RTEPT * 60_000
+        + b"</rte><trk><trkseg>"
+        + POINT * 60_000
+        + b"</trkseg></trk></gpx>"
+    )
+    with pytest.raises(TooManyPoints):
+        parse_gpx(data)
+
+
+NOT_COUNTED_FORMS = [
+    pytest.param(b"<trkptx/>", id="longer-name"),
+    pytest.param(b"<trkpt2/>", id="name-plus-digit"),
+    pytest.param(b"<TRKPT/>", id="upper-case"),
+    pytest.param(b"<Trkpt/>", id="mixed-case"),
+    pytest.param(b"<trkseg/>", id="empty-trkseg"),
+    pytest.param(b"<wpt lat='1' lon='2'/>", id="waypoint"),
+    pytest.param(b"<rte/>", id="rte-element"),
+    pytest.param(b"trkpt/> trkpt ", id="text-that-looks-like-a-tag"),
+    pytest.param(b"<!-- <trkpt/> -->", id="inside-a-comment"),
+    pytest.param(b"<![CDATA[<trkpt/>]]>", id="inside-cdata"),
+    pytest.param(b"<?pi <trkpt/> ?>", id="inside-a-processing-instruction"),
+    pytest.param(b"<extensions><trkpt/></extensions>", id="inside-extensions"),
+    pytest.param(b"<x:trkpt xmlns:x='urn:other'/>", id="foreign-namespace-prefixed"),
+    pytest.param(b"<trkpt xmlns='urn:other'/>", id="foreign-default-namespace"),
+]
+
+
+@pytest.mark.parametrize("form", NOT_COUNTED_FORMS)
+def test_other_content_is_not_counted(form: bytes) -> None:
+    parse_gpx(gpx_with(form * 50), max_points=CAP)  # must not raise
+
+
+def test_trkpt_inside_a_wpt_or_directly_under_trk_is_not_counted() -> None:
+    wpt = b"<wpt lat='1' lon='2'><extensions>" + POINT * 10 + b"</extensions></wpt>"
+    parse_gpx(b"<gpx>" + wpt + b"</gpx>", max_points=CAP)
+    direct = b"<gpx><trk>" + POINT * 10 + b"</trk></gpx>"
+    assert parse_gpx(direct, max_points=CAP).points == ()
+
+
+def test_trkpt_tags_in_a_comment_do_not_reject_a_file_with_no_real_points() -> None:
+    """The byte scan over-counted these (4 in a comment rejected a 0-point file)."""
+    data = gpx_with(b"<!-- <trkpt/><trkpt/><trkpt/><trkpt/> -->")
+    assert parse_gpx(data, max_points=CAP).points == ()
+
+
+def test_trkpt_tags_in_cdata_do_not_reject_a_file_with_no_real_points() -> None:
+    data = gpx_with(b"<name><![CDATA[<trkpt/><trkpt/><trkpt/><trkpt/>]]></name>")
+    assert parse_gpx(data, max_points=CAP).points == ()
+
+
+def test_a_double_prefixed_name_is_invalid_gpx_not_a_count() -> None:
+    with pytest.raises(InvalidGpx):
+        parse_gpx(gpx_with(b"<a:b:trkpt/>" * 4), max_points=CAP)
+
+
+# --- the cap aborts the pass ---
+
+
+def test_100001_points_raise_too_many_points() -> None:
+    with pytest.raises(TooManyPoints):
+        parse_gpx(gpx_with(POINT * 100_001))
+
+
+def test_the_cap_counts_trk_and_rte_points_together_at_the_real_cap() -> None:
+    data = (
+        b"<gpx><trk><trkseg>"
+        + POINT * 50_001
+        + b"</trkseg></trk><rte>"
+        + RTEPT * 50_000
+        + b"</rte></gpx>"
+    )
+    with pytest.raises(TooManyPoints):
+        parse_gpx(data)
 
 
 def test_exactly_100000_points_still_parse() -> None:
@@ -194,7 +258,37 @@ def test_too_many_points_is_a_route_parse_error_with_its_code() -> None:
     assert excinfo.value.message
 
 
-# --- precedence: prolog error > too_many_points > not UTF-8 > gpxpy failure ----------
+@pytest.mark.parametrize(
+    "tail",
+    [
+        pytest.param(b'<trkpt lat="', id="truncated-tag"),
+        pytest.param(b"<<<<", id="garbage-markup"),
+        pytest.param(b"<name>\xff\xfe</name>", id="invalid-utf8"),
+        pytest.param(b"\xff", id="a-lone-invalid-byte"),
+        pytest.param(b"</trkseg></trk></wrong>", id="mismatched-close"),
+    ],
+)
+def test_the_pass_stops_at_the_100001st_point_so_a_bad_tail_is_never_read(
+    tail: bytes,
+) -> None:
+    data = b"<gpx><trk><trkseg>" + POINT * 100_001 + tail
+    with pytest.raises(TooManyPoints):
+        parse_gpx(data)
+
+
+def test_a_bad_byte_before_the_100001st_point_wins_by_document_order() -> None:
+    data = gpx_with(b"<name>\xff</name>" + POINT * 100_001)
+    with pytest.raises(InvalidGpx):
+        parse_gpx(data)
+
+
+def test_a_malformed_tag_before_the_100001st_point_wins_by_document_order() -> None:
+    data = gpx_with(b"<<" + POINT * 100_001)
+    with pytest.raises(InvalidGpx):
+        parse_gpx(data)
+
+
+# --- precedence ---
 
 
 def test_a_doctype_beats_the_cap() -> None:
@@ -215,16 +309,17 @@ def test_a_wrong_root_beats_the_cap() -> None:
         parse_gpx(data)
 
 
-def test_the_cap_beats_a_non_utf8_byte() -> None:
-    data = gpx_with(POINT * 100_001 + b"<name>\xff\xfe</name>")
-    with pytest.raises(TooManyPoints):
+@pytest.mark.parametrize("where", ["start", "middle", "end"])
+def test_a_nul_byte_anywhere_beats_the_cap(where: str) -> None:
+    nul = b"\x00"
+    middle = POINT * 50_000 + (nul if where == "middle" else b"") + POINT * 50_001
+    data = gpx_with(middle)
+    if where == "start":
+        data = nul + data
+    elif where == "end":
+        data += nul
+    with pytest.raises(InvalidGpx):
         parse_gpx(data)
-
-
-def test_the_cap_beats_a_gpxpy_failure() -> None:
-    truncated = b"<gpx><trk><trkseg>" + POINT * 100_001 + b"<trkpt lat="
-    with pytest.raises(TooManyPoints):
-        parse_gpx(truncated)
 
 
 def test_a_non_utf8_byte_without_the_cap_is_still_invalid_gpx() -> None:
@@ -232,7 +327,7 @@ def test_a_non_utf8_byte_without_the_cap_is_still_invalid_gpx() -> None:
         parse_gpx(gpx_with(POINT * 3 + b"<name>\xff\xfe</name>"))
 
 
-# --- endpoint, through create_app and the real router ---------------------------------
+# --- endpoint, through create_app and the real router ---
 
 
 def test_the_endpoint_answers_422_too_many_points_for_100001_points(

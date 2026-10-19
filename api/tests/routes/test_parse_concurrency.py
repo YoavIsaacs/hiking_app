@@ -97,6 +97,14 @@ async def wait_until(predicate: Callable[[], bool], what: str) -> None:
     assert predicate(), what
 
 
+def test_one_parse_at_a_time_is_the_pinned_limit() -> None:
+    """ADR 0004 section 3.10 (third amendment, item 18): the limit is 1, as a memory
+    budget. One worst-case parse (about 250 MiB) fits a 512 MiB instance and two do not,
+    and a second slot buys no throughput on 1 vCPU. Changing this needs an ADR
+    amendment, not a test edit."""
+    assert MAX_CONCURRENT_PARSES == 1
+
+
 @pytest.mark.anyio
 async def test_only_the_limit_of_n_plus_two_simultaneous_parses_run_and_all_finish_200(
     settings: Settings,

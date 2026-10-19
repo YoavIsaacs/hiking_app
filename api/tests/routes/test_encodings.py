@@ -1,7 +1,8 @@
 """Declared and actual XML encodings (ADR 0004 section 3.11): never a 500.
 
-An unsupported declared encoding is ``invalid_gpx`` (expat raises LookupError or
-ValueError for them). UTF-8 is the only accepted content encoding.
+An unsupported declared encoding is ``invalid_gpx``: the reader's XmlDeclHandler applies
+the "decodes all 256 byte values" test (ADR 0004 section 3.1), and the content is
+always read as UTF-8. UTF-8 is the only accepted content encoding.
 """
 
 import pytest
@@ -12,7 +13,6 @@ from app.main import create_app
 from app.routes.errors import InvalidGpx, TooManyPoints
 from app.routes.parse import parse_gpx
 from app.routes.summary import summarise_gpx
-from app.routes.xml_guard import check_gpx_prolog
 from tests.routes.gpx_builders import gpx_bytes, straight_line
 from tests.routes.http_helpers import URL, assert_error
 
@@ -28,7 +28,7 @@ def declared(encoding: str, body: str = BODY) -> bytes:
     return f'<?xml version="1.0" encoding="{encoding}"?>{body}'.encode()
 
 
-# LookupError from expat (unknown name) and ValueError (known but unsupported).
+# Unknown names and known-but-unsupported codecs (multi-byte, UTF-16/32/7).
 UNSUPPORTED = [
     "x-unknown",
     "utf-32",
@@ -38,6 +38,8 @@ UNSUPPORTED = [
     "big5",
     "",
     "nope",
+    "utf-16",
+    "UTF-16",
 ]
 
 
@@ -48,11 +50,9 @@ def tolerant_client(settings: Settings) -> TestClient:
 
 
 @pytest.mark.parametrize("encoding", UNSUPPORTED)
-def test_check_gpx_prolog_rejects_an_unsupported_declared_encoding(
-    encoding: str,
-) -> None:
+def test_parse_gpx_rejects_an_unsupported_declared_encoding(encoding: str) -> None:
     with pytest.raises(InvalidGpx):
-        check_gpx_prolog(declared(encoding))
+        parse_gpx(declared(encoding))
 
 
 @pytest.mark.parametrize("encoding", UNSUPPORTED)
@@ -156,9 +156,8 @@ def test_the_error_message_names_the_encoding_problem_without_echoing_the_file(
 def test_bomless_utf16_cannot_smuggle_points_past_the_point_cap(
     codec: str,
 ) -> None:
-    """The cap scans raw bytes for ASCII tags (ADR 3.12 relies on "step 4 requires
-    UTF-8"). NUL-interleaved UTF-16 decodes as UTF-8, and expat then auto-detects
-    UTF-16, so the tags are invisible to the scan but gpxpy builds every point."""
+    """NUL-interleaved UTF-16 is valid UTF-8 byte-wise. The NUL rule (ADR 3.1 step 2)
+    rejects it before expat can auto-detect UTF-16 from the first bytes."""
     point = '<trkpt lat="0" lon="0"/>'
     text = "<gpx><trk><trkseg>" + point * 100_001 + "</trkseg></trk></gpx>"
     with pytest.raises((InvalidGpx, TooManyPoints)):

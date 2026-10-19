@@ -192,7 +192,7 @@ def test_bad_coordinates_are_invalid_gpx(attrs: str) -> None:
 
 
 def test_bad_coordinate_in_the_unchosen_source_does_not_reject_the_file() -> None:
-    """Only the chosen source's points are validated (ADR 3.1 step 7)."""
+    """Only the chosen source's points are validated (ADR 3.1 step 8)."""
     good = straight_line(3)
     data = gpx_bytes([good]).replace(
         b"</gpx>", b'<rte><rtept lat="95" lon="0"/><rtept lat="0" lon="0"/></rte></gpx>'

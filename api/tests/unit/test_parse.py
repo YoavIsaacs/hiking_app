@@ -1,11 +1,10 @@
-"""Unit tests for app.routes.parse and app.routes.xml_guard."""
+"""Unit tests for app.routes.parse (the expat GPX reader, ADR 0004 section 3.1)."""
 
 import pytest
 
 from app.routes.errors import InvalidGpx
 from app.routes.parse import drop_consecutive_duplicates, parse_gpx
 from app.routes.track import RawPoint
-from app.routes.xml_guard import check_gpx_prolog
 
 
 def p(lat: float, lon: float, ele: float | None = None) -> RawPoint:
@@ -102,14 +101,21 @@ def test_bad_input_is_invalid_gpx(data: bytes) -> None:
         parse_gpx(data)
 
 
-def test_a_gpxpy_failure_is_wrapped_as_invalid_gpx() -> None:
-    data = b'<gpx><trk><trkseg><trkpt lat="x" lon="1"/></trkseg></trk></gpx>'
-    with pytest.raises(InvalidGpx) as excinfo:
-        parse_gpx(data)
+def test_an_expat_error_is_wrapped_as_invalid_gpx_with_the_position_and_a_cause() -> (
+    None
+):
+    with pytest.raises(InvalidGpx, match=r"line 1, column") as excinfo:
+        parse_gpx(b"<gpx><trk></gpx>")
     assert excinfo.value.__cause__ is not None
 
 
-# --- check_gpx_prolog ----------------------------------------------------------------
+def test_an_unparseable_chosen_coordinate_is_invalid_gpx() -> None:
+    data = b'<gpx><trk><trkseg><trkpt lat="x" lon="1"/></trkseg></trk></gpx>'
+    with pytest.raises(InvalidGpx):
+        parse_gpx(data)
+
+
+# --- the root, DTDs and prolog (handlers of the one pass) ---
 
 
 @pytest.mark.parametrize(
@@ -123,7 +129,7 @@ def test_a_gpxpy_failure_is_wrapped_as_invalid_gpx() -> None:
     ],
 )
 def test_gpx_roots_pass(data: bytes) -> None:
-    check_gpx_prolog(data)
+    assert parse_gpx(data).points == ()
 
 
 @pytest.mark.parametrize(
@@ -143,16 +149,17 @@ def test_gpx_roots_pass(data: bytes) -> None:
 )
 def test_other_documents_are_rejected(data: bytes) -> None:
     with pytest.raises(InvalidGpx):
-        check_gpx_prolog(data)
+        parse_gpx(data)
 
 
 def test_malformed_prolog_reports_the_position() -> None:
     with pytest.raises(InvalidGpx, match=r"line 1, column"):
-        check_gpx_prolog(b"<?xml version='1.0'?><<gpx/>")
+        parse_gpx(b"<?xml version='1.0'?><<gpx/>")
 
 
-def test_the_guard_stops_at_the_root_and_ignores_a_broken_body() -> None:
-    check_gpx_prolog(b"<gpx><trk><<<<<")
+def test_a_broken_body_after_the_root_is_invalid_gpx() -> None:
+    with pytest.raises(InvalidGpx):
+        parse_gpx(b"<gpx><trk><<<<<")
 
 
 # --- implausible elevations and unsupported encodings ------------------------------
@@ -191,4 +198,4 @@ def test_elevation_bounds_are_inclusive_and_outside_becomes_none(
 def test_unsupported_xml_encoding_is_invalid_gpx(encoding: str) -> None:
     data = f'<?xml version="1.0" encoding="{encoding}"?><gpx/>'.encode()
     with pytest.raises(InvalidGpx, match="encoding|well-formed"):
-        check_gpx_prolog(data)
+        parse_gpx(data)

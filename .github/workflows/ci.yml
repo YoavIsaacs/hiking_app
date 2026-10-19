@@ -20,9 +20,11 @@ on:
 permissions:
   contents: read
 
-# Only PR runs are cancelled by a newer push; main runs always finish.
+# Only PR runs share a group (and are cancelled by a newer push). Every other run gets its own
+# group (the SHA), because GitHub also cancels *pending* runs of a shared group even with
+# cancel-in-progress false; so main, nightly and manual runs always finish.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
@@ -85,6 +87,7 @@ jobs:
   # repo-wide hygiene hooks (check-yaml, private keys, whitespace) that any file can break.
   lint:
     name: lint
+    timeout-minutes: 10
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -114,6 +117,7 @@ jobs:
 
   api-test:
     name: api-test
+    timeout-minutes: 15
     needs: changes
     if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.api == 'true') }}
     runs-on: ubuntu-latest
@@ -145,6 +149,7 @@ jobs:
 
   api-contract:
     name: api-contract
+    timeout-minutes: 15
     needs: changes
     if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.contract == 'true') }}
     runs-on: ubuntu-latest
@@ -174,17 +179,25 @@ jobs:
       - name: Regenerate OpenAPI schema and web types
         run: pnpm --filter web --fail-if-no-match gen:api
       - name: Fail if generated files are stale
+        env:
+          FRESH_DEPS: ${{ inputs.fresh-deps }}
         run: |
-          # Only the generated files count; a fresh-deps run also rewrites the lockfiles.
-          GENERATED="api/openapi.json web/src/api/schema.d.ts"
-          if ! git diff --exit-code -- $GENERATED || [ -n "$(git status --porcelain -- $GENERATED)" ]; then
+          # Normally any change or new file fails. A fresh-deps run also rewrites the lockfiles,
+          # so there only the two generated paths count.
+          if [ "$FRESH_DEPS" = "true" ]; then
+            paths=(-- api/openapi.json web/src/api/schema.d.ts)
+          else
+            paths=()
+          fi
+          if [ -n "$(git status --porcelain "${paths[@]}")" ]; then
             echo "::error::Generated API files are out of date. Run 'just gen-api' and commit api/openapi.json and web/src/api/schema.d.ts."
-            git status --porcelain -- $GENERATED
+            git status --porcelain "${paths[@]}"
             exit 1
           fi
 
   web-test:
     name: web-test
+    timeout-minutes: 15
     needs: changes
     if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.web == 'true') }}
     runs-on: ubuntu-latest
@@ -215,6 +228,7 @@ jobs:
 
   e2e:
     name: e2e
+    timeout-minutes: 30
     needs: changes
     if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.api == 'true' || needs.changes.outputs.web == 'true') }}
     runs-on: ubuntu-latest

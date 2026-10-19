@@ -10,9 +10,10 @@ on:
 permissions:
   contents: read
 
-# Only PR runs are cancelled by a newer push; main and scheduled runs always finish.
+# Only PR runs share a group (and are cancelled by a newer push). Push and scheduled runs get
+# their own group (the SHA) so a pending run is never cancelled and they always finish.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:

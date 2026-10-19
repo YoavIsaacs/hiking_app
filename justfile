@@ -17,16 +17,16 @@ dev-api:
 
 # Run the web app on http://localhost:5173
 dev-web:
-    pnpm --filter web dev
+    pnpm --filter web --fail-if-no-match dev
 
 # Run every test suite; fails if any suite fails
 test:
     cd api && uv run --frozen pytest
-    pnpm --filter web test
+    pnpm --filter web --fail-if-no-match test
 
 # Run the Playwright e2e suite (all projects; starts API and web servers)
 e2e:
-    pnpm --filter web e2e
+    pnpm --filter web --fail-if-no-match e2e
 
 # Run all pre-commit hooks on all files
 lint:

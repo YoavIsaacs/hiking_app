@@ -1,6 +1,6 @@
 # 0002 — Deployment: WIF identities, candidate → traffic, Firebase Hosting, CORS, settings prefix
 
-Status: Accepted (tech lead, 2026-10-14; `firebase-tools` CI use pending manager approval; max instances amended 3 → 1 on 2026-10-18, ADR 0003; budget 5 ILS and fork-PR settings note amended 2026-10-19) · Date: 2026-10-14 · Step: 0.5
+Status: Accepted (tech lead, 2026-10-14; `firebase-tools` CI use pending manager approval; max instances amended 3 → 1 on 2026-10-18, ADR 0003; budget 5 ILS, fork-PR settings note and immutable-format WIF subjects amended 2026-10-19) · Date: 2026-10-14 · Step: 0.5
 
 ## Context
 Step 0.5 puts the API on Cloud Run and the web app on Firebase Hosting. Both deploy from `main` through GitHub
@@ -51,8 +51,15 @@ config: Cloud Run service `hike-api`, Artifact Registry repo `hike`, image `api`
 
   | SA | `<SUB>` |
   | --- | --- |
-  | `api-deploy` | `repo:YoavIsaacs/hiking_app:environment:production` |
-  | `web-deploy` | `repo:YoavIsaacs/hiking_app:environment:production` **and** `repo:YoavIsaacs/hiking_app:pull_request` |
+  | `api-deploy` | `repo:YoavIsaacs@70278746/hiking_app@1416010895:environment:production` |
+  | `web-deploy` | `repo:YoavIsaacs@70278746/hiking_app@1416010895:environment:production` **and** `repo:YoavIsaacs@70278746/hiking_app@1416010895:pull_request` |
+
+  The general form is `repo:<owner>@<OWNER_ID>/<repo>@<REPO_ID>:…`. *Amended 2026-10-19:* the repo's OIDC subject
+  uses GitHub's **immutable** format (`use_immutable_subject: true`), so the name-only form
+  `repo:YoavIsaacs/hiking_app:…` first written here never matched; impersonation failed with a 403 on
+  `iam.serviceAccounts.getAccessToken` on PR #11's first WIF run, and the manager re-bound with these subjects.
+  Check the current format with `gh api repos/YoavIsaacs/hiking_app/actions/oidc/customization/sub`
+  (`sub_claim_prefix` is everything before `:pull_request` / `:environment:production`).
 
   GitHub issues the `environment:production` subject only to jobs that declare `environment: production`, and the
   environment only admits `main`. So a PR job can never impersonate `api-deploy`, even if the PR edits a workflow.
@@ -329,7 +336,14 @@ The new actions `google-github-actions/auth` and `setup-gcloud` are the same kin
 - Harder later: a same-repo PR **can** deploy the live Hosting site, because Firebase has no role scoped to channels
   and a PR may edit `preview.yml`. Today only the owner has write access, so we accept this. Revisit if collaborators
   join.
-- Harder later: the subject bindings contain the repo name, so renaming the repo breaks deploys (it fails closed).
+- *Amended 2026-10-19:* the subject bindings carry the numeric owner and repo IDs (immutable `sub` format), so a
+  re-registered or recreated repo/owner with the same names can never match them (no subject recycling).
+- Harder later: the immutable subject **still contains the names** (`<owner>@<id>/<repo>@<id>`), and a
+  `principal://…/subject/…` binding matches the whole subject exactly, so renaming the repo or the owner should be
+  assumed to break deploys (fails closed with a 403). GitHub's docs don't say whether the name part follows a
+  rename. After a rename, re-check the subject and re-bind. Also, if the repo's OIDC subject setting changes
+  (immutable off, or a custom `sub` template), every `workloadIdentityUser` binding must change with it. Check with
+  `gh api repos/YoavIsaacs/hiking_app/actions/oidc/customization/sub` before and after any such change.
 - Harder later: a custom domain or any other non-Firebase origin has to go into `HIKE_CORS_ORIGINS` as JSON with
   commas, which means `--env-vars-file` or gcloud's `^@^` delimiter.
 - Harder later: Dependabot and fork PRs get no preview. If 1.11 makes the preview job required, skipped jobs report
@@ -390,6 +404,8 @@ The new actions `google-github-actions/auth` and `setup-gcloud` are the same kin
 7. Create the WIF pool `github` and provider `hiking-app` with the §1 mapping and condition, filling in
    `<REPO_ID>`/`<OWNER_ID>`.
 8. Grant `roles/iam.workloadIdentityUser` with the §1 subject bindings: one on `api-deploy`, two on `web-deploy`.
+   Use the immutable-format subjects `repo:YoavIsaacs@70278746/hiking_app@1416010895:…`. (*Amended 2026-10-19:*
+   the name-only `repo:YoavIsaacs/hiking_app:…` bindings caused a 403 on impersonation; the manager replaced them.)
 9. Bootstrap the service with your own credentials:
    `gcloud run deploy hike-api --image=us-docker.pkg.dev/cloudrun/container/hello --region=<REGION> --service-account=api-runtime@<PROJECT_ID>.iam.gserviceaccount.com --no-invoker-iam-check --min-instances=0 --max-instances=1 --memory=512Mi --concurrency=80`.
    (*Amended 2026-10-18:* max instances 3 → 1; see ADR 0003.) Send `status.url` to the tech lead, who has frontend put it in `web/.env.production`.
@@ -398,7 +414,9 @@ The new actions `google-github-actions/auth` and `setup-gcloud` are the same kin
 11. After merge, watch `deploy-api` and `deploy-web`, then do the phone timing checks.
 
 ## References
-- GitHub OIDC claims and `sub` formats: https://docs.github.com/en/actions/reference/security/oidc
+- GitHub OIDC claims and `sub` formats (incl. "Immutable subject claims"): https://docs.github.com/en/actions/reference/security/oidc ;
+  changelog https://github.blog/changelog/2026-04-23-immutable-subject-claims-for-github-actions-oidc-tokens
+  (*added 2026-10-19*)
 - Fork/Dependabot read-only tokens and `id-token: write|none`; `concurrency` `queue`:
   https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax ;
   https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows

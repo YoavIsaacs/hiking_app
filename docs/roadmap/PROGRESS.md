@@ -15,7 +15,9 @@ The tech lead keeps this file true. A step moves to Done only with checkpoint ev
 ## Current state (handoff for a fresh session)
 Read this, then `docs/steps/<current step>.md`. Nothing here lives only in chat.
 
-- **Current step:** 0.6 Pipeline rules on branch `step/0.6-pipeline-rules` (created 2026-10-19; brief not written yet).
+- **Current step:** 0.6 Pipeline rules on branch `step/0.6-pipeline-rules` (created 2026-10-19, pushed; brief not written yet).
+  **Next session starts here:** step loop 1–2 for 0.6 — write `docs/steps/0.6.md` from `docs/roadmap/phase-0.md` + `overview.md`
+  0.6, folding in the 0.6 carry-forward list below; triage Dependabot #12–#15.
   0.5 closed 2026-10-19. Open Dependabot PRs #12–#15 held during 0.5: **#13 (python 3.12 → 3.14 image) must not be
   merged** (stack is 3.12; 0.6 adds a Dependabot ignore for Python majors); #12, #14, #15 to check in 0.6.
 - **GCP:** project `hike-prep` (number 1484623023), region `me-west1`, billing linked, budget 5 ILS/month
@@ -98,9 +100,9 @@ Read this, then `docs/steps/<current step>.md`. Nothing here lives only in chat.
   Manager dropped the kill switch (ADR 0003 deferred). Tech lead claimed "WIF auth works" too early (corrected); committed
   while an agent was active (second time, after 0.4).
   Watch → now repeated twice:
-  - **Tech lead commits while an agent is running** (0.4, 0.5) → proposed `.claude/agents/tech-lead.md` change (pending manager).
+  - **Tech lead commits while an agent is running** (0.4, 0.5) → `.claude/agents/tech-lead.md` step 5 changed (manager-approved 2026-10-19).
   - **Verification that doesn't exercise the real path** (devops 0.4 inherited PATH; 0.5 runbook self-check read config,
-    never exchanged a token) → proposed `.claude/agents/devops.md` change (pending manager).
+    never exchanged a token) → `.claude/agents/devops.md` "Verify the real path" rule added (manager-approved 2026-10-19).
 - **Repeated patterns → changes (manager-approved and applied 2026-10-14):**
   1. QA missed failure-path gaps twice (0.1, 0.2) → `.claude/agents/qa.md`: treat every untested failure path
      of a checklist item as a *finding*, not a follow-up; always probe negatives and false positives

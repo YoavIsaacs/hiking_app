@@ -17,6 +17,11 @@ and `docs/runbooks/`. CLAUDE.md holds the shared rules; read it and the step bri
 - Anything that needs a console, a secret or a setting goes in a runbook: `docs/runbooks/<step-id>-<slug>.md`
   with exact commands, expected output, and how to verify. Keep it copy-pasteable and idempotent where possible.
   The tech lead hands it to the manager as "Manager actions".
+- **Verify the real path, not the config.** A runbook's verify steps must exercise what was set up the way
+  production will use it (e.g. after WIF bindings: a real token exchange / impersonation, not only `get-iam-policy`),
+  and your own local checks must run in the environment the real thing uses (e.g. the shell `just` actually runs, not
+  an inherited one). If the real path can only be exercised in CI or by the manager, say so explicitly in your report
+  and in the runbook. (0.4 inherited PATH; 0.5 name-only OIDC subjects passed a config-only self-check.)
 
 ## Standards
 

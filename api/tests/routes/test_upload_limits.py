@@ -151,13 +151,18 @@ def test_streamed_multipart_helper_totals_the_requested_size() -> None:
 
 # --- malformed Content-Length headers: never a 500 (reviewer round 1, body_limit.py) --
 
-HEADER_VALUES_THAT_BREAK_INT = [
+ASCII_HEADERS_THAT_BREAK_INT = [
     pytest.param("9" * 5000, id="5000-digits"),
     pytest.param("1" + "0" * 4300, id="4301-digits"),
     pytest.param("9" * 4301, id="4301-nines"),
-    pytest.param("\u00b2", id="superscript-two"),
-    pytest.param("\u00b3\u00b9", id="superscript-three-one"),
-    pytest.param("\u00b9" * 5000, id="superscript-5000"),
+]
+# str.isdigit() is True for these but int() raises on them. They are sent as raw
+# latin-1 bytes through ASGITransport: TestClient re-encodes header values as UTF-8,
+# which would turn them into something that is not a digit and hide the defect.
+NON_ASCII_DIGIT_HEADERS = [
+    pytest.param(b"\xb2", id="superscript-two"),
+    pytest.param(b"\xb3\xb9", id="superscript-three-one"),
+    pytest.param(b"\xb9" * 5000, id="superscript-5000"),
 ]
 HEADER_VALUES_THAT_ARE_NOT_NUMBERS = [
     pytest.param("", id="empty"),
@@ -189,11 +194,39 @@ def _post_with_length(client: TestClient, value: str) -> httpx.Response:
     return response
 
 
-@pytest.mark.parametrize("value", HEADER_VALUES_THAT_BREAK_INT)
+async def _asgi_post(settings: Settings, body: bytes, length: bytes) -> httpx.Response:
+    """POST with a byte-exact Content-Length header, 500s returned not raised."""
+    transport = httpx.ASGITransport(
+        app=create_app(settings), raise_app_exceptions=False
+    )
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as c:
+        return await c.post(
+            URL,
+            content=body,
+            headers=[
+                (b"content-type", multipart_content_type().encode()),
+                (b"content-length", length),
+            ],
+        )
+
+
+@pytest.mark.parametrize("value", ASCII_HEADERS_THAT_BREAK_INT)
 def test_a_content_length_that_int_cannot_parse_is_an_error_response_not_a_500(
     tolerant_client: TestClient, value: str
 ) -> None:
     response = _post_with_length(tolerant_client, value)
+    assert response.status_code in {400, 413}, response.text
+    expected = "file_too_large" if response.status_code == 413 else "bad_request"
+    assert_error(response, response.status_code, expected)
+
+
+@pytest.mark.parametrize("value", NON_ASCII_DIGIT_HEADERS)
+@pytest.mark.anyio
+async def test_a_non_ascii_digit_content_length_is_an_error_response_not_a_500(
+    settings: Settings, value: bytes
+) -> None:
+    body = multipart_head() + VALID + multipart_tail()
+    response = await _asgi_post(settings, body, value)
     assert response.status_code in {400, 413}, response.text
     expected = "file_too_large" if response.status_code == 413 else "bad_request"
     assert_error(response, response.status_code, expected)
@@ -222,14 +255,11 @@ def test_a_non_numeric_content_length_never_causes_a_500(
         assert set(response.json()) == {"code", "message", "detail"}
 
 
-def test_a_malformed_content_length_does_not_disable_the_streaming_cap(
-    tolerant_client: TestClient,
+@pytest.mark.anyio
+async def test_a_malformed_content_length_does_not_disable_the_streaming_cap(
+    settings: Settings,
 ) -> None:
     """Whatever the header says, a 12 MiB body is still refused by layer 2."""
     body = multipart_head() + b" " * (12 * MIB) + multipart_tail()
-    response = tolerant_client.post(
-        URL,
-        content=body,
-        headers={"content-type": multipart_content_type(), "content-length": "\u00b2"},
-    )
+    response = await _asgi_post(settings, body, b"\xb2")
     assert response.status_code in {400, 413}, response.text

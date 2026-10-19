@@ -60,14 +60,14 @@ def test_settings_read_every_hike_prefixed_name(
     assert settings.version == "1.2.3"
     assert settings.open_meteo_base_url == "http://meteo.test"
     assert settings.log_level == "DEBUG"
-    assert settings.model_dump().get("cors_firebase_site") == "hike-prep-abc"
+    assert settings.cors_firebase_site == "hike-prep-abc"
 
 
 def test_cors_defaults_are_localhost_and_no_firebase_site() -> None:
-    dumped = Settings(_env_file=None).model_dump()
+    settings = Settings(_env_file=None)
 
-    assert dumped["cors_origins"] == ["http://localhost:5173"]
-    assert dumped.get("cors_firebase_site", "<missing field>") is None
+    assert settings.cors_origins == ["http://localhost:5173"]
+    assert settings.cors_firebase_site is None
 
 
 @pytest.mark.parametrize(

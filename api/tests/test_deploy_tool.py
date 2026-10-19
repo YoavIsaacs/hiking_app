@@ -14,7 +14,6 @@ from collections.abc import Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
-from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
@@ -33,9 +32,21 @@ CANDIDATE_URL = "https://candidate---hike-api-123456789012.me-west1.run.app"
 LIVE_URL = "https://hike-api-123456789012.me-west1.run.app"
 
 
-def load(name: str) -> dict[str, Any]:
-    data: dict[str, Any] = json.loads((FIXTURES / name).read_text(encoding="utf-8"))
+def load(name: str) -> dict[str, object]:
+    data: dict[str, object] = json.loads((FIXTURES / name).read_text(encoding="utf-8"))
     return data
+
+
+def status_of(service: dict[str, object]) -> dict[str, object]:
+    status = service["status"]
+    assert isinstance(status, dict)
+    return status
+
+
+def traffic_of(service: dict[str, object]) -> list[dict[str, object]]:
+    traffic = status_of(service)["traffic"]
+    assert isinstance(traffic, list)
+    return traffic
 
 
 def health(
@@ -211,9 +222,18 @@ def run_smoke(
     *,
     url: str = CANDIDATE_URL,
     origin: str | None = ORIGIN,
-    **kwargs: Any,
+    attempts: int = 6,
+    delay_s: float = 5.0,
 ) -> None:
-    deploy.smoke(url, SHA, origin=origin, fetch=fetch, sleep=sleep, **kwargs)
+    deploy.smoke(
+        url,
+        SHA,
+        origin=origin,
+        fetch=fetch,
+        sleep=sleep,
+        attempts=attempts,
+        delay_s=delay_s,
+    )
 
 
 def test_smoke_passes_first_try_without_sleeping() -> None:
@@ -421,6 +441,29 @@ def test_read_version_raises_when_version_is_not_a_string(tmp_path: Path) -> Non
         deploy.read_version(pyproject)
 
 
+def test_read_version_raises_deploy_check_error_on_invalid_toml(
+    tmp_path: Path,
+) -> None:
+    pyproject = tmp_path / "pyproject.toml"
+    pyproject.write_text("[project\nversion = ", encoding="utf-8")
+
+    with pytest.raises(DeployCheckError, match="cannot read version") as info:
+        deploy.read_version(pyproject)
+
+    assert str(pyproject) in str(info.value)
+
+
+def test_read_version_raises_deploy_check_error_when_file_is_missing(
+    tmp_path: Path,
+) -> None:
+    pyproject = tmp_path / "nope" / "pyproject.toml"
+
+    with pytest.raises(DeployCheckError, match="cannot read version") as info:
+        deploy.read_version(pyproject)
+
+    assert str(pyproject) in str(info.value)
+
+
 # --- serving_revision ---
 
 
@@ -444,7 +487,7 @@ def test_serving_revision_rejects_a_traffic_split() -> None:
 
 def test_serving_revision_rejects_traffic_that_does_not_sum_to_100() -> None:
     service = load("run_service_before.json")
-    service["status"]["traffic"][0]["percent"] = 60
+    traffic_of(service)[0]["percent"] = 60
 
     with pytest.raises(DeployCheckError):
         deploy.serving_revision(service)
@@ -452,7 +495,7 @@ def test_serving_revision_rejects_traffic_that_does_not_sum_to_100() -> None:
 
 def test_serving_revision_rejects_empty_traffic() -> None:
     service = load("run_service_before.json")
-    service["status"]["traffic"] = []
+    status_of(service)["traffic"] = []
 
     with pytest.raises(DeployCheckError):
         deploy.serving_revision(service)
@@ -466,14 +509,16 @@ def test_serving_revision_rejects_missing_status() -> None:
 @pytest.mark.parametrize(
     "service", [{}, {"status": None}, {"status": {}}, {"status": []}]
 )
-def test_serving_revision_rejects_malformed_documents(service: dict[str, Any]) -> None:
+def test_serving_revision_rejects_malformed_documents(
+    service: dict[str, object],
+) -> None:
     with pytest.raises(DeployCheckError):
         deploy.serving_revision(service)
 
 
 def test_serving_revision_rejects_traffic_entry_without_revision_name() -> None:
     service = load("run_service_before.json")
-    del service["status"]["traffic"][0]["revisionName"]
+    del traffic_of(service)[0]["revisionName"]
 
     with pytest.raises(DeployCheckError):
         deploy.serving_revision(service)
@@ -481,7 +526,7 @@ def test_serving_revision_rejects_traffic_entry_without_revision_name() -> None:
 
 def test_serving_revision_rejects_traffic_that_is_not_a_list() -> None:
     service = load("run_service_before.json")
-    service["status"]["traffic"] = {"percent": 100}
+    status_of(service)["traffic"] = {"percent": 100}
 
     with pytest.raises(DeployCheckError):
         deploy.serving_revision(service)
@@ -518,7 +563,7 @@ def test_tagged_revision_does_not_match_a_different_tag() -> None:
 
 def test_tagged_revision_does_not_match_tag_by_prefix() -> None:
     service = load("run_service_after_candidate.json")
-    service["status"]["traffic"][1]["tag"] = "candidate-old"
+    traffic_of(service)[1]["tag"] = "candidate-old"
 
     with pytest.raises(DeployCheckError):
         deploy.tagged_revision(service, "candidate")
@@ -526,7 +571,7 @@ def test_tagged_revision_does_not_match_tag_by_prefix() -> None:
 
 def test_tagged_revision_rejects_tag_target_without_url() -> None:
     service = load("run_service_after_candidate.json")
-    del service["status"]["traffic"][1]["url"]
+    del traffic_of(service)[1]["url"]
 
     with pytest.raises(DeployCheckError, match="url"):
         deploy.tagged_revision(service, "candidate")
@@ -534,7 +579,7 @@ def test_tagged_revision_rejects_tag_target_without_url() -> None:
 
 def test_tagged_revision_never_derives_the_url_by_hand() -> None:
     service = load("run_service_after_candidate.json")
-    service["status"]["traffic"][1]["url"] = "https://from-the-document.example"
+    traffic_of(service)[1]["url"] = "https://from-the-document.example"
 
     assert (
         deploy.tagged_revision(service, "candidate")[1]
@@ -544,7 +589,7 @@ def test_tagged_revision_never_derives_the_url_by_hand() -> None:
 
 def test_tagged_revision_does_not_read_spec_traffic() -> None:
     service = load("run_service_after_candidate.json")
-    service["status"]["traffic"] = [service["status"]["traffic"][0]]
+    status_of(service)["traffic"] = [traffic_of(service)[0]]
 
     with pytest.raises(DeployCheckError):
         deploy.tagged_revision(service, "candidate")
@@ -553,7 +598,9 @@ def test_tagged_revision_does_not_read_spec_traffic() -> None:
 @pytest.mark.parametrize(
     "service", [{}, {"status": None}, {"status": {}}, {"status": {"traffic": 5}}]
 )
-def test_tagged_revision_rejects_malformed_documents(service: dict[str, Any]) -> None:
+def test_tagged_revision_rejects_malformed_documents(
+    service: dict[str, object],
+) -> None:
     with pytest.raises(DeployCheckError):
         deploy.tagged_revision(service, "candidate")
 

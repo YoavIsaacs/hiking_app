@@ -47,6 +47,7 @@ Read this, then `docs/steps/<current step>.md`. Nothing here lives only in chat.
   deferred from 0.1 can be run in 0.5. README still says "run everything from Git Bash" — no longer required (nit).
 - **0.6:** `--fail-if-no-match` on every `pnpm --filter` in CI and pre-commit; pin CI actions to SHAs; caching (`api-test` already has setup-uv cache); confirm Dependabot handles
   the pnpm 12 lockfile.
+- **Before Phase 3 (or when there is something to show):** custom domain for the web app (Firebase Hosting custom domain; buying a domain costs money → manager approval) and optionally `/api/**` Hosting rewrite to Cloud Run (check `me-west1` support). Revisit the deferred ADR 0003 kill switch.
 - **Before Phase 1 screens:** UX §6 44×44 px targets (deferred from 0.3); no visual identity or tokens exist yet (`design/tokens.json`, `docs/design/` absent).
   Phase 1 needs a graphic-designer pass before the first real screen.
 - **Windows dev:** stopping `just dev-api` can orphan uvicorn (README troubleshooting). Port 8765 is held by an

@@ -1,6 +1,6 @@
 # 0002 — Deployment: WIF identities, candidate → traffic, Firebase Hosting, CORS, settings prefix
 
-Status: Accepted (tech lead, 2026-10-14; `firebase-tools` CI use pending manager approval; max instances amended 3 → 1 on 2026-10-18, ADR 0003) · Date: 2026-10-14 · Step: 0.5
+Status: Accepted (tech lead, 2026-10-14; `firebase-tools` CI use pending manager approval; max instances amended 3 → 1 on 2026-10-18, ADR 0003; budget 5 ILS and fork-PR settings note amended 2026-10-19) · Date: 2026-10-14 · Step: 0.5
 
 ## Context
 Step 0.5 puts the API on Cloud Run and the web app on Firebase Hosting. Both deploy from `main` through GitHub
@@ -36,8 +36,12 @@ config: Cloud Run service `hike-api`, Artifact Registry repo `hike`, image `api`
   *not* do: it cannot tell a fork apart. A fork PR's `pull_request` run executes in the base repo's context, so
   `repository_id` matches.
 - **Forks are excluded by GitHub itself.** Fork and Dependabot PR runs get a read-only `GITHUB_TOKEN`, and
-  `id-token` can only be `write` or `none`, so these runs cannot request an OIDC token at all. Keep the setting
-  "send write tokens to workflows from pull requests" off. On top of that, the preview job carries
+  `id-token` can only be `write` or `none`, so these runs cannot request an OIDC token at all. The repo is
+  public, and for public repos GitHub never gives fork PR runs write tokens, secrets or OIDC tokens; the "Send
+  write tokens / secrets to workflows from fork pull requests" settings exist only for private repos, so there is
+  nothing to switch off. Instead the manager set "Require approval for all external contributors", so no fork PR
+  workflow runs until approved. (*Amended 2026-10-19*, brief 0.5 "Decisions and deviations".) On top of that, the
+  preview job carries
   `if: github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.user.login != 'dependabot[bot]'`.
   That condition is a skip, not a security control; without it the job would just fail red on those PRs.
   **Never use `pull_request_target`.**
@@ -341,7 +345,9 @@ The new actions `google-github-actions/auth` and `setup-gcloud` are the same kin
   - Artifact Registry: 0.5 GB free, about $0.10/GB-month after that. With a cleanup policy keeping 10 versions,
     that is under $0.10/month.
   - WIF, Secret Manager (no secrets) and Actions minutes (public repo) cost $0.
-  - The $5/month budget alert stays.
+  - A **5 ILS/month** budget alert (the billing account's currency is ILS; about $1.35), emailing at 50/90/100 % of
+    actual spend. It is an alert only: there is no hard stop, because the ADR 0003 kill switch is **deferred**
+    (manager, 2026-10-19). *Amended 2026-10-19:* this replaces the $5 budget first written here.
 
 ## How it is tested
 - **pytest, no socket (QA red first):**
@@ -369,8 +375,9 @@ The new actions `google-github-actions/auth` and `setup-gcloud` are the same kin
   in the log shows the old revision still at 100 %. Then fix forward.
 
 ## Manager console steps (in order; devops turns these into the runbook)
-1. Create project `<PROJECT_ID>`, link billing, and set a **$5/month budget alert** at 50/90/100 %. Note the
-   `<PROJECT_NUMBER>`.
+1. Create project `<PROJECT_ID>`, link billing, and set a **5 ILS/month budget alert** (the billing account's
+   currency) at 50/90/100 % of actual spend, by email. Note the `<PROJECT_NUMBER>`. (*Amended 2026-10-19:* was
+   $5; no hard stop, ADR 0003 is deferred.)
 2. Enable these APIs: `run`, `artifactregistry`, `secretmanager`, `iamcredentials`, `iam`, `sts`,
    `cloudresourcemanager`. The checklist lists four of them; IAM and STS are needed for WIF.
 3. Add Firebase to the existing project (it becomes Blaze), then click Hosting → Get started. Confirm the default

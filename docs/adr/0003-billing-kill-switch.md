@@ -1,6 +1,24 @@
 # 0003 — Billing kill switch: $1 budget → Pub/Sub → guard detaches billing
 
-Status: Accepted (tech lead, 2026-10-18; manager acknowledgements and `ops/` ownership pending) · Date: 2026-10-18 · Step: 0.5
+Status: **Deferred** (manager, 2026-10-19) · Date: 2026-10-18 · Step: 0.5
+
+## Status history
+- 2026-10-18 — Accepted by the tech lead (manager acknowledgements and `ops/` ownership were pending).
+- 2026-10-19 — **Deferred by the manager** (brief 0.5, "Decisions and deviations", 2026-10-19). The kill switch is
+  overkill at this scope, and the roadmap only requires a budget alert. Nothing below was built or deployed:
+  - No `ops/` folder exists, and there is no `ops-test` CI job. The `ops/` ownership rows in `CLAUDE.md` were
+    withdrawn.
+  - The guard today is the budget alert plus the Cloud Run instance cap:
+    - a **5 ILS/month** budget (the billing account's currency is ILS), alerting by email at 50/90/100 % of
+      actual spend;
+    - Cloud Run `hike-api` at `--max-instances=1` and `--min-instances=0` (ADR 0002 §4 step 5 and console step 9;
+      the §6 instance cap stays in force on its own).
+  - Nothing stateful lives in the project.
+  - **Budget amount:** the actual budget is 5 ILS (about $1.35 at roughly 3.7 ILS/USD), not the $1 this body
+    assumes. Where the body says $1, read 5 ILS.
+  - **Revisit before Phase 3.** Public accounts and the community feed raise the cost risk from abuse traffic. The
+    body below is kept intact as the design to pick up then; re-check its references and the native spend-cap
+    option first, since both may have changed.
 
 ## Context
 The manager approved a deviation in step 0.5 (brief, "Decisions and deviations", 2026-10-18). A GCP budget only

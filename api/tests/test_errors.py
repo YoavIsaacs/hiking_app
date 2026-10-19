@@ -27,7 +27,11 @@ def test_unhandled_error_is_generic_500_with_request_id(settings: Settings) -> N
     client = TestClient(_app(settings), raise_server_exceptions=False)
     response = client.get("/boom")
     assert response.status_code == 500
-    assert response.json() == {"detail": "Internal Server Error"}
+    assert response.json() == {
+        "code": "internal_error",
+        "message": "Internal Server Error",
+        "detail": None,
+    }
     assert "secret detail" not in response.text
     assert len(response.headers[REQUEST_ID_HEADER]) == 32
 

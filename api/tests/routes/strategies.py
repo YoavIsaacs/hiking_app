@@ -1,0 +1,88 @@
+"""Typed Hypothesis strategies for random tracks (ADR 0004, "Hypothesis properties")."""
+
+from dataclasses import dataclass
+from typing import Literal
+
+from hypothesis import strategies as st
+
+from tests.routes.gpx_builders import Kind, Pt, destination, gpx_bytes
+
+ElevationMode = Literal["all", "none", "partial"]
+
+
+@dataclass(frozen=True)
+class Track:
+    kind: Kind
+    segments: tuple[tuple[Pt, ...], ...]
+    elevation: ElevationMode
+
+    def gpx(self) -> bytes:
+        return gpx_bytes(self.segments, kind=self.kind)
+
+    def reversed(self) -> "Track":
+        return Track(
+            self.kind,
+            tuple(tuple(reversed(seg)) for seg in reversed(self.segments)),
+            self.elevation,
+        )
+
+    @property
+    def flat(self) -> list[Pt]:
+        return [p for seg in self.segments for p in seg]
+
+
+@st.composite
+def tracks(draw: st.DrawFn, *, min_points: int = 2, max_points: int = 200) -> Track:
+    """2-200 points: a start anywhere (poles, antimeridian), then steps of
+    0-500 m on random bearings, random duplicates, finite elevations -400..8848 m and
+    optionally missing <ele>; written as trk, rte or multi-segment trk."""
+    n = draw(st.integers(min_points, max_points))
+    lat = draw(
+        st.one_of(
+            st.floats(-89.9, 89.9),
+            st.sampled_from([89.9, -89.9, 0.0, 31.9]),
+        )
+    )
+    lon = draw(
+        st.one_of(
+            st.floats(-180.0, 180.0),
+            st.sampled_from([180.0, -180.0, 179.9999, -179.9999, 0.0]),
+        )
+    )
+    elevation: ElevationMode = draw(
+        st.sampled_from(["all", "all", "all", "none", "partial"])
+    )
+    elevations = draw(
+        st.lists(
+            st.integers(-40000, 884800).map(lambda c: c / 100), min_size=n, max_size=n
+        )
+    )
+    steps = draw(st.lists(st.floats(0.0, 500.0), min_size=n, max_size=n))
+    bearings = draw(st.lists(st.floats(0.0, 360.0), min_size=n, max_size=n))
+    dupes = draw(st.lists(st.booleans(), min_size=n, max_size=n))
+    missing = draw(st.lists(st.booleans(), min_size=n, max_size=n))
+
+    def ele(i: int) -> float | None:
+        if elevation == "none":
+            return None
+        if elevation == "partial" and missing[i]:
+            return None
+        return elevations[i]
+
+    points = [Pt(lat, lon, ele(0))]
+    for i in range(1, n):
+        prev = points[-1]
+        if dupes[i]:
+            points.append(Pt(prev.lat, prev.lon, ele(i)))
+        else:
+            moved = destination(prev, bearings[i], steps[i])
+            points.append(Pt(moved.lat, moved.lon, ele(i)))
+    kind: Kind = draw(st.sampled_from(["trk", "trk", "rte"]))
+    cuts: list[int] = []
+    if kind == "trk":
+        cuts = sorted(set(draw(st.lists(st.integers(1, max(1, n - 1)), max_size=3))))
+    bounds = [0, *[c for c in cuts if 0 < c < n], n]
+    segments = tuple(
+        tuple(points[a:b]) for a, b in zip(bounds, bounds[1:], strict=False)
+    )
+    return Track(kind, segments, elevation)

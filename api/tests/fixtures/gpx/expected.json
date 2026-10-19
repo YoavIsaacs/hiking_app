@@ -8,7 +8,11 @@
     "reference_gain_m": 198,
     "has_elevation": true,
     "expected_error": null,
-    "segment_gap_m": null
+    "segment_gap_m": null,
+    "edge_cases": [
+      "loop"
+    ],
+    "is_loop": true
   },
   "alltrails-ben-shemen-hertzl-singletrack.gpx": {
     "source": "AllTrails",
@@ -19,7 +23,11 @@
     "reference_gain_m": 200,
     "has_elevation": true,
     "expected_error": null,
-    "segment_gap_m": null
+    "segment_gap_m": null,
+    "edge_cases": [
+      "loop"
+    ],
+    "is_loop": true
   },
   "alltrails-tel-hadid-loop.gpx": {
     "source": "AllTrails",
@@ -30,7 +38,11 @@
     "reference_gain_m": 103,
     "has_elevation": true,
     "expected_error": null,
-    "segment_gap_m": null
+    "segment_gap_m": null,
+    "edge_cases": [
+      "loop"
+    ],
+    "is_loop": true
   },
   "derived-tel-hadid-no-ele.gpx": {
     "source": "AllTrails",
@@ -41,7 +53,12 @@
     "reference_gain_m": null,
     "has_elevation": false,
     "expected_error": null,
-    "segment_gap_m": null
+    "segment_gap_m": null,
+    "edge_cases": [
+      "loop",
+      "no_elevation"
+    ],
+    "is_loop": true
   },
   "derived-modiin-hills-south-rte.gpx": {
     "source": "AllTrails",
@@ -52,7 +69,12 @@
     "reference_gain_m": 198,
     "has_elevation": true,
     "expected_error": null,
-    "segment_gap_m": null
+    "segment_gap_m": null,
+    "edge_cases": [
+      "loop",
+      "rte"
+    ],
+    "is_loop": true
   },
   "derived-ben-shemen-over-10k-points.gpx": {
     "source": "AllTrails",
@@ -63,39 +85,57 @@
     "reference_gain_m": 200,
     "has_elevation": true,
     "expected_error": null,
-    "segment_gap_m": null
+    "segment_gap_m": null,
+    "edge_cases": [
+      "loop",
+      "over_10k_points"
+    ],
+    "is_loop": true
   },
   "derived-tel-hadid-multi-segment.gpx": {
     "source": "AllTrails",
     "original_name": null,
     "derived_from": "alltrails-tel-hadid-loop.gpx",
-    "derivation": "Parent split into two trkseg (400 and 390 points) by dropping the 11 points between them, a pause/resume jump; reference distance is the parent's full-route value.",
+    "derivation": "Parent split into two trkseg of 400 and 397 points by dropping the 4 parent points between them (indices 400-403), a pause/resume jump; the missing path through the dropped points is about 34 m (straight jump 33.8 m), under 1% of the route. Coordinates and elevations are the parent's text verbatim. Reference distance is the parent's full-route AllTrails value.",
     "reference_distance_m": 6400,
     "reference_gain_m": 103,
     "has_elevation": true,
     "expected_error": null,
-    "segment_gap_m": 107.0
+    "segment_gap_m": 34.1,
+    "edge_cases": [
+      "loop",
+      "multi_segment"
+    ],
+    "is_loop": true
   },
   "derived-ben-shemen-truncated.gpx": {
     "source": "AllTrails",
     "original_name": null,
     "derived_from": "alltrails-ben-shemen-hertzl-singletrack.gpx",
-    "derivation": "Parent cut off mid-attribute inside a trkpt element, so the XML is not well-formed.",
+    "derivation": "Parent cut off mid-attribute inside a trkpt element, so the XML is not well-formed, plus a trailing newline.",
     "reference_distance_m": null,
     "reference_gain_m": null,
     "has_elevation": null,
     "expected_error": "invalid_gpx",
-    "segment_gap_m": null
+    "segment_gap_m": null,
+    "edge_cases": [
+      "malformed"
+    ],
+    "is_loop": null
   },
   "derived-modiin-hills-south-kml.gpx": {
     "source": "AllTrails",
     "original_name": null,
     "derived_from": "alltrails-modiin-hills-south-double-loop.gpx",
-    "derivation": "Parent's coordinates re-emitted as a well-formed KML 2.2 document (kml/Document/Placemark/LineString); kept with a .gpx extension as a file uploaded as GPX.",
+    "derivation": "Parent's coordinates re-emitted (rounded to 4 decimal places, which is fine for an invalid file) as a well-formed KML 2.2 document (kml/Document/Placemark/LineString); kept with a .gpx extension as a file uploaded as GPX.",
     "reference_distance_m": null,
     "reference_gain_m": null,
     "has_elevation": null,
     "expected_error": "invalid_gpx",
-    "segment_gap_m": null
+    "segment_gap_m": null,
+    "edge_cases": [
+      "not_gpx"
+    ],
+    "is_loop": null
   }
 }

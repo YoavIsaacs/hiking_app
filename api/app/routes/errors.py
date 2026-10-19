@@ -4,7 +4,7 @@ from typing import ClassVar, Literal
 
 
 class RouteParseError(Exception):
-    code: ClassVar[Literal["invalid_gpx", "too_few_points"]]
+    code: ClassVar[Literal["invalid_gpx", "too_many_points", "too_few_points"]]
 
     def __init__(self, message: str) -> None:
         super().__init__(message)
@@ -21,3 +21,7 @@ class InvalidGpx(RouteParseError):
 
 class TooFewPoints(RouteParseError):
     code = "too_few_points"
+
+
+class TooManyPoints(RouteParseError):
+    code = "too_many_points"

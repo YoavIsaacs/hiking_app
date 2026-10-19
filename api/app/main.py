@@ -1,3 +1,4 @@
+import anyio
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -8,6 +9,7 @@ from app.logging_config import configure_logging
 from app.middleware import REQUEST_ID_HEADER, RequestIdMiddleware
 from app.operation_ids import check_operation_ids, operation_id
 from app.routers import health, routes
+from app.routes.params import MAX_CONCURRENT_PARSES
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -21,6 +23,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         generate_unique_id_function=operation_id,
     )
     app.state.settings = settings
+    app.state.parse_limiter = anyio.CapacityLimiter(MAX_CONCURRENT_PARSES)
 
     app.add_middleware(
         CORSMiddleware,

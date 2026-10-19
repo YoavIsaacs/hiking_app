@@ -4,6 +4,7 @@ version = "0.1.0"
 description = "Hike Prep App API"
 requires-python = ">=3.12,<3.13"
 dependencies = [
+    "anyio>=4.15.1",
     "fastapi>=0.143.0",
     "gpxpy>=1.6.2",
     "pydantic>=2.14.1",

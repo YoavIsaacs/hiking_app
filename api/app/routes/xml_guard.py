@@ -3,6 +3,7 @@
 from xml.parsers import expat
 
 from app.routes.errors import InvalidGpx
+from app.routes.params import MAX_RAW_POINTS
 
 
 class _RootSeenError(Exception):
@@ -49,3 +50,8 @@ def check_gpx_prolog(data: bytes) -> None:
         raise InvalidGpx("The file has no XML root element.")
     if root[0] != "gpx":
         raise InvalidGpx("The file is not GPX (the root element is not <gpx>).")
+
+
+def exceeds_point_cap(data: bytes, *, max_points: int = MAX_RAW_POINTS) -> bool:
+    """True when data has more than max_points point start tags (ADR 0004 3.12)."""
+    raise NotImplementedError

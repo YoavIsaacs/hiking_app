@@ -3,7 +3,7 @@
 import math
 from collections.abc import Collection, Sequence
 
-from app.routes.params import DEFAULT_PARAMS, EARTH_RADIUS_M
+from app.routes.params import DEFAULT_PARAMS, EARTH_RADIUS_M, RDP_TIE_TOLERANCE_M
 from app.routes.track import RawPoint
 
 
@@ -36,7 +36,20 @@ def _segment_distance(
     return math.hypot(p[0] - (a[0] + t * dx), p[1] - (a[1] + t * dy))
 
 
-def rdp_significance(points: Sequence[RawPoint]) -> tuple[float, ...]:
+def prethin(
+    dist_m: Sequence[float],
+    *,
+    keep: Collection[int] = (),
+    min_points: int = DEFAULT_PARAMS.max_points,
+    max_points: int = DEFAULT_PARAMS.prethin_max_points,
+) -> tuple[int, ...]:
+    """O(n) pre-thinning to at most max_points candidate indices (ADR 0004 3.5)."""
+    raise NotImplementedError
+
+
+def rdp_significance(
+    points: Sequence[RawPoint], *, tie_tolerance_m: float = RDP_TIE_TOLERANCE_M
+) -> tuple[float, ...]:
     """inf at both ends; iterative, no recursion.
 
     Splitting (a, b) at the farthest point i gives sig(i) = min(d_max, sig(parent)),
@@ -71,6 +84,8 @@ def simplify(
     *,
     keep: Collection[int] = (),
     max_points: int = DEFAULT_PARAMS.max_points,
+    prethin_max_points: int = DEFAULT_PARAMS.prethin_max_points,
+    dist_m: Sequence[float] | None = None,
 ) -> tuple[int, ...]:
     """Sorted indices, len == min(n, max_points); start, end and `keep` stay in."""
     n = len(points)

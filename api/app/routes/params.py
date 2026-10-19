@@ -13,6 +13,12 @@ UNTITLED_ROUTE_NAME: Final = "Untitled route"
 # An <ele> outside this range (inclusive) is treated as missing (ADR 0004 3.1 step 7).
 MIN_PLAUSIBLE_ELEV_M: Final = -1000.0
 MAX_PLAUSIBLE_ELEV_M: Final = 10000.0
+MAX_RAW_POINTS: Final = (
+    100_000  # ADR 0004 3.12: more <trkpt>/<rtept> tags -> too_many_points
+)
+PRETHIN_MAX_POINTS: Final = 2_000  # ADR 0004 3.5
+RDP_TIE_TOLERANCE_M: Final = 1e-6  # ADR 0004 3.5 split rule
+MAX_CONCURRENT_PARSES: Final = 2  # ADR 0004 3.10
 
 
 @dataclass(frozen=True, slots=True)
@@ -25,6 +31,8 @@ class ParseParams:
     gain_threshold_m: float = 9.5
     loop_threshold_m: float = 200.0
     max_points: int = MAX_SUMMARY_POINTS  # 3 <= max_points <= MAX_SUMMARY_POINTS
+    # >= 2 * max_points (check not implemented yet: contract stub)
+    prethin_max_points: int = PRETHIN_MAX_POINTS
 
     def __post_init__(self) -> None:
         """Raise ValueError on nonsense values (a programming error)."""

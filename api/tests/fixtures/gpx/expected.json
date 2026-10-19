@@ -1,0 +1,101 @@
+{
+  "alltrails-modiin-hills-south-double-loop.gpx": {
+    "source": "AllTrails",
+    "original_name": "גבעות_מודיעין_דרום_מעגל_כפול.gpx",
+    "derived_from": null,
+    "derivation": null,
+    "reference_distance_m": null,
+    "reference_gain_m": null,
+    "has_elevation": true,
+    "expected_error": null,
+    "segment_gap_m": null
+  },
+  "alltrails-ben-shemen-hertzl-singletrack.gpx": {
+    "source": "AllTrails",
+    "original_name": "יער_בן_שמן_סינגל_הרצל.gpx",
+    "derived_from": null,
+    "derivation": null,
+    "reference_distance_m": null,
+    "reference_gain_m": null,
+    "has_elevation": true,
+    "expected_error": null,
+    "segment_gap_m": null
+  },
+  "alltrails-tel-hadid-loop.gpx": {
+    "source": "AllTrails",
+    "original_name": "תל_חדיד_מעגלי.gpx",
+    "derived_from": null,
+    "derivation": null,
+    "reference_distance_m": null,
+    "reference_gain_m": null,
+    "has_elevation": true,
+    "expected_error": null,
+    "segment_gap_m": null
+  },
+  "derived-tel-hadid-no-ele.gpx": {
+    "source": "AllTrails",
+    "original_name": null,
+    "derived_from": "alltrails-tel-hadid-loop.gpx",
+    "derivation": "Copy of the parent with every <ele> element removed.",
+    "reference_distance_m": null,
+    "reference_gain_m": null,
+    "has_elevation": false,
+    "expected_error": null,
+    "segment_gap_m": null
+  },
+  "derived-modiin-hills-south-rte.gpx": {
+    "source": "AllTrails",
+    "original_name": null,
+    "derived_from": "alltrails-modiin-hills-south-double-loop.gpx",
+    "derivation": "Parent's trk/trkseg/trkpt renamed to rte/rtept (one <rte>, no <trk>); points and elevations unchanged.",
+    "reference_distance_m": null,
+    "reference_gain_m": null,
+    "has_elevation": true,
+    "expected_error": null,
+    "segment_gap_m": null
+  },
+  "derived-ben-shemen-over-10k-points.gpx": {
+    "source": "AllTrails",
+    "original_name": null,
+    "derived_from": "alltrails-ben-shemen-hertzl-singletrack.gpx",
+    "derivation": "Each consecutive point pair linearly interpolated into 14 steps (lat/lon 6 dp, ele 2 dp) giving 10417 trkpt; one trkseg, whitespace compacted.",
+    "reference_distance_m": null,
+    "reference_gain_m": null,
+    "has_elevation": true,
+    "expected_error": null,
+    "segment_gap_m": null
+  },
+  "derived-tel-hadid-multi-segment.gpx": {
+    "source": "AllTrails",
+    "original_name": null,
+    "derived_from": "alltrails-tel-hadid-loop.gpx",
+    "derivation": "Parent split into two trkseg (400 and 390 points) by dropping the 11 points between them, a pause/resume jump; reference distance is the parent's full-route value.",
+    "reference_distance_m": null,
+    "reference_gain_m": null,
+    "has_elevation": true,
+    "expected_error": null,
+    "segment_gap_m": 107.0
+  },
+  "derived-ben-shemen-truncated.gpx": {
+    "source": "AllTrails",
+    "original_name": null,
+    "derived_from": "alltrails-ben-shemen-hertzl-singletrack.gpx",
+    "derivation": "Parent cut off mid-attribute inside a trkpt element, so the XML is not well-formed.",
+    "reference_distance_m": null,
+    "reference_gain_m": null,
+    "has_elevation": null,
+    "expected_error": "invalid_gpx",
+    "segment_gap_m": null
+  },
+  "derived-modiin-hills-south-kml.gpx": {
+    "source": "AllTrails",
+    "original_name": null,
+    "derived_from": "alltrails-modiin-hills-south-double-loop.gpx",
+    "derivation": "Parent's coordinates re-emitted as a well-formed KML 2.2 document (kml/Document/Placemark/LineString); kept with a .gpx extension as a file uploaded as GPX.",
+    "reference_distance_m": null,
+    "reference_gain_m": null,
+    "has_elevation": null,
+    "expected_error": "invalid_gpx",
+    "segment_gap_m": null
+  }
+}

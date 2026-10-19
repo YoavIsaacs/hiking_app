@@ -24,3 +24,5 @@ test('html element declares lang="en" (UX AC 13)', async ({ page }) => {
   await page.goto('/')
   await expect(page.locator('html')).toHaveAttribute('lang', 'en')
 })
+
+// 0.6 path-filter verification: web-only change (comment, no behaviour).

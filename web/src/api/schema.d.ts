@@ -62,6 +62,7 @@ export interface components {
         | 'method_not_allowed'
         | 'file_too_large'
         | 'invalid_gpx'
+        | 'too_many_points'
         | 'too_few_points'
         | 'validation_error'
         | 'http_error'

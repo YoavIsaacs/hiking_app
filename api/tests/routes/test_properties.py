@@ -10,7 +10,13 @@ from app.models.route import RouteSummary
 from app.routes.elevation import gain_loss, smooth_elevation
 from app.routes.errors import TooFewPoints
 from app.routes.summary import summarise_gpx
-from tests.routes.gpx_builders import dedupe, path_length_m
+from tests.routes.gpx_builders import (
+    Pt,
+    dedupe,
+    destination,
+    gpx_bytes,
+    path_length_m,
+)
 from tests.routes.strategies import Track, tracks
 
 PIPELINE = settings(deadline=None, max_examples=60, derandomize=True)
@@ -137,3 +143,17 @@ def test_smoothed_gain_minus_loss_telescopes_to_the_smoothed_ends(
     assert all(math.isfinite(v) for v in smoothed)
     gain, loss = gain_loss(smoothed)
     assert gain - loss == pytest.approx(smoothed[-1] - smoothed[0], abs=1e-6)
+
+
+def test_duplicate_run_with_differing_elevations_keeps_the_first_elevation() -> None:
+    """ADR 0004 3.2: the first point of a duplicate run wins, so gain/loss are
+    deliberately not symmetric under reversal when a run's elevations differ."""
+    start = Pt(46.0, 8.0, 0.0)
+    north = destination(start, 0.0, 1000.0)
+    spike = Pt(north.lat, north.lon, 100.0)
+    drop = Pt(north.lat, north.lon, 0.0)
+    forward = summarise_gpx(gpx_bytes([[start, spike, drop, drop]]), "t.gpx")
+    backward = summarise_gpx(gpx_bytes([[drop, drop, spike, start]]), "t.gpx")
+    # forward keeps the 100 m end of the run, backward keeps the 0 m end.
+    assert forward.gain_m is not None and forward.gain_m > 50
+    assert backward.gain_m == 0

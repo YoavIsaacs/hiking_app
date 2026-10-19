@@ -5,7 +5,7 @@ from typing import Literal
 
 from hypothesis import strategies as st
 
-from tests.routes.gpx_builders import Kind, Pt, destination, gpx_bytes
+from tests.routes.gpx_builders import Kind, Pt, destination, gpx_bytes, haversine_m
 
 ElevationMode = Literal["all", "none", "partial"]
 
@@ -72,11 +72,15 @@ def tracks(draw: st.DrawFn, *, min_points: int = 2, max_points: int = 200) -> Tr
     points = [Pt(lat, lon, ele(0))]
     for i in range(1, n):
         prev = points[-1]
-        if dupes[i]:
-            points.append(Pt(prev.lat, prev.lon, ele(i)))
-        else:
-            moved = destination(prev, bearings[i], steps[i])
-            points.append(Pt(moved.lat, moved.lon, ele(i)))
+        moved = prev if dupes[i] else destination(prev, bearings[i], steps[i])
+        if haversine_m(prev, moved) < 1e-3:
+            # sub-millimetre steps are float noise, not distinct points: snap to a
+            # true duplicate so de-duplication (not distance smoothing) handles them
+            moved = prev
+        # Points sharing (lat, lon) share <ele>: ADR 0004 3.2 keeps the first of a
+        # duplicate run, so differing elevations would break forward/reverse symmetry.
+        same_spot = (moved.lat, moved.lon) == (prev.lat, prev.lon)
+        points.append(Pt(moved.lat, moved.lon, prev.ele if same_spot else ele(i)))
     kind: Kind = draw(st.sampled_from(["trk", "trk", "rte"]))
     cuts: list[int] = []
     if kind == "trk":

@@ -1,0 +1,44 @@
+name: Release Please
+
+# One repo-wide version, v0.1.0-style tags (docs/steps/0.6.md, Decisions). Reads the
+# Conventional Commit squash titles on main and keeps a release PR open; merging that PR
+# tags the release and writes CHANGELOG.md.
+#
+# The release PR is opened with a GitHub App installation token, not GITHUB_TOKEN:
+# PRs opened by GITHUB_TOKEN do not trigger workflows, so the required checks would never
+# report and the release PR could not be merged (decision D2). The token is minted
+# per run, expires in an hour and is limited to this repo.
+# Expects: variable RELEASE_APP_CLIENT_ID and secret RELEASE_APP_PRIVATE_KEY (runbook 0.6).
+
+on:
+  push:
+    branches: [main]
+
+permissions: {}
+
+concurrency:
+  group: release-please
+  cancel-in-progress: false
+
+jobs:
+  release-please:
+    name: release-please
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions: {} # GITHUB_TOKEN is not used; everything runs on the app token
+    steps:
+      - name: Mint a GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ vars.RELEASE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
+          permission-issues: write
+
+      - uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
+        with:
+          token: ${{ steps.app-token.outputs.token }}
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json

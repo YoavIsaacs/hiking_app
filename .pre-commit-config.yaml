@@ -35,19 +35,19 @@ repos:
         pass_filenames: false
       - id: eslint
         name: eslint
-        entry: pnpm --filter web lint
+        entry: pnpm --filter web --fail-if-no-match lint
         language: system
         files: ^web/
         pass_filenames: false
       - id: prettier
         name: prettier
-        entry: pnpm --filter web format:check
+        entry: pnpm --filter web --fail-if-no-match format:check
         language: system
         files: ^web/
         pass_filenames: false
       - id: tsc
         name: tsc
-        entry: pnpm --filter web exec tsc -b --noEmit
+        entry: pnpm --filter web --fail-if-no-match exec tsc -b --noEmit
         language: system
         files: ^web/
         pass_filenames: false

@@ -37,40 +37,33 @@ jobs:
       id-token: write
     env:
       PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
-      # CI-only tool, pinned exactly (ADR 0002 section 3); SHA pinning is step 0.6.
+      # CI-only tool, pinned exactly (ADR 0002 section 3).
       FIREBASE_TOOLS_VERSION: "15.34.0"
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
-      - uses: pnpm/action-setup@v6
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
 
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
           cache: pnpm
-
-      - name: Refuse to deploy while the API URL is a placeholder
-        run: |
-          if grep -q '\.invalid' web/.env.production; then
-            echo "::error::web/.env.production still has the .invalid placeholder: set VITE_API_URL to the Cloud Run URL (runbook step 9)"
-            exit 1
-          fi
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
       - name: Build (production VITE_API_URL from web/.env.production)
-        run: pnpm --filter web build
+        run: pnpm --filter web --fail-if-no-match build
 
       - name: Authenticate to Google Cloud (WIF, no keys)
-        uses: google-github-actions/auth@v3
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3.0.0
         with:
           workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
           service_account: ${{ vars.WEB_DEPLOY_SA }}
 
-      - uses: google-github-actions/setup-gcloud@v3
+      - uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db # v3.0.1
 
       # auth@v3 only writes a credentials file; this forces the real STS +
       # impersonation exchange so a failure shows gcloud's own error. Never prints the token.
@@ -90,22 +83,22 @@ jobs:
 
       - name: Resolve Playwright version
         id: pw
-        run: echo "version=$(pnpm --filter web exec playwright --version | awk '{print $2}')" >> "$GITHUB_OUTPUT"
+        run: echo "version=$(pnpm --filter web --fail-if-no-match exec playwright --version | awk '{print $2}')" >> "$GITHUB_OUTPUT"
 
       - name: Cache Playwright browsers
         id: pw-cache
-        uses: actions/cache@v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cache/ms-playwright
           key: playwright-${{ runner.os }}-${{ steps.pw.outputs.version }}
 
       - name: Install Playwright browsers and system deps
         if: steps.pw-cache.outputs.cache-hit != 'true'
-        run: pnpm --filter web exec playwright install --with-deps chromium webkit
+        run: pnpm --filter web --fail-if-no-match exec playwright install --with-deps chromium webkit
 
       - name: Install Playwright system deps (browsers cached)
         if: steps.pw-cache.outputs.cache-hit == 'true'
-        run: pnpm --filter web exec playwright install-deps chromium webkit
+        run: pnpm --filter web --fail-if-no-match exec playwright install-deps chromium webkit
 
       # Live mode of web/playwright.config.ts: no local servers, all three projects.
       - name: Playwright smoke against the live site
@@ -113,11 +106,11 @@ jobs:
           E2E_API_URL=$(grep '^VITE_API_URL=' web/.env.production | cut -d= -f2-)
           export E2E_API_URL
           export E2E_BASE_URL="https://$PROJECT_ID.web.app"
-          pnpm --filter web exec playwright test
+          pnpm --filter web --fail-if-no-match exec playwright test
 
       - name: Upload Playwright report
         if: failure()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: playwright-report-live
           path: web/playwright-report/

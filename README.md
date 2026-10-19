@@ -50,7 +50,7 @@ just gen-api      # regenerate api/openapi.json + web/src/api/schema.d.ts; needs
 
 - **Windows: port 8000 still busy after stopping `just dev-api`.** Killing `uv run uvicorn --factory --reload` can leave
   the child Python process listening. Find and kill it:
-  `netstat -ano | grep :8000` then `taskkill //PID <pid> //F`.
+  `netstat -ano | findstr :8000` then `taskkill /PID <pid> /F` (works in cmd.exe and PowerShell).
 - **`just` not found.** Reopen the terminal after installing; on Windows `winget install Casey.Just`.
 - **Windows: recipe fails with a shell or `uv`/`pnpm` not found error.** On Windows `just` runs recipes with `cmd.exe`
   (no Git or WSL needed), so make sure `uv`, `pnpm` and `pre-commit` are on your Windows PATH.

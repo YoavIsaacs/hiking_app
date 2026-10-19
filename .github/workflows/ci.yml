@@ -1,28 +1,113 @@
 name: CI
 
+# Pull requests run only the jobs whose area changed (the `changes` job); pushes to
+# main and callers such as nightly.yml run everything. A job skipped by its job-level
+# `if:` is reported as "skipped", which GitHub counts as passing for required checks.
+# If `changes` itself fails, the gated jobs run rather than skip, so a broken filter can never hide a test.
+# Job names are required-check contracts: lint, api-test, web-test, e2e, api-contract.
+
 on:
   pull_request:
   push:
     branches: [main]
+  workflow_call:
+    inputs:
+      fresh-deps:
+        description: "Resolve the newest allowed dependency versions (uv lock --upgrade, pnpm update) before testing; nothing is committed"
+        type: boolean
+        default: false
 
 permissions:
   contents: read
 
+# Only PR runs share a group (and are cancelled by a newer push). Every other run gets its own
+# group (the SHA), because GitHub also cancels *pending* runs of a shared group even with
+# cancel-in-progress false; so main, nightly and manual runs always finish.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
+  changes:
+    name: changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read # paths-filter lists the PR's files through the API (no checkout needed)
+    outputs:
+      api: ${{ steps.out.outputs.api }}
+      web: ${{ steps.out.outputs.web }}
+      contract: ${{ steps.out.outputs.contract }}
+    steps:
+      - uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
+        id: filter
+        if: github.event_name == 'pull_request'
+        with:
+          filters: |
+            api:
+              - 'api/**'
+            web:
+              - 'web/**'
+              - 'package.json'
+              - 'pnpm-lock.yaml'
+              - 'pnpm-workspace.yaml'
+            contract:
+              - 'api/**'
+              - 'web/src/api/**'
+              - 'web/package.json'
+              - 'package.json'
+              - 'pnpm-lock.yaml'
+              - 'pnpm-workspace.yaml'
+            ci:
+              - '.github/workflows/**'
+              - 'justfile'
+              - '.pre-commit-config.yaml'
+      # Anything that is not a PR (push to main, nightly, manual) runs everything;
+      # a change to CI itself on a PR also runs everything.
+      - name: Decide which jobs run
+        id: out
+        env:
+          EVENT: ${{ github.event_name }}
+          API: ${{ steps.filter.outputs.api }}
+          WEB: ${{ steps.filter.outputs.web }}
+          CONTRACT: ${{ steps.filter.outputs.contract }}
+          CI_CHANGED: ${{ steps.filter.outputs.ci }}
+        run: |
+          all=false
+          if [ "$EVENT" != "pull_request" ] || [ "$CI_CHANGED" = "true" ]; then all=true; fi
+          decide() { if [ "$all" = "true" ] || [ "$1" = "true" ]; then echo true; else echo false; fi; }
+          {
+            echo "api=$(decide "$API")"
+            echo "web=$(decide "$WEB")"
+            echo "contract=$(decide "$CONTRACT")"
+          } | tee -a "$GITHUB_OUTPUT"
+
+  # lint stays unconditional: pre-commit --all-files is cheap, and it carries the
+  # repo-wide hygiene hooks (check-yaml, private keys, whitespace) that any file can break.
   lint:
     name: lint
+    timeout-minutes: 10
     runs-on: ubuntu-latest
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
         with:
           python-version: "3.12"
-      - uses: pnpm/action-setup@v6
-      - uses: actions/setup-node@v7
+          enable-cache: true
+          cache-dependency-glob: api/uv.lock
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
+          cache: pnpm
+      - name: Resolve fresh dependencies
+        if: inputs.fresh-deps
+        run: |
+          uv lock --upgrade --directory api
+          pnpm update --recursive
       - name: Install dependencies
         run: |
           uv sync --frozen --directory api
@@ -32,6 +117,9 @@ jobs:
 
   api-test:
     name: api-test
+    timeout-minutes: 15
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.api == 'true') }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -39,12 +127,15 @@ jobs:
       run:
         working-directory: api
     steps:
-      - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
         with:
           python-version: "3.12"
           enable-cache: true
           cache-dependency-glob: api/uv.lock
+      - name: Resolve fresh dependencies
+        if: inputs.fresh-deps
+        run: uv lock --upgrade
       - name: Install dependencies
         run: uv sync --frozen
       - name: ruff check
@@ -58,21 +149,29 @@ jobs:
 
   api-contract:
     name: api-contract
+    timeout-minutes: 15
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.contract == 'true') }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
         with:
           python-version: "3.12"
           enable-cache: true
           cache-dependency-glob: api/uv.lock
-      - uses: pnpm/action-setup@v6
-      - uses: actions/setup-node@v7
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
           cache: pnpm
+      - name: Resolve fresh dependencies
+        if: inputs.fresh-deps
+        run: |
+          uv lock --upgrade --directory api
+          pnpm update --recursive
       - name: Install dependencies
         run: |
           uv sync --frozen --directory api
@@ -80,79 +179,102 @@ jobs:
       - name: Regenerate OpenAPI schema and web types
         run: pnpm --filter web --fail-if-no-match gen:api
       - name: Fail if generated files are stale
+        env:
+          FRESH_DEPS: ${{ inputs.fresh-deps }}
         run: |
-          if ! git diff --exit-code || [ -n "$(git status --porcelain)" ]; then
+          # Normally any change or new file fails. A fresh-deps run also rewrites the lockfiles,
+          # so there only the two generated paths count.
+          if [ "$FRESH_DEPS" = "true" ]; then
+            paths=(-- api/openapi.json web/src/api/schema.d.ts)
+          else
+            paths=()
+          fi
+          if [ -n "$(git status --porcelain "${paths[@]}")" ]; then
             echo "::error::Generated API files are out of date. Run 'just gen-api' and commit api/openapi.json and web/src/api/schema.d.ts."
-            git status --porcelain
+            git status --porcelain "${paths[@]}"
             exit 1
           fi
 
   web-test:
     name: web-test
+    timeout-minutes: 15
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.web == 'true') }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v7
-      - uses: pnpm/action-setup@v6
-      - uses: actions/setup-node@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
           cache: pnpm
+      - name: Resolve fresh dependencies
+        if: inputs.fresh-deps
+        run: pnpm update --recursive
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
       - name: ESLint
-        run: pnpm --filter web lint
+        run: pnpm --filter web --fail-if-no-match lint
       - name: Type check
-        run: pnpm --filter web exec tsc -b --noEmit
+        run: pnpm --filter web --fail-if-no-match exec tsc -b --noEmit
       - name: Vitest with coverage
-        run: pnpm --filter web test:coverage
+        run: pnpm --filter web --fail-if-no-match test:coverage
       - name: Build
-        run: pnpm --filter web build
+        run: pnpm --filter web --fail-if-no-match build
       - name: size-limit
-        run: pnpm --filter web size
+        run: pnpm --filter web --fail-if-no-match size
 
   e2e:
     name: e2e
+    timeout-minutes: 30
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.api == 'true' || needs.changes.outputs.web == 'true') }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
         with:
           python-version: "3.12"
           enable-cache: true
           cache-dependency-glob: api/uv.lock
-      - uses: pnpm/action-setup@v6
-      - uses: actions/setup-node@v7
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
           cache: pnpm
+      - name: Resolve fresh dependencies
+        if: inputs.fresh-deps
+        run: |
+          uv lock --upgrade --directory api
+          pnpm update --recursive
       - name: Install dependencies
         run: |
           uv sync --frozen --directory api
           pnpm install --frozen-lockfile
       - name: Resolve Playwright version
         id: pw
-        run: echo "version=$(pnpm --filter web exec playwright --version | awk '{print $2}')" >> "$GITHUB_OUTPUT"
+        run: echo "version=$(pnpm --filter web --fail-if-no-match exec playwright --version | awk '{print $2}')" >> "$GITHUB_OUTPUT"
       - name: Cache Playwright browsers
         id: pw-cache
-        uses: actions/cache@v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cache/ms-playwright
           key: playwright-${{ runner.os }}-${{ steps.pw.outputs.version }}
       - name: Install Playwright browsers and system deps
         if: steps.pw-cache.outputs.cache-hit != 'true'
-        run: pnpm --filter web exec playwright install --with-deps chromium webkit
+        run: pnpm --filter web --fail-if-no-match exec playwright install --with-deps chromium webkit
       - name: Install Playwright system deps (browsers cached)
         if: steps.pw-cache.outputs.cache-hit == 'true'
-        run: pnpm --filter web exec playwright install-deps chromium webkit
+        run: pnpm --filter web --fail-if-no-match exec playwright install-deps chromium webkit
       - name: Playwright (all projects)
-        run: pnpm --filter web exec playwright test
+        run: pnpm --filter web --fail-if-no-match exec playwright test
       - name: Upload Playwright report
         if: failure()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: playwright-report
           path: web/playwright-report/

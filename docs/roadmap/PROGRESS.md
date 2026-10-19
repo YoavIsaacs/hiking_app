@@ -9,15 +9,17 @@ The tech lead keeps this file true. A step moves to Done only with checkpoint ev
 | 0.2 | FastAPI skeleton | done | [#6](https://github.com/YoavIsaacs/hiking_app/pull/6) | On `main` @ 77726b0: `uv run pytest` 35 passed, coverage 100% (gate 85%, `--disable-socket`); `mypy app tests` strict → 0 errors (15 files); CodeQL run [38527140518](https://github.com/YoavIsaacs/hiking_app/actions/runs/38527140518) → 0 results, 0 open alerts; `/health` local latency n=300 after warm-up p50 1.20 ms / p95 1.64 ms / max 2.34 ms (< 50 ms). Docker (QA, branch): non-root uid 10001, `/health` returns build `GIT_SHA`/`VERSION`. Required checks on `main` (`gh api …/rules/branches/main`): `lint`, `api-test`, `Analyze (python)` (GitHub Actions). | 2026-10-14 |
 | 0.3 | React app | done | [#7](https://github.com/YoavIsaacs/hiking_app/pull/7) | On `main` @ c4202b1: `tsc -b --noEmit` → 0 errors; size-limit 108.25 kB gzipped (limit 200 kB; gate proven to fail at 50 KB by QA on branch); Vitest 43 passed / 11 files incl. the 3 named tests (render version, 500 error state, loading), coverage 96.34 stmts / 96.36 branches / 98.59 lines (gate 80); Playwright `just e2e` 6 passed (Chromium, Pixel 7, iPhone 14 WebKit); CI run [38560446752](https://github.com/YoavIsaacs/hiking_app/actions/runs/38560446752) lint/api-test/web-test/e2e green; CodeQL run [38560446633](https://github.com/YoavIsaacs/hiking_app/actions/runs/38560446633) green, 0 open alerts. Required on `main`: `lint`, `api-test`, `Analyze (python)`, `web-test`, `e2e`, `Analyze (javascript-typescript)`. | 2026-10-14 |
 | 0.4 | Generated API client | done | [#9](https://github.com/YoavIsaacs/hiking_app/pull/9) | On `main` @ 3688c57: `grep type Health|interface Health|isHealth web/src` → none (API types only via generated `components['schemas']`); `just gen-api` → tree clean; `tsc -b` 0 errors; API pytest 83 passed, 100% coverage; Vitest 58 passed. Deliberate break (field added without regenerating) → `api-contract` red in run [38565760255](https://github.com/YoavIsaacs/hiking_app/actions/runs/38565760255), reverted → green; `main` CI run [38568116619](https://github.com/YoavIsaacs/hiking_app/actions/runs/38568116619) and CodeQL [38568116652](https://github.com/YoavIsaacs/hiking_app/actions/runs/38568116652) green. `api-contract` required on `main`. | 2026-10-14 |
-| 0.5 | Deployment | in progress — PR (kill switch deferred) | | | |
+| 0.5 | Deployment | done (part deferred) | [#11](https://github.com/YoavIsaacs/hiking_app/pull/11), [#16](https://github.com/YoavIsaacs/hiking_app/pull/16), [#17](https://github.com/YoavIsaacs/hiking_app/pull/17) | Both live on HTTPS: API `https://hike-api-zr6tmbe2ya-zf.a.run.app/health` 200, `git_sha` 5e8e157 == `main` HEAD, `env: production`; web `https://hike-prep.web.app` 200 `no-cache`, HTTP → 301 HTTPS; hashed assets `immutable` (preview channel check). Deploys from `main` via WIF, no keys: Deploy API [39233736461](https://github.com/YoavIsaacs/hiking_app/actions/runs/39233736461), Deploy Web [39233736800](https://github.com/YoavIsaacs/hiking_app/actions/runs/39233736800) (live Playwright 6 passed). **Broken deploy rolls back with no manual step:** #16 (wrong `git_sha` on purpose) → run [39243336412](https://github.com/YoavIsaacs/hiking_app/actions/runs/39243336412) failed at candidate smoke 6/6, promote skipped, traffic 100 % on `hike-api-00002-mef`, live `/health` kept 3398338; fix-forward #17 → run [39244521177](https://github.com/YoavIsaacs/hiking_app/actions/runs/39244521177) green, 100 % on `hike-api-00005-ruw`. PR preview: #11 `https://hike-prep--pr-11-ehfnijw0.web.app` commented. CORS: `hike-prep.web.app` allowed, `evil.web.app` no ACAO. **Phone (manager):** < 5 s cold / < 1 s warm passed — numbers not recorded (manager: "roughly correct"). No new required checks; required on `main` (`gh api …/rules/branches/main`): `lint`, `api-test`, `Analyze (python)`, `web-test`, `e2e`, `Analyze (javascript-typescript)`, `api-contract`. **Deferred by manager:** $1 hard stop / kill switch (ADR 0003) — revisit before Phase 3. | 2026-10-19 |
 | 0.6 | Pipeline rules | not started | | | |
 
 ## Current state (handoff for a fresh session)
 Read this, then `docs/steps/<current step>.md`. Nothing here lives only in chat.
 
-- **Current step:** 0.5 Deployment on branch `step/0.5-deployment`. Brief: `docs/steps/0.5.md` (see its Status and
-  "Session handoff"). Stage: PR open, waiting on CI + preview (first live WIF run) → merge → live checks.
-  Kill switch (ADR 0003) **deferred** by the manager 2026-10-19 — no `ops/`, no `ops-test`.
+- **Current step:** 0.6 Pipeline rules on branch `step/0.6-pipeline-rules` (created 2026-10-19; brief `docs/steps/0.6.md`; draft PR #18).
+  **Next session starts here:** step loop 1–2 for 0.6 — write `docs/steps/0.6.md` from `docs/roadmap/phase-0.md` + `overview.md`
+  0.6, folding in the 0.6 carry-forward list below; triage Dependabot #12–#15.
+  0.5 closed 2026-10-19. Open Dependabot PRs #12–#15 held during 0.5: **#13 (python 3.12 → 3.14 image) must not be
+  merged** (stack is 3.12; 0.6 adds a Dependabot ignore for Python majors); #12, #14, #15 to check in 0.6.
 - **GCP:** project `hike-prep` (number 1484623023), region `me-west1`, billing linked, budget 5 ILS/month
   (manager, 2026-10-19). Runbook steps 1–4, 5–10 done (manager) and verified (tech lead): Firebase site `hike-prep`, WIF provider `hiking-app`, SAs, env `production` (branch `main` only), API URL `https://hike-api-zr6tmbe2ya-zf.a.run.app` (sample image until the first deploy).
 - **Roadmap change (2026-10-18, manager):** community pivot — new Phase 3 "Accounts and community", old Phase 3 → 4,
@@ -34,7 +36,7 @@ Read this, then `docs/steps/<current step>.md`. Nothing here lives only in chat.
 - **Step branch:** `main` (incl. #10) merged into `step/0.5-deployment` on 2026-10-18, so the roadmap mirror there has phases 0–6.
 - **`main` protection:** branch ruleset `main` (active, no bypass): required checks `lint`, `api-test`,
   `Analyze (python)`, `web-test`, `e2e`, `Analyze (javascript-typescript)`, `api-contract`; deletion and force-push blocked. PR-required, linear history etc. arrive in 0.6.
-- **Open PRs:** none. Dependabot #8 (`actions/cache` 5→6) merged 2026-10-18 (09f8763) and merged into the step branch.
+- **Open PRs:** Dependabot #12–#15 (see Current step). Dependabot #8 (`actions/cache` 5→6) merged 2026-10-18 (09f8763) and merged into the step branch.
 - **Local leftovers (manager may delete):** temp clones `%TEMP%\tmp.7qIrHpAUnP`, `%TEMP%\tmp.GMVXYXKa6R`;
   Docker images `hike-api:qa`, `hike-api:test`.
 
@@ -43,7 +45,7 @@ Read this, then `docs/steps/<current step>.md`. Nothing here lives only in chat.
   header comment should show `--build-arg VERSION`. Consider Dependabot `docker` ecosystem for `api/`.
   Secret scanning + push protection: already enabled (public repo, checked 2026-10-14); the fake-key check
   deferred from 0.1 can be run in 0.5. README still says "run everything from Git Bash" — no longer required (nit).
-- **0.6:** fix `deploy-api.yml` describe-error text ("Service cannot describe service"); remove the dead `.invalid` guard in `deploy-web.yml`; `--fail-if-no-match` on every `pnpm --filter` in CI and pre-commit; pin CI actions to SHAs; caching (`api-test` already has setup-uv cache); confirm Dependabot handles
+- **0.6:** Dependabot: ignore `python` docker major/minor bumps (stack 3.12; #13 opened 3.14); check whether `max-instances=1` causes 429 `Rate exceeded` on bursts (seen once right after a failed deploy, 2026-10-19) — measure, don't raise without a decision; fix `deploy-api.yml` describe-error text ("Service cannot describe service"); remove the dead `.invalid` guard in `deploy-web.yml`; `--fail-if-no-match` on every `pnpm --filter` in CI and pre-commit; pin CI actions to SHAs; caching (`api-test` already has setup-uv cache); confirm Dependabot handles
   the pnpm 12 lockfile.
 - **Before Phase 3 (or when there is something to show):** custom domain for the web app (Firebase Hosting custom domain; buying a domain costs money → manager approval) and optionally `/api/**` Hosting rewrite to Cloud Run (check `me-west1` support). Revisit the deferred ADR 0003 kill switch.
 - **Before Phase 1 screens:** UX §6 44×44 px targets (deferred from 0.3); no visual identity or tokens exist yet (`design/tokens.json`, `docs/design/` absent).
@@ -91,6 +93,16 @@ Read this, then `docs/steps/<current step>.md`. Nothing here lives only in chat.
   `justfile` Windows shell — both verifications used an inherited Git Bash PATH, not the real one; the manager found it.
   Tech lead committed while an agent was active (edits swept into QA's commit).
   Watch: "verified in an environment that isn't the real one" (devops, 0.4) — first occurrence.
+- 0.5: review round 1 (reviewer): bare `Any` in QA's tests (blocking), preview `jq` masking failures, Docker build-arg test missing,
+  rollback skipped on cancel. Then 2 CI rounds on PR #11: firebase-tools error hidden by the step's redirect; runbook step 8
+  bound name-only OIDC subjects but the repo uses **immutable subjects** → 403 on impersonation; the runbook self-check
+  never tested a real token exchange. Architect correctly refused a tech-lead claim ("rename-safe") the docs didn't support.
+  Manager dropped the kill switch (ADR 0003 deferred). Tech lead claimed "WIF auth works" too early (corrected); committed
+  while an agent was active (second time, after 0.4).
+  Watch → now repeated twice:
+  - **Tech lead commits while an agent is running** (0.4, 0.5) → `.claude/agents/tech-lead.md` step 5 changed (manager-approved 2026-10-19).
+  - **Verification that doesn't exercise the real path** (devops 0.4 inherited PATH; 0.5 runbook self-check read config,
+    never exchanged a token) → `.claude/agents/devops.md` "Verify the real path" rule added (manager-approved 2026-10-19).
 - **Repeated patterns → changes (manager-approved and applied 2026-10-14):**
   1. QA missed failure-path gaps twice (0.1, 0.2) → `.claude/agents/qa.md`: treat every untested failure path
      of a checklist item as a *finding*, not a follow-up; always probe negatives and false positives

@@ -7,11 +7,19 @@ updates:
     groups:
       python-minor-patch:
         update-types: [minor, patch]
+    commit-message:
+      prefix: "build(deps)"
 
   - package-ecosystem: docker
     directory: /api
     schedule:
       interval: weekly
+    ignore:
+      # The stack is Python 3.12 (CLAUDE.md); a new python image line needs an ADR.
+      - dependency-name: python
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
+    commit-message:
+      prefix: "build(deps)"
 
   - package-ecosystem: npm
     directory: /
@@ -26,6 +34,8 @@ updates:
         update-types: ["version-update:semver-major"]
       - dependency-name: typescript
         update-types: ["version-update:semver-major"]
+    commit-message:
+      prefix: "build(deps)"
 
   - package-ecosystem: github-actions
     directory: /
@@ -34,3 +44,5 @@ updates:
     groups:
       actions-minor-patch:
         update-types: [minor, patch]
+    commit-message:
+      prefix: "ci(deps)"

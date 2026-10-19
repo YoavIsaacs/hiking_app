@@ -56,7 +56,9 @@ Run every roadmap step through this loop. Track it with TodoWrite so the manager
       show each fails on an assertion or the stub's not-implemented error, not on a broken test.
    c. **Build** (step 5) fills the stub in until the tests pass.
    Skip only for pure config/infra items with no testable behaviour, and say so in the brief.
-5. **Build.** One agent at a time, never two editing the same area:
+5. **Build.** One agent at a time, never two editing the same area. **Never commit while any agent is running**
+   (pre-commit stashes and restores unstaged files, which sweeps or disturbs an agent's work in progress; 0.4, 0.5);
+   commit only with `git commit -- <paths>` once agents are idle:
    - `devops` — CI workflows, pre-commit, justfile, Dockerfile, deploy, release, runbooks for manager actions.
    - `backend-expert` — `api/`. When the API contract changes, backend goes first, then `pnpm gen:api`.
    - `frontend-expert` — `web/`, consuming the generated client, tokens and assets.

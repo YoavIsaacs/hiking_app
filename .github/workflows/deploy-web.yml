@@ -72,6 +72,17 @@ jobs:
 
       - uses: google-github-actions/setup-gcloud@v3
 
+      # auth@v3 only writes a credentials file; this forces the real STS +
+      # impersonation exchange so a failure shows gcloud's own error. Never prints the token.
+      - name: Verify Google credentials
+        shell: bash
+        run: |
+          echo "Expected OIDC subject: repo:${{ github.repository }}:environment:production"
+          if ! gcloud auth print-access-token --quiet > /dev/null; then
+            echo "::error::Google credential exchange failed: check WIF provider condition, the workloadIdentityUser binding for this job's subject, and runbook steps 7–8"
+            exit 1
+          fi
+
       - name: Deploy to Firebase Hosting
         run: |
           npx --yes "firebase-tools@$FIREBASE_TOOLS_VERSION" deploy \

@@ -1,5 +1,6 @@
 """Typed Hypothesis strategies for random tracks (ADR 0004, "Hypothesis properties")."""
 
+import random
 from dataclasses import dataclass
 from typing import Literal
 
@@ -90,3 +91,47 @@ def tracks(draw: st.DrawFn, *, min_points: int = 2, max_points: int = 200) -> Tr
         tuple(points[a:b]) for a, b in zip(bounds, bounds[1:], strict=False)
     )
     return Track(kind, segments, elevation)
+
+
+LongShape = Literal["walk", "zigzag", "line"]
+
+
+def long_track(
+    n: int, seed: int, shape: LongShape, elevation: ElevationMode = "all"
+) -> Track:
+    """``n`` distinct points (steps of 2-60 m, so no de-duplication), one segment.
+
+    Built from a seeded ``random.Random`` so a failing example reproduces from its
+    three small parameters; Hypothesis shrinks ``n``, ``seed`` and ``shape`` instead of
+    thousands of drawn floats."""
+    rng = random.Random(seed)
+    lat = rng.uniform(-80.0, 80.0)
+    lon = rng.uniform(-179.0, 179.0)
+
+    def ele() -> float | None:
+        return None if elevation == "none" else rng.randrange(-40_000, 884_800) / 100
+
+    points = [Pt(lat, lon, ele())]
+    for i in range(1, n):
+        step = rng.uniform(2.0, 60.0)
+        if shape == "walk":
+            bearing = rng.uniform(0.0, 360.0)
+        elif shape == "zigzag":
+            bearing = 45.0 if i % 2 else 135.0
+        else:
+            bearing = 20.0
+        moved = destination(points[-1], bearing, step)
+        points.append(Pt(moved.lat, moved.lon, ele()))
+    return Track("trk", (tuple(points),), elevation)
+
+
+@st.composite
+def long_tracks(draw: st.DrawFn) -> Track:
+    """501-2,500 points: crosses the 500-point simplify threshold and the 2,000-point
+    pre-thinning threshold (ADR 0004 3.5), which ``tracks()`` (<= 200) never reaches."""
+    return long_track(
+        draw(st.integers(501, 2500)),
+        draw(st.integers(0, 2**32 - 1)),
+        draw(st.sampled_from(["walk", "zigzag", "line"])),
+        draw(st.sampled_from(["all", "all", "none"])),
+    )

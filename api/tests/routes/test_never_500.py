@@ -8,6 +8,7 @@ plus the fixed nasty payloads below at both layers.
 """
 
 import contextlib
+import re
 
 import pytest
 from fastapi.testclient import TestClient
@@ -44,7 +45,53 @@ FRAGMENTS = [
     b"\x00",
     b"\xef\xbb\xbf",
     b"<?xml version='2.0'?>",
+    # shapes that escaped this suite in 1.2 verify: extreme <ele>, declared encodings
+    b"<ele>1e308</ele>",
+    b"<ele>-1e308</ele>",
+    b"<ele>inf</ele>",
+    b"<ele>-1000.001</ele>",
+    b"<ele>10000.001</ele>",
+    b'<?xml version="1.0" encoding="x-unknown"?>',
+    b'<?xml version="1.0" encoding="utf-32"?>',
+    b'<?xml version="1.0" encoding="shift_jis"?>',
+    b'<?xml version="1.0" encoding="utf-7"?>',
+    b'<?xml version="1.0" encoding=""?>',
+    b'<trkpt lat="0" lon="0"/>' * 50,
 ]
+
+# Targeted mutations: random byte inserts almost always break the XML first, so these
+# rewrite a well-formed value in place and the document stays parseable.
+EXTREME_ELE = [
+    b"1e308",
+    b"-1e308",
+    b"1.7976931348623157e308",
+    b"inf",
+    b"-inf",
+    b"nan",
+    b"-1000.001",
+    b"10000.001",
+    b"-1000",
+    b"10000",
+    b"1e999",
+    b"99999999999999999999",
+    b"",
+]
+ENCODINGS = [
+    b"x-unknown",
+    b"utf-32",
+    b"UTF-32",
+    b"utf-7",
+    b"shift_jis",
+    b"big5",
+    b"UTF-16",
+    b"iso-8859-1",
+    b"us-ascii",
+    b"windows-1252",
+    b"utf-8",
+    b"",
+]
+ELE_RE = re.compile(rb"<ele>[^<]*</ele>")
+ENCODING_RE = re.compile(rb"encoding\s*=\s*([\"'])[^\"']*")
 
 
 def fuzz(max_examples: int) -> settings:
@@ -59,13 +106,42 @@ def fuzz(max_examples: int) -> settings:
     )
 
 
+def replace_ele(data: bytes, pick: int, value: bytes) -> bytes:
+    """Replace one ``<ele>`` value (chosen by ``pick``) with ``value``."""
+    spans = [m.span() for m in ELE_RE.finditer(data)]
+    if not spans:
+        return data
+    start, end = spans[pick % len(spans)]
+    return data[:start] + b"<ele>" + value + b"</ele>" + data[end:]
+
+
+def set_encoding(data: bytes, name: bytes) -> bytes:
+    """Declare ``name`` as the encoding, replacing an existing declaration."""
+    declaration = b'encoding="' + name + b'"'
+    if ENCODING_RE.search(data):
+        return ENCODING_RE.sub(declaration, data, count=1)
+    return b'<?xml version="1.0" ' + declaration + b"?>" + data
+
+
 @st.composite
 def mutated(draw: st.DrawFn) -> bytes:
     data = bytearray(draw(st.sampled_from(SEED_FILES)))
     for _ in range(draw(st.integers(1, 4))):
-        op = draw(st.sampled_from(["truncate", "flip", "insert", "delete"]))
+        op = draw(
+            st.sampled_from(
+                ["truncate", "flip", "insert", "delete", "ele", "ele", "encoding"]
+            )
+        )
         at = draw(st.integers(0, len(data)))
-        if op == "truncate":
+        if op == "ele":
+            data = bytearray(
+                replace_ele(bytes(data), at, draw(st.sampled_from(EXTREME_ELE)))
+            )
+        elif op == "encoding":
+            data = bytearray(
+                set_encoding(bytes(data), draw(st.sampled_from(ENCODINGS)))
+            )
+        elif op == "truncate":
             del data[at:]
         elif op == "flip" and data:
             data[min(at, len(data) - 1)] = draw(st.integers(0, 255))

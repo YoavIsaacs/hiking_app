@@ -53,10 +53,12 @@ def rdp_significance(points: Sequence[RawPoint]) -> tuple[float, ...]:
         if b - a < 2:
             continue
         pa, pb = xy[a], xy[b]
+        # Ties split nearest the midpoint: collinear runs halve (n log n, not n^2).
+        mid = (a + b) / 2
         far, far_d = a + 1, -1.0
         for i in range(a + 1, b):
             d = _segment_distance(xy[i], pa, pb)
-            if d > far_d:
+            if d > far_d or (d == far_d and abs(i - mid) < abs(far - mid)):
                 far, far_d = i, d
         sig[far] = min(far_d, parent)
         stack.append((a, far, sig[far]))

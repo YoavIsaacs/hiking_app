@@ -15,13 +15,11 @@ The tech lead keeps this file true. A step moves to Done only with checkpoint ev
 ## Current state (handoff for a fresh session)
 Read this, then `docs/steps/<current step>.md`. Nothing here lives only in chat.
 
-- **Current step:** 0.5 Deployment on branch `step/0.5-deployment`. Brief: `docs/steps/0.5.md`. Stage: see its Status line.
-  **Next session starts here:** read the brief's "Session handoff (2026-10-19)". Ask the manager for A1–A3 (`ops/`
-  folder, detach consequences, kill switch vs native spend caps) and for the runbook outputs (site ID, `$BUDGET_ID`,
-  `hike-api` URL, `gh` checks). Then: CLAUDE.md `ops/` rows → backend stub → qa red → backend build of
-  `ops/budget_guard/`; devops `ops-test`; frontend sets the real API URL.
+- **Current step:** 0.5 Deployment on branch `step/0.5-deployment`. Brief: `docs/steps/0.5.md` (see its Status and
+  "Session handoff"). Stage: review round 1 fixes (qa → backend → devops), then re-review → PR → merge → live checks.
+  Kill switch (ADR 0003) **deferred** by the manager 2026-10-19 — no `ops/`, no `ops-test`.
 - **GCP:** project `hike-prep` (number 1484623023), region `me-west1`, billing linked, budget 5 ILS/month
-  (manager, 2026-10-19). Firebase/Hosting, WIF, service accounts: in progress by the manager (runbook steps 2–10).
+  (manager, 2026-10-19). Runbook steps 1–4, 5–10 done (manager) and verified (tech lead): Firebase site `hike-prep`, WIF provider `hiking-app`, SAs, env `production` (branch `main` only), API URL `https://hike-api-zr6tmbe2ya-zf.a.run.app` (sample image until the first deploy).
 - **Roadmap change (2026-10-18, manager):** community pivot — new Phase 3 "Accounts and community", old Phase 3 → 4,
   native → 5–6. Merged to `main` as #10 (6ba84ed); the master doc still needs updating (manager).
   Product rules: free without an account (plan, checklist, save on device, browse, plan from a public hike); account
@@ -57,7 +55,7 @@ Read this, then `docs/steps/<current step>.md`. Nothing here lives only in chat.
 - `api/`: no build-system; pytest `pythonpath = ["."]`; `--disable-socket --allow-hosts=127.0.0.1` (Windows
   TestClient loopback; outbound still blocked); `filterwarnings = ["error", <one targeted httpx/Starlette ignore>]`
   — stay on `httpx`; `httpx2` would need an ADR + manager approval.
-- API settings: env names = field names upper-cased, no prefix (until 0.5 decides otherwise); `create_app(settings)`
+- API settings: env names = `HIKE_` + field name upper-cased (0.5, ADR 0002); `create_app(settings)`
   injection, settings on `app.state`; no module-level `app`.
 - Errors: tracebacks in server logs only; responses get a generic 500 with `X-Request-ID`.
 - Contract: operation IDs only from `operation_id()` (handler name verb_noun → camelCase); `check_operation_ids`

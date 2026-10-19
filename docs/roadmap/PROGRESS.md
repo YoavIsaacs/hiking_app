@@ -15,11 +15,21 @@ The tech lead keeps this file true. A step moves to Done only with checkpoint ev
 ## Current state (handoff for a fresh session)
 Read this, then `docs/steps/<current step>.md`. Nothing here lives only in chat.
 
-- **Current step:** 1.1 GPX test corpus on branch `step/1.1-gpx-test-corpus` (created 2026-10-19 from `main` @ e9a85e8,
-  carries this 0.6 close-out). Phase 0 complete; `v0.1.0` released.
-  **Next session starts here:** confirm 1.1 with the manager, then step loop 1–2 — write `docs/steps/1.1.md` from
-  `docs/roadmap/phase-1.md` § 1.1 + `overview.md` 1.1. Triage Dependabot #24 (actions minor group) and **#26
-  (`astral-sh/setup-uv` 7.6 → 10.3, a major — read its changelog before merging)**.
+- **Current step:** 1.1 GPX test corpus — **not started**; branch `step/1.1-gpx-test-corpus` exists (pushed, no PR),
+  merged up to `main` @ 17e3ff3 and carrying the 0.6 close-out commits (this file, `docs/steps/0.6.md`) — they reach
+  `main` with the 1.1 PR. Phase 0 complete; `v0.1.0` released (tag `v0.1.0`, `CHANGELOG.md`).
+  **Next session starts here:**
+  1. `git switch step/1.1-gpx-test-corpus && git pull --ff-only && git merge origin/main` (if `main` moved).
+  2. Manager already agreed to start 1.1 (2026-10-19). Step loop 2 — write `docs/steps/1.1.md` from
+     `docs/roadmap/phase-1.md` § 1.1 + `overview.md` 1.1 (Tests/CI/Checkpoint verbatim). Expected team: `qa` (fixtures)
+     + `backend-expert` only if the step needs code; no designers (no screens).
+  3. **Asked of the manager, not yet answered:** GPX exports from hikes he has done, ideally from several apps
+     (Strava, Komoot, Garmin, AllTrails…); the Phase 1 exit checkpoint uses 3 of his real hikes. Ask again in the brief's
+     Manager actions. Public-repo note: real GPX files reveal locations (home/trailheads) — confirm he's fine committing
+     them, or trim start/end points.
+  - Dependabot #24 (actions minor) and #26 (`setup-uv` 7.6 → 10.3; changelog checked: no impact — we set
+    `enable-cache: true` explicitly, no `.tool-versions`) merged 2026-10-19; post-merge Deploy API 69 s green, live
+    `git_sha` 17e3ff3. No open PRs.
 - **GCP:** project `hike-prep` (number 1484623023), region `me-west1`, billing linked, budget 5 ILS/month
   (manager, 2026-10-19). Runbook steps 1–4, 5–10 done (manager) and verified (tech lead): Firebase site `hike-prep`, WIF provider `hiking-app`, SAs, env `production` (branch `main` only), API URL `https://hike-api-zr6tmbe2ya-zf.a.run.app` (sample image until the first deploy).
 - **Roadmap change (2026-10-18, manager):** community pivot — new Phase 3 "Accounts and community", old Phase 3 → 4,
@@ -39,7 +49,7 @@ Read this, then `docs/steps/<current step>.md`. Nothing here lives only in chat.
   The ruleset UI also set `require_extra_approval_for_unattributed_changes: true` (not in the runbook) — harmless so far; first suspect if a PR is blocked unexpectedly.
 - **Releases:** release-please (GitHub App `hike-release-please`; var `RELEASE_APP_CLIENT_ID`, secret
   `RELEASE_APP_PRIVATE_KEY`) keeps a release PR open; the manager merges it to cut a release. Nightly 02:43 UTC on fresh deps; failures go to one open `nightly-failure` issue.
-- **Open PRs:** Dependabot #24, #26 (see Current step).
+- **Open PRs:** none (2026-10-19). release-please opens one on the next `feat`/`fix` merge.
 - **Local leftovers (manager may delete):** temp clones `%TEMP%\tmp.7qIrHpAUnP`, `%TEMP%\tmp.GMVXYXKa6R`;
   Docker images `hike-api:qa`, `hike-api:test`.
 

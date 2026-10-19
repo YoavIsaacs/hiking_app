@@ -64,7 +64,7 @@ jobs:
         run: |
           if ! gcloud run services describe "$SERVICE" --region="$REGION" --project="$PROJECT_ID" \
             --format=json > "$RUNNER_TEMP/before.json"; then
-            echo "::error::Service cannot describe service $SERVICE (missing, or no permission): see runbook step 9"
+            echo "::error::cannot describe service $SERVICE (missing, or no permission): see runbook step 9"
             exit 1
           fi
           $DEPLOY_TOOL serving --service-json "$RUNNER_TEMP/before.json" >> "$GITHUB_OUTPUT"

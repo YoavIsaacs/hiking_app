@@ -68,8 +68,15 @@ jobs:
         id: channel
         shell: bash # explicit bash gives -eo pipefail
         run: |
-          npx --yes "firebase-tools@$FIREBASE_TOOLS_VERSION" hosting:channel:deploy "$CHANNEL" \
-            --expires 7d --no-authorized-domains --project "$PROJECT_ID" --json > "$RUNNER_TEMP/channel.json"
+          # stdout (the JSON, which carries the error on failure) goes to a file;
+          # stderr stays in the log. Print the file before failing so errors show.
+          # No --debug: debug output can include tokens.
+          if ! npx --yes "firebase-tools@$FIREBASE_TOOLS_VERSION" hosting:channel:deploy "$CHANNEL" \
+            --expires 7d --no-authorized-domains --project "$PROJECT_ID" --json > "$RUNNER_TEMP/channel.json"; then
+            cat "$RUNNER_TEMP/channel.json"
+            echo "::error::firebase hosting:channel:deploy failed (output above)"
+            exit 1
+          fi
           cat "$RUNNER_TEMP/channel.json"
           URL=$(jq -er '[.result[]][0].url' "$RUNNER_TEMP/channel.json")
           EXPIRES=$(jq -er '[.result[]][0].expireTime' "$RUNNER_TEMP/channel.json")

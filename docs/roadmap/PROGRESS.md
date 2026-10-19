@@ -16,10 +16,12 @@ The tech lead keeps this file true. A step moves to Done only with checkpoint ev
 Read this, then `docs/steps/<current step>.md`. Nothing here lives only in chat.
 
 - **Current step:** 0.5 Deployment on branch `step/0.5-deployment`. Brief: `docs/steps/0.5.md`. Stage: see its Status line.
-  **Next session starts here:** (1) check whether Neon / Supabase offer a region near Tel Aviv (affects Open decision 2);
-  (2) put 0.5 Open decisions 2–7 to the manager in one batch, each with its recommendation and the "new since the
-  roadmap change" notes in the brief (decision 1 is decided: option A, $1 budget alert); (3) record the answers in the
-  brief, then resume: devops `deploy-web.yml` + `preview.yml` (need decision 5), then the manager's runbook.
+  **Next session starts here:** read the brief's "Session handoff (2026-10-19)". Ask the manager for A1–A3 (`ops/`
+  folder, detach consequences, kill switch vs native spend caps) and for the runbook outputs (site ID, `$BUDGET_ID`,
+  `hike-api` URL, `gh` checks). Then: CLAUDE.md `ops/` rows → backend stub → qa red → backend build of
+  `ops/budget_guard/`; devops `ops-test`; frontend sets the real API URL.
+- **GCP:** project `hike-prep` (number 1484623023), region `me-west1`, billing linked, budget 5 ILS/month
+  (manager, 2026-10-19). Firebase/Hosting, WIF, service accounts: in progress by the manager (runbook steps 2–10).
 - **Roadmap change (2026-10-18, manager):** community pivot — new Phase 3 "Accounts and community", old Phase 3 → 4,
   native → 5–6. Merged to `main` as #10 (6ba84ed); the master doc still needs updating (manager).
   Product rules: free without an account (plan, checklist, save on device, browse, plan from a public hike); account

@@ -1,6 +1,6 @@
 # 0004 — GPX parser: module boundary, RouteSummary/ErrorResponse contract, algorithms, upload limits, benchmark
 
-Status: accepted · Date: 2026-10-19 · Amended: 2026-10-19 (two rounds) · Step: 1.2
+Status: accepted; third-round amendment **proposed** · Date: 2026-10-19 · Amended: 2026-10-19 (three rounds) · Step: 1.2
 
 ## Amendments
 **2026-10-19.** These record decisions already taken in step 1.2: review round 1, QA verify and the devops
@@ -10,7 +10,7 @@ rewritten in place, so the body of the ADR is current.
    near-collinear or zigzag input, and a 300k-point file peaked at about 239 MiB. Three bounds fix this.
    - **Point cap.** A file with more than 100,000 `<trkpt>`/`<rtept>` start tags gets 422 `too_many_points`.
      The tags are counted with a byte scan before gpxpy runs (§3.1 step 3, §3.12). The manager approved this
-     cap.
+     cap. *The cap stays; item 14 replaces the byte scan.*
    - **Pre-thinning.** A track with more than 2,000 points is thinned in O(n) before ranked RDP runs (§3.5).
    - **Concurrency.** At most 1 parse runs at a time per instance (§3.10). It was 2; item 7 changed it.
 2. **Elevation plausibility.** An `<ele>` outside [−1000, 10000] m is treated as missing (§2, §3.1 step 8).
@@ -35,7 +35,7 @@ in place.
    NUL → point cap → decode → gpxpy (§3.1 step 3). The reason: BOM-less UTF-16 passes the strict UTF-8 decode,
    because NUL is valid UTF-8. gpxpy then re-encodes the text, expat auto-detects UTF-16, and the ASCII byte scan
    never sees the tags. QA parsed a 150k-point UTF-16 file past the cap. §3.12's premise ("every file that reaches
-   gpxpy has ASCII tags") was false, and is corrected there.
+   gpxpy has ASCII tags") was false, and is corrected there. *The NUL rule stays; item 16 supersedes the order.*
 9. **`Content-Length` hardening** (§3.10). Only ASCII digits are parsed. More than 19 digits ⇒ 413 before `int()`
    is called. Non-ASCII digits (e.g. `²`) ⇒ 400 `bad_request`.
 10. **Pre-thinning is the only worst-case bound for RDP** (§3.5). Backend measured about 9.4M distance calls for raw
@@ -44,7 +44,31 @@ in place.
 11. **Measured results** (§3.5, §3.10, §5). The largest fixture has a min of 187 ms. A 100k-point adversarial zigzag
     takes 2.8–3.5 s end to end, mostly in gpxpy.
 12. **Open: Cloud Run `--concurrency`.** This is not decided here (Follow-ups). The tech lead has asked the manager to
-    lower it from 80 to 8.
+    lower it from 80 to 8. *Item 20 adds the arithmetic.*
+
+**2026-10-19, third round (accepted by tech lead 2026-10-19; Cloud Run concurrency pending the manager).** Review round 2 failed the hostile-input finding a second time. The manager
+chose option A: replace gpxpy with our own streaming parser on stdlib expat (`docs/steps/1.2.md`, 60c6cdc). This
+deviates from the roadmap's "Parse with gpxpy". The sections it touches are rewritten in place. Where an earlier item
+above is superseded, the body says so.
+
+13. **Own reader on `xml.parsers.expat`** (§3.1). One pass over the bytes. Handlers build only what `RawTrack`
+    needs, and every other element is skipped with a counter. gpxpy is **removed** (§4; reasons in Options
+    considered).
+14. **Guard, cap and parse are one pass** (§3.11, §3.12). `app/routes/xml_guard.py` is deleted, with
+    `check_gpx_prolog` and `exceeds_point_cap`. DTD rejection and the root check become handlers. The cap counts the
+    points the pass reads and aborts at the 100,001st. This supersedes the byte scan in items 1 and 8.
+15. **Nesting-depth cap 64 → `invalid_gpx`** (§3.11). Expat is iterative, but it keeps a record per open element.
+16. **Encoding: same rule, new mechanism** (§3.1). Expat reads the content as UTF-8 (`ParserCreate(encoding="UTF-8")`)
+    and validates it. Our `XmlDeclHandler` applies the declared-encoding test that pyexpat applied before. NUL is still
+    rejected first. Inside the pass, errors are reported in document order.
+17. **Resource bounds as numbers** (§3.13). About 180 B per kept point (≈ 17 MiB at 100k). Expat's own tables grow
+    with distinct names and with the largest single element. The estimated worst single parse is ≈ 250 MiB; QA
+    measures it.
+18. **`MAX_CONCURRENT_PARSES` stays 1**, re-derived (§3.10).
+19. **The upload is closed right after `read()`** (§3.10). A waiting request then holds ≈ 10 MiB, not 20.
+20. **Cloud Run `--concurrency=8` recommended to the manager**, with the arithmetic (§3.10; Manager decisions 6).
+21. **`parse_gpx(data, *, max_points=MAX_RAW_POINTS)`.** The new keyword lets tests hit the cap cheaply. Positional
+    calls are unchanged.
 
 ## Context
 Step 1.2 adds `POST /v1/routes/parse`. It turns an uploaded GPX file into a typed `RouteSummary`, rejects bad input
@@ -66,8 +90,8 @@ against regressions. The forces at play:
 - **Existing error shape:** `RequestIdMiddleware` turns unhandled exceptions into
   `500 {"detail": "Internal Server Error"}`, and `tests/test_errors.py` asserts exactly that body. FastAPI's own
   422 is `{"detail": [...]}`, and Starlette's 404/405 is `{"detail": "Not Found"}`. Neither is `ErrorResponse`.
-- **Runtime:** Cloud Run with 512 MiB of memory, concurrency 80 (lowering it is open; Follow-ups) and max 1
-  instance (ADR 0002/0003). The
+- **Runtime:** Cloud Run with 512 MiB of memory, 1 vCPU, concurrency 80 (8 recommended; Manager decisions 6) and
+  max 1 instance (ADR 0002/0003). The
   filesystem is in memory, and Cloud Run caps HTTP/1 requests at 32 MiB. Starlette spools uploads to a
   `SpooledTemporaryFile` (1 MiB in memory, then "disk", which is RAM here) and has **no total file-size limit**.
 - **Path:** `overview.md` says `/routes/parse`, but the phase-1 checklist path `/v1/routes/parse` is used. The
@@ -80,7 +104,7 @@ against regressions. The forces at play:
 | --- | --- | --- |
 | `app/models/route.py` | `LatLonElev`, `TrackPoint`, `RouteSummary` (Pydantic, response-only) | pydantic, `app.routes.params` (the 500 cap) |
 | `app/models/errors.py` | `ErrorCode`, `FieldError`, `ErrorResponse` | pydantic |
-| `app/routes/` | **pure** pipeline: bytes in, `RouteSummary` or a `RouteParseError` out | stdlib, gpxpy (in `parse.py` only), `app.models.route` |
+| `app/routes/` | **pure** pipeline: bytes in, `RouteSummary` or a `RouteParseError` out | stdlib only (`xml.parsers.expat` and `codecs` in `parse.py`), `app.models.route` |
 | `app/routers/routes.py` | the I/O edge: multipart upload, size limit, worker thread under the parse limiter, error mapping | fastapi, anyio, `app.routes`, `app.errors`, `app.body_limit`, `app.dependencies` |
 | `app/errors.py` | `ApiError`, global exception handlers, `ERROR_RESPONSES` for OpenAPI | fastapi/starlette, `app.models.errors` |
 | `app/body_limit.py` | `UploadLimitRoute`: streaming request-body cap | fastapi/starlette, `app.routes.params`, `app.errors` |
@@ -90,12 +114,12 @@ deliberate deviation from the checklist's "Models (`app/models/route.py`)" headi
 the brief.
 
 **Purity.** Nothing in `app/routes/` reads files, the environment, the clock or randomness, and nothing logs.
-`summarise_gpx(data, filename, params)` is the whole pipeline and is what the benchmark measures. gpxpy parsing
-bytes in memory counts as pure: it does no I/O.
+`summarise_gpx(data, filename, params)` is the whole pipeline and is what the benchmark measures. Expat parsing
+bytes in memory counts as pure: it does no I/O, and each call creates its own parser, so no state is shared.
 
 **One place for parameters: `app/routes/params.py`.** It holds the frozen `ParseParams` dataclass plus `Final`
-constants: the upload limit, the raw-point cap, the 500-point cap, the plausible-elevation range, the parse
-concurrency, Earth's radius and the name limits. Each pure function takes its
+constants: the upload limit, the raw-point cap, the XML depth cap, the 500-point cap, the plausible-elevation range,
+the parse concurrency, Earth's radius and the name limits. Each pure function takes its
 parameters as keyword arguments whose defaults come from `DEFAULT_PARAMS`. Parameters are **not** `Settings`/env:
 the accuracy gates are tuned against these exact values, and env overrides would let environments drift away from
 what was tested. `ParseParams.__post_init__` raises `ValueError` on nonsense values (a programming error, never
@@ -131,7 +155,7 @@ decreases along `points`, the first value is 0, and the last equals `distance_m`
 | `has_elevation` | bool | true iff **every** de-duplicated point has a *plausible* `<ele>`: present, finite and within [−1000, 10000] m inclusive (§3.1 step 8) |
 | `elevation_source` | `"file"` \| `"lookup"` \| `"none"` | 1.2 emits only `file`/`none`; `lookup` is reserved for 1.3 and is in the enum now so 1.3 doesn't change the type |
 | `source_format` | `"trk"` \| `"rte"` | §3.1 |
-| `point_count_original` | int ≥ 2 | points in the chosen source as the file has them (all segments, before de-duplication). It can be lower than the §3.12 tag count, which counts both kinds |
+| `point_count_original` | int ≥ 2 | points in the chosen source as the file has them (all segments, before de-duplication). It can be lower than the §3.12 count, which counts both kinds |
 
 No elevation means **null, not 0**. Zero gain is a real value (a flat route), and the Phase 2 rules must not mistake
 "unknown" for "flat". A file where only some points have a plausible `<ele>` counts as having no elevation, and every
@@ -153,8 +177,8 @@ the missing one**.
 | Status | `code` | Raised by |
 | --- | --- | --- |
 | 413 | `file_too_large` | the `Content-Length` pre-check, the streaming body cap, or the file-length check (§3.10) |
-| 422 | `invalid_gpx` | empty file, unsupported declared XML encoding, a NUL byte or not UTF-8, not well-formed, DTD/entity present, root not `<gpx>`, any gpxpy failure, coordinates out of range or not finite |
-| 422 | `too_many_points` | more than `MAX_RAW_POINTS` (100,000) `<trkpt>`/`<rtept>` start tags in the raw bytes, decided before gpxpy runs (§3.12) |
+| 422 | `invalid_gpx` | empty file, unsupported declared XML encoding, a NUL byte or not UTF-8, not well-formed (unbound prefix included), DTD/entity present, root not `<gpx>`, nested deeper than 64 elements, a chosen-source point with missing, unparseable, non-finite or out-of-range coordinates (§3.1) |
+| 422 | `too_many_points` | more than `MAX_RAW_POINTS` (100,000) track and route points together; the pass stops at the 100,001st (§3.12) |
 | 422 | `too_few_points` | fewer than 2 points after merging and de-duplication (this includes waypoint-only files) |
 | 422 | `validation_error` | FastAPI `RequestValidationError`, e.g. the `file` field is missing, or `file` is a text field |
 | 400 | `bad_request` | Starlette multipart errors (FastAPI turns form-parsing failures into `HTTPException(400)`); a `Content-Length` made of non-ASCII digits (§3.10) |
@@ -189,26 +213,47 @@ can't be updated in lock-step.
 
 ### 3. Algorithms
 
-**3.1 Parse (`parse_gpx`).** The input bytes go through these steps, in order:
+**3.1 Parse (`parse_gpx`): one expat pass with our own handlers; no third-party parser** (third amendment). The
+input bytes go through these steps, in order:
 1. **Empty input** → `invalid_gpx`.
-2. **XML prolog guard** (`check_gpx_prolog`, §3.11) on the raw bytes.
-3. **Byte checks** on the raw bytes. They run before decoding, so they never pay for a decoded copy.
-   - **NUL:** any `\x00` byte → `invalid_gpx` "file must be UTF-8". XML 1.0 forbids U+0000, so no valid UTF-8
-     GPX contains that byte. UTF-16 and UTF-32 put a NUL beside every ASCII character, and BOM-less UTF-16 would
-     otherwise pass step 4 and hide its tags from the point cap (§3.12).
-   - **Point cap** (`exceeds_point_cap`, §3.12) → `too_many_points`.
-   - Errors take precedence in this order: a prolog error, then a NUL, then `too_many_points`, then "not UTF-8",
-     then a gpxpy failure.
-4. **Decode** as `utf-8-sig`, strict, which strips a BOM. Failure → `invalid_gpx` "file must be UTF-8".
-5. **Parse:** `gpxpy.parse(text)`. **Every** exception from that one call (`GPXXMLSyntaxException`, `GPXException`,
-   `ValueError`, …) → `invalid_gpx`, chained with `from`. This catch-all is justified because gpxpy is a
-   third-party parser of untrusted input. It wraps **only** the gpxpy call. Our own bugs still surface as 500, and
-   the fuzz test hunts for them.
-6. **Choose a source.** `trk` if all `<trk>` together hold ≥ 2 points. Otherwise `rte` if all `<rte>` together hold
-   ≥ 2. Otherwise whichever has more points (`trk` on a tie); the later < 2 check then raises `too_few_points`.
-7. **Merge:** within the chosen kind, every track (or route) and every segment, in document order.
-8. **Validate:** every chosen point must have a finite lat in −90..90 and a finite lon in −180..180, else
-   `invalid_gpx`. An `<ele>` that is missing, non-finite, or outside **[`MIN_PLAUSIBLE_ELEV_M`,
+2. **NUL:** any `\x00` byte → `invalid_gpx` "file must be UTF-8". This is one C-speed `in` test, run before expat.
+   - XML 1.0 forbids U+0000.
+   - Every UTF-16/UTF-32 document has a NUL beside each ASCII character, `<` included. So this rejects them all
+     before expat could auto-detect them from a BOM or from the first bytes.
+3. **Parser:** `expat.ParserCreate(encoding="UTF-8", namespace_separator="|", intern=None)`, with
+   `ordered_attributes = True` and `buffer_text = True`.
+   - `encoding="UTF-8"` overrides the declared encoding, so the content is always read, and validated, as UTF-8.
+     That is what gpxpy did: it decoded first and handed expat a `str`. A UTF-8 BOM is skipped.
+   - `intern=None` turns off pyexpat's per-name dictionary, which would grow with every distinct name (§3.13).
+   - `ordered_attributes` gives a flat `[name, value, …]` list. It is cheaper than a dict, and expat already rejects
+     duplicate attributes.
+4. **One pass:** `parser.Parse(data, True)`. pyexpat feeds expat ≤ 1 MiB slices of the caller's buffer and does not
+   copy the input. The handlers in the table below raise `InvalidGpx` or `TooManyPoints`, which stops the parse at
+   once. The exception propagates out of `Parse`.
+   - **`XmlDeclHandler`, declared encoding.** It keeps today's rule. The name is accepted if it is UTF-8
+     (case-insensitive) or a Python codec that maps all 256 byte values to 256 characters: `codecs.lookup` succeeds,
+     and `len(bytes(range(256)).decode(name, "replace")) == 256`. That is exactly the check pyexpat's unknown-encoding
+     handler made, and it is how utf-32, utf-7, shift_jis and big5 were refused. Anything else (including
+     `LookupError`) → `invalid_gpx` "unsupported XML encoding". Because the override means pyexpat never consults
+     the declaration, the old `LookupError`/`ValueError` catch around the parse is **removed**. A `ValueError`
+     escaping now is a bug (500), which the fuzz test hunts for.
+   - **DTD, root and depth handlers:** §3.11. **Point cap:** §3.12.
+5. **Errors:** `expat.ExpatError` → `invalid_gpx` "The file is not well-formed XML (line L, column C).", chained with
+   `from`. This covers malformed or truncated XML, invalid UTF-8 (including bytes declared as Latin-1), unbound
+   prefixes, junk after the root and a missing root. Handlers catch `ValueError` from `float()` themselves.
+   - **Precedence:** empty → NUL → the first problem the pass meets, in document order (declared encoding, DTD,
+     root, malformed or non-UTF-8 bytes, depth, the 100,001st point) → an invalid chosen-source coordinate (step 8).
+   - **Changes from the gpxpy version:** NUL now comes before prolog errors (both are `invalid_gpx`). A
+     malformation *before* the 100,001st point now wins over `too_many_points`. Every precedence test QA has today
+     puts the malformation in the prolog or after the points, so they all still hold.
+6. **Choose a source** (rule unchanged). `trk` if all tracks and segments together hold ≥ 2 points. Otherwise `rte`
+   if all routes together hold ≥ 2. Otherwise whichever has more (`trk` on a tie); the later < 2 check then raises
+   `too_few_points`. Counts include invalid points.
+7. **Merge:** within the chosen kind, every track (or route) and every segment, in document order. Segment
+   boundaries are not recorded, because §3.2 counts the jumps.
+8. **Validate the chosen kind only.** If any of its points had a missing, unparseable or non-finite lat/lon, a lat
+   outside −90..90 or a lon outside −180..180 → `invalid_gpx`. Points of the other kind are never validated. An
+   `<ele>` that is missing, empty, unparseable, non-finite, or outside **[`MIN_PLAUSIBLE_ELEV_M`,
    `MAX_PLAUSIBLE_ELEV_M`] = [−1000, 10000] m, inclusive**, becomes `None`.
    - The range covers the Dead Sea shore (−430 m) and Everest (8 849 m) with a margin. Anything outside it is a
      unit or encoding error, not terrain.
@@ -216,8 +261,39 @@ can't be updated in lock-step.
      500 in QA verify.
    - Following §2, one such point makes `has_elevation` false for the whole file.
 
-`RawTrack` carries the names: `metadata_name` from `<metadata><name>`, and `track_name` from the first non-blank
-`<trk><name>` (or `<rte><name>` when the source is `rte`).
+**What the handlers read.** With namespace processing, names arrive as `uri|local` or `local`; split on the last
+`|`, since local names can't contain it. Let N be the root's namespace, whatever it is, including none. Only
+elements in N, at these paths, are read. Depth starts at 1 for the root.
+
+| Path (local names, all in N) | Action |
+| --- | --- |
+| `gpx` (depth 1) | the local name must be `gpx` (case-sensitive), else `invalid_gpx` "not GPX"; N := its namespace |
+| `gpx/metadata/name` (1.1), `gpx/name` (1.0) | `metadata_name` = the text of the first one met, raw |
+| `gpx/trk/name`, `gpx/rte/name` | the first non-blank (`str.strip()`) per kind; `track_name` is the chosen kind's |
+| `gpx/trk/trkseg/trkpt`, `gpx/rte/rtept` | a point. It is counted at its start tag (§3.12); `lat`/`lon` come from its attributes |
+| `…/trkpt/ele`, `…/rtept/ele` | the text of the point's **first** `<ele>`; later ones are ignored |
+| anything else, with its whole subtree: `wpt`, `time`, `extensions`, unknown or foreign-namespace elements | skipped. The subtree only moves a skip counter: no strings kept, no text handler |
+
+- **Namespaces.** The GPX 1.1, GPX 1.0 and namespace-free roots that QA pins
+  (`test_gpx_1_0_1_1_and_namespace_free_roots_are_accepted`) all work.
+  - A prefixed document (`<g:gpx xmlns:g="…/GPX/1/1"><g:trk>…`) now yields its points. gpxpy silently ignored
+    them.
+  - A `gpx` root in any other namespace is still accepted, as gpxpy accepted it. An allow-list would be a new
+    rejection.
+  - `xmlns` attributes never reach Python, and nothing is registered globally.
+- **Text capture** (names and `ele`). The `CharacterDataHandler` is installed when a captured element starts and
+  removed when it ends. pyexpat flushes its text buffer on that change. So skipped text never calls Python.
+  - The captured text is all character data directly inside the element. CDATA sections and entity/character
+    references (`&amp;`, `&#x5D0;`) are included; text inside child elements is not.
+  - Chunks go into a list, joined at the end of the element.
+  - Names stay raw. `route_name` (§3.9) normalises them, unchanged.
+- **Numbers.** `lat`, `lon` and `ele` are read with `float(text.strip())`. A `ValueError` means unparseable. Python's
+  `float` accepts exponent forms such as `1e-05`, which the test builders' `repr` writes.
+- **Storage.** A valid point is appended as a `RawPoint` to its kind's list. An invalid point stores nothing except
+  its kind's first error message, which step 8 uses. Once the trk count reaches 2, `rte` can no longer be chosen,
+  so the rte list is dropped and rte points are only counted.
+
+`RawTrack` carries the names: `metadata_name` (above), and `track_name`, the chosen kind's first non-blank name.
 
 **3.2 Segments and duplicates.**
 - **Jumps between segments are counted.** The merged points form one polyline, so the straight jump from the end of
@@ -365,8 +441,8 @@ elevations.
   **O(n) + O(2000²)**, and n is capped at 100k by §3.12.
   - For scale, raw RDP on an adversarial zigzag (QA) took 1.6 s at 2k points, 6.3 s at 4k and 27 s at 8k, so
     2,000² is the ceiling.
-  - **Measured with thinning:** a 100k-point adversarial zigzag takes 2.8–3.5 s end to end, mostly in gpxpy. The
-    largest fixture has a min of 187 ms (§5).
+  - **Measured with thinning (gpxpy era):** a 100k-point adversarial zigzag took 2.8–3.5 s end to end, mostly in
+    gpxpy, and the largest fixture had a min of 187 ms (§5). QA re-measures both on the own reader (§3.13).
 
 **3.6 High point.** The first index of the maximum raw elevation, which keeps it deterministic on plateaus. It is
 in `points` because simplify forces it, so `max(p.elev_m for p in points) == max_elev_m` holds.
@@ -431,97 +507,156 @@ none of them reads an unbounded body.
     "0 × 500".
   - **Worst case:** at Cloud Run's concurrency of 80, with every request a 100k-point zigzag at about 3.5 s,
     the last request waits about 80 × 3.5 ≈ 280 s, just under the 300 s timeout. Real files take about 0.2 s. At
-    a concurrency of 8 (Follow-ups) the worst case is about 28 s.
-  - **Why 1 (amended from 2).** It is a memory budget, and these are the peaks QA measured (`tracemalloc`, current
-    code):
-
-    | Input | Peak |
-    | --- | --- |
-    | 10 MiB of `<trkseg/>` | 296 MiB |
-    | 10 MiB of `<a/>` | 238 MiB |
-    | real-shaped 100k points (`ele` + `time`) | 127 MiB (my estimate was 80) |
-
-    - One worst-case parse plus the process baseline fits in a 512 MiB instance, and two do not.
-    - One slot bounds memory **without an element-count cap**, which would have been a new product limit
-      (Options considered).
-    - CPU loses nothing: the instance has 1 vCPU and the parse holds the GIL. The cost is that a small file can
-      wait behind a large one, for up to about 3.5 s per parse ahead of it.
-    - This bounds *parse* memory only. Uploads waiting for the slot still hold their bytes (Follow-ups).
+    the recommended concurrency of 8 the worst case is about 28 s.
+  - **Why 1 (kept for the own reader, third amendment).** It is still a memory budget. The estimated worst single
+    parse is P_max ≈ 250 MiB: one element carrying about a million distinct attributes (§3.13). Real files take
+    5–45 MiB.
+    - Two worst-case parses (≈ 500 MiB) do not fit beside the process. One does.
+    - A second slot would buy no throughput. The instance has 1 vCPU, and the parse holds the GIL, because pyexpat
+      calls back into Python for every element.
+    - One slot bounds memory **without an element-count or attribute-count cap**, either of which would be a new
+      product limit (Options considered).
+    - The cost: a small file can wait behind a large one, for about 3 s per hostile parse ahead of it.
+    - Revisit only if QA measures P_max ≤ 120 MiB **and** the instance gets a second vCPU.
   - The limiter is acquired *after* the upload is read and size-checked, so a slow uploader never holds the slot.
+  - **Close the upload right after `read()`** (third amendment). The handler calls `await file.close()` in a
+    `finally` around the read, before the size check and before it waits for the limiter.
+    - Until then, a request waiting for the slot holds both Starlette's spool (≤ 10 MiB + 64 KiB, in a
+      `SpooledTemporaryFile` that moves to Cloud Run's in-memory disk after 1 MiB) **and** the `bytes` it read
+      (≤ 10 MiB).
+    - Closing deletes the spool, so a waiting request holds R ≈ 10 MiB instead of 20. Starlette's own close after
+      the response then does nothing.
+  - **Waiting uploads vs Cloud Run `--concurrency` (Manager decisions 6).** The parse limiter bounds parse memory
+    only. Every admitted request holds its upload. The budget must satisfy:
+    512 MiB ≥ B + margin + P_max + C × R (+ 10 MiB with the close, for the moment of one read, when the spool and the
+    bytes are both alive; without the close, R already counts both).
+    - B ≈ 90 MiB is the idle process. This is an estimate, to be measured.
+    - The margin is 10 %, ≈ 51 MiB, because freed pymalloc arenas are not always returned to the OS.
 
-**3.11 XML safety: stdlib only, no defusedxml; we forbid DTDs ourselves.**
-- **Which parser gpxpy uses:** it parses with `lxml` if that is importable, otherwise `xml.etree.ElementTree`
-  (expat). lxml is not in our tree, so it is ElementTree.
-- **Python docs, per ElementTree vulnerability:**
-  - external entities: safe (`ParseError`);
-  - billion laughs and quadratic blowup: safe with expat ≥ 2.4.1;
-  - large tokens: safe with expat ≥ 2.6.0.
-- **The guard: `check_gpx_prolog(data)`.** Before gpxpy runs, it drives `xml.parsers.expat` over the raw bytes with
-  three handlers:
-  - `StartDoctypeDeclHandler` → `invalid_gpx` "DTDs are not allowed";
-  - `EntityDeclHandler` → the same;
-  - `StartElementHandler` records the root's local name, then **stops the scan** by raising a private sentinel. A
-    DOCTYPE can only precede the root, so the scan costs only the prolog.
-- **What the guard rejects:**
-  - an `ExpatError` before the root (`invalid_gpx` with line/column);
-  - an **unsupported declared encoding**. expat raises `LookupError` for an unknown encoding name and
-    `ValueError` for encodings it can't handle (utf-32, utf-7, shift_jis, …). Both → `invalid_gpx` "unsupported
-    XML encoding", chained with `from`. Before this, they escaped as a 500 (QA verify). The catch is safe because
-    our handlers raise neither exception;
-  - no root at all;
-  - a root whose local name is not `gpx`. This check is how the KML fixture fails: gpxpy doesn't check the root
-    element and would return an empty GPX.
-- **Why this is enough:** GPX is defined by an XSD and never needs a DTD. Every entity attack needs a DTD, so
-  rejecting DTDs removes XXE, billion laughs, quadratic blowup and DTD retrieval no matter which expat version or
-  parser gpxpy picks. Large-token quadratic parsing is bounded by the 10 MiB cap and fixed in expat ≥ 2.6. A test
-  asserts `pyexpat.EXPAT_VERSION ≥ 2.6.0`; see the follow-ups for the Docker image.
-- **defusedxml is rejected:** a new dependency, and gpxpy calls ElementTree internally, so it would need
-  monkey-patching (`defuse_stdlib`) for no protection beyond the guard.
+    | `--concurrency` C | R = 20 MiB (no close) | R = 10 MiB (close) |
+    | --- | --- | --- |
+    | 80 (today) | 1 991 MiB ✗ | 1 201 MiB ✗ |
+    | 16 | 711 MiB ✗ | 561 MiB ✗ |
+    | 8 | 551 MiB ✗ | **481 MiB ✓** (31 MiB spare) |
+    | 4 | 471 MiB ✓ | 441 MiB ✓ |
 
-**3.12 Point cap: a byte scan, before gpxpy builds its tree.**
-- **Why before gpxpy:** gpxpy calls `ElementTree.XML(text)` on the whole document and then builds one Python
-  object per point. Memory and time are spent before any count is known, so the count must come from the raw
-  bytes.
-- **`exceeds_point_cap(data, max_points=MAX_RAW_POINTS)`** counts the matches of one compiled bytes regex and
-  stops at `max_points + 1` (`itertools.islice` over `finditer`):
-  ```
-  rb"<(?:[^\s<>/]*:)?(?:trkpt|rtept)[\s/>]"
-  ```
-  - More than `MAX_RAW_POINTS = 100_000` matches → `TooManyPoints`. Exactly 100,000 is accepted.
-- **What is counted:** `<trkpt` and `<rtept` start tags **together**, across all tracks, routes and segments,
-  before de-duplication.
-  - This is conservative. The cap protects gpxpy's object tree, and gpxpy builds both kinds whichever source
-    §3.1 later chooses.
-  - A file with 60k of each kind is therefore rejected, even though its chosen source has 60k points.
-- **Namespaces and prefixes:**
-  - The optional `prefix:` group counts `<gpx:trkpt>` and `<a:b:trkpt>` too. That is more than gpxpy uses: it
-    matches `child.tag == "trkpt"` exactly, after stripping only the first default `xmlns`, so it ignores
-    prefixed points.
-  - Over-counting is the safe direction, and it stays correct if the parser is ever replaced by one that
-    resolves namespaces.
-  - Matching is case-sensitive, like XML and gpxpy.
-- **It can only over-count:**
-  - Tags inside comments, CDATA or processing instructions also match. A real file never has 100k of those.
-  - `</trkpt>` does not match.
-  - No real point can be missed:
-    - DTDs are rejected (§3.11), so no element can come from entity expansion;
-    - the scan assumes the tags are spelled in ASCII bytes. §3.1 step 3 rejects any NUL byte before the scan,
-      which closes UTF-16 and UTF-32, since both put a NUL beside every ASCII character. Step 4 then requires
-      UTF-8;
-    - XML allows no whitespace between `<` and the name.
-  - **Correction (amendment).** The first version claimed that step 4's UTF-8 requirement alone meant every file
-    reaching gpxpy had ASCII tags. That was false. BOM-less UTF-16 decodes as valid UTF-8, because NUL is valid
-    UTF-8. gpxpy then re-encodes the text, expat auto-detects UTF-16, and the scan never saw the tags. QA parsed a
-    150k-point UTF-16 file past the cap that way.
-- **Cost:** a C-speed scan, linear time, constant memory.
-  - The pattern starts with the literal `<`, so `re` skips quickly to each candidate.
-  - The prefix class excludes `<`, so backtracking is bounded by the run up to the next `<`.
-  - Total work is O(bytes): tens of milliseconds on 10 MiB.
+    - **Recommendation: `--concurrency=8` plus the close.** 8 is also Cloud Run's documented starting point for
+      concurrency. If QA's measured P_max exceeds 300 MiB, the answer is 4, or the escalation in §3.13.
+    - Above C simultaneous requests, Cloud Run (max 1 instance) can answer **429 "no available instance"** itself.
+      Like the 504 above, it comes from the platform, not the app. Clients treat it as a generic, retryable error
+      (Follow-ups, UX).
+
+**3.11 XML safety: stdlib expat only, no defusedxml; we forbid DTDs and deep nesting ourselves** (rewritten, third
+amendment).
+- **Python docs, expat vulnerabilities:**
+  - external entities are safe;
+  - billion laughs and quadratic blowup are safe with expat ≥ 2.4.1;
+  - large tokens are safe with expat ≥ 2.6.0. A test asserts `pyexpat.EXPAT_VERSION ≥ 2.6.0`; see the follow-ups
+    for the Docker image.
+- **Handlers in the one pass (§3.1 step 4):**
+  - `StartDoctypeDeclHandler` and `EntityDeclHandler` → `invalid_gpx` "DTDs are not allowed". A DOCTYPE can only
+    come before the root, so this fires before any element is read. No `ExternalEntityRefHandler` is set, and
+    pyexpat never fetches anything.
+  - **Root.** The first element's local name must be `gpx`; otherwise `invalid_gpx` "not GPX". This is how the KML
+    fixture fails. With no root at all, expat itself raises "no element found".
+  - **Depth cap.** `MAX_XML_DEPTH = 64`. The start of an element at depth 65 (the root is depth 1) →
+    `invalid_gpx` "nested too deeply", so the pass stops there.
+- **Why a depth cap, when expat is iterative.**
+  - Expat does not recurse on nesting, but it keeps a record for every *open* element: the tag's name buffer and
+    its namespace bindings. That is O(depth) memory inside expat, ≈ 100 B per level.
+  - 10 MiB of `<a>` is ≈ 3.5M levels, ≈ 350 MiB. Our skip counter is O(1); expat's stack is not.
+  - The cap makes the stack constant, and it also bounds any per-level work a future handler might add.
+  - Real GPX needs about 7 levels (`gpx/trk/trkseg/trkpt/extensions/gpxtpx:TrackPointExtension/gpxtpx:hr`), so
+    64 is about 9×.
+  - It is a malformed-input rule under the existing code, not a product limit: no real file is refused. The tech
+    lead may still confirm it with the manager.
+- **Why this is enough:**
+  - GPX is defined by an XSD and never needs a DTD. Every entity attack needs a DTD, so rejecting DTDs removes
+    XXE, billion laughs, quadratic blowup and DTD retrieval.
+  - Large tokens are fixed in expat ≥ 2.6 and bounded by the 10 MiB cap.
+  - With gpxpy gone, so are its three defects (review round 2):
+    - the `copy.deepcopy` recursion on deep `<extensions>`;
+    - the quadratic `xmlns` regex over the whole text;
+    - `ET.register_namespace` writing into a process-global map.
+  - Nothing here uses a regex over the document, ElementTree, or global state.
+- **What still grows with the input:** expat's own name tables and the attribute array of the largest element.
+  §3.13 bounds them by bytes, not by points.
+- **defusedxml is rejected:** it is a new dependency that wraps the same expat with the same two forbids we set
+  ourselves, and it bounds neither names nor attributes.
+- **lxml is rejected:** it is a native libxml2 dependency outside the stack. It brings more attack surface and
+  nothing we need.
+
+**3.12 Point cap: counted during the pass, which stops at once** (rewritten, third amendment).
+- **The count.** More than `MAX_RAW_POINTS = 100_000` points → `TooManyPoints`; exactly 100,000 is accepted.
+  - The pass counts every point element it reads, at its start tag: `gpx/trk/trkseg/trkpt` and `gpx/rte/rtept` in
+    N, valid or not.
+  - Both kinds are counted together, across all tracks, routes and segments, before de-duplication.
+  - The 100,001st raises inside the start handler, so nothing after it is read, and at most 100,000 `RawPoint`s
+    ever exist.
+- **Both kinds together, as before.** The cap bounds what the pass stores. Rte points come first in schema order,
+  and they are stored until the trk count reaches 2. A file with 60k points of each kind is therefore still
+  rejected.
+- **Exact now, not an over-count.** These are not counted, because they are not points:
+  - tags inside comments, CDATA or processing instructions;
+  - `trkpt` elements inside `<extensions>`, `<wpt>` or a foreign namespace;
+  - points directly under `<trk>` without a `<trkseg>`.
+
+  A prefixed point in N is counted, and parsed.
+- **Why the byte scan is retired.** It existed because gpxpy built the whole tree before any count was known.
+  - The pass now stops itself, so a second scan would only add cost and a second definition of "point".
+  - Expat's events see the points whatever the bytes look like, so the scan's ASCII/UTF-16 caveat no longer
+    matters to the cap. The NUL rule stays for the UTF-8-only contract.
+- **Testability.** `parse_gpx(data, *, max_points=MAX_RAW_POINTS)`, so tests can use a cap of 3.
+
+**3.13 Resource bounds of the parse** (third amendment). All numbers here are estimates. QA's measurements (How it
+is tested) replace them, and a measurement above its bound is an escalation, not a tweak.
+- **Time is O(bytes).**
+  - The NUL scan is a C `memchr`. Expat tokenises and validates UTF-8 in C.
+  - The Python cost is one start call and one end call per element, ≈ 1 µs together; a skipped element costs
+    nothing else. A point costs ≈ 5 µs more (attributes, `float`, `<ele>` capture, `RawPoint`).
+  - So 10 MiB of `<a/>` (≈ 2.6M elements) ≈ 3 s, a 100k-point file ≈ 0.5 s to parse, and the largest fixture well
+    under its gpxpy-era 187 ms.
+- **Memory kept is O(points kept).**
+  - Per point: one `RawPoint` (slots dataclass, ≈ 64 B with its GC header), two or three floats (32 B each) and a
+    list slot. That is **≈ 170–180 B per point, ≈ 17 MiB at 100,000**.
+  - The rest of the pipeline adds ≈ 25 MiB at 100k: the cumulative distance and a resampled profile of at most
+    100k samples.
+  - A real-shaped 100k-point file therefore peaks at ≈ 45 MiB. gpxpy measured 127 MiB.
+- **Nothing is kept per skipped element in Python.** There are no objects, no strings and no text callbacks.
+  pyexpat's per-event name string and attribute list are freed straight away.
+- **What still grows with the input.** These live inside expat, which allocates through `PyObject_Malloc`, so
+  `tracemalloc` sees them:
+  - **Name tables.** Expat keeps one entry per *distinct* element name, attribute name and namespace prefix for the
+    parser's life, ≈ 80 B each. 10 MiB of distinct short names is ≈ 100 MiB. `intern=None` keeps pyexpat from
+    adding a second table of the same size.
+  - **The largest single element.** Expat's attribute array, plus pyexpat's list for it, cost ≈ 150–200 B per
+    attribute. One 10 MiB start tag of ≈ 1.3M distinct attributes is ≈ 200–250 MiB. **This is the worst case:
+    P_max ≈ 250 MiB**, and it is freed when the parse ends.
+  - **Expat's input buffer:** ≈ 1–2 MiB, or about twice the largest single token.
+- **Escalation if a bound fails.** The options are:
+  1. a byte-level cap on start-tag size (a new product limit, so a manager decision);
+  2. a lower `--concurrency` (§3.10);
+  3. expat ≥ 2.7.2's allocation tracker (Follow-ups).
+
+| Shape (10 MiB unless noted) | gpxpy (measured) | Own reader (estimate) | QA bound (`tracemalloc` peak / wall) |
+| --- | --- | --- | --- |
+| `<trk/>` repeated | 649 MiB RSS | < 5 MiB | ≤ 32 MiB / ≤ 5 s |
+| `<wpt lat="0" lon="0"/>` repeated | 394 MiB RSS | < 5 MiB | ≤ 32 MiB / ≤ 5 s |
+| `<trkseg/>` in one `<trk>` | 296 MiB (363 RSS) | < 5 MiB | ≤ 32 MiB / ≤ 5 s |
+| `<a/>` in one `<trk>` | 238 MiB | < 5 MiB | ≤ 32 MiB / ≤ 5 s |
+| `<a>` × depth (and the round-2 140 KB `<extensions>` file) | process killed | stops at depth 65 | ≤ 1 MiB / ≤ 0.1 s, `invalid_gpx` |
+| distinct element names (`<a0/>`, `<a1/>`, … in base 36) | — | ≈ 100 MiB | ≤ 160 MiB / ≤ 5 s |
+| one `<gpx>` start tag of distinct attributes | — | ≈ 250 MiB | ≤ 300 MiB / ≤ 5 s |
+| xmlns shapes: the round-2 quadratic file at 200 KB and at 10 MiB; one element with 10 MiB of distinct `xmlns:pN` declarations; 10 MiB of siblings each re-declaring `xmlns="urn:x"` | 6.5 s at 200 KB | linear | ≤ 160 MiB / ≤ 5 s |
+| real-shaped 100k points (`ele` + `time`, ≈ 10 MB) | 127 MiB | ≈ 45 MiB | ≤ 64 MiB / ≤ 2 s |
+| 100k-point zigzag, end to end | 2.8–3.5 s | faster | ≤ 3.5 s |
+| 100,001 points, then 9 MiB of anything | — | stops at the 100,001st | `too_many_points`; ≤ 64 MiB |
 
 ### 4. Dependencies
 | Package | Where | Why | License | Maintenance | Types (mypy strict) | Approval |
 | --- | --- | --- | --- | --- | --- | --- |
-| **gpxpy** | runtime | the roadmap's parser | Apache-2.0 | 1.6.2 (2023-11); slow cadence, but a stable format and no deps | ships `py.typed` (inline hints; the project requires mypy-clean code) | in stack |
+| ~~gpxpy~~ | **removed** (third amendment) | was the roadmap's parser; unsafe on hostile input (§3.11, Options considered) | Apache-2.0 | 1.6.2 | — | manager chose option A, 2026-10-19 (roadmap deviation) |
+| stdlib `xml.parsers.expat` | runtime (stdlib) | the GPX reader (§3.1) | PSF | ships with CPython; libexpat version from the image (≥ 2.6.0 asserted) | typeshed stubs | none needed |
 | **python-multipart** | runtime | FastAPI/Starlette need it for any `File()`/`Form()` ("To receive uploaded files, first install python-multipart"); without it the route fails at import | Apache-2.0 | 0.0.32 (2026-06), maintained by Kludex (Starlette's maintainer) | not imported by our code | **approved by the manager 2026-10-19** (not in the CLAUDE.md list; it is FastAPI's own optional dependency) |
 | **anyio** (amendment) | runtime, declared explicitly | `CapacityLimiter` for the parse cap (§3.10) | MIT | 4.15.1 already locked; FastAPI/Starlette require it | ships `py.typed` | no new package in `uv.lock`; tech lead to confirm with the manager that declaring an already-locked transitive dependency needs no separate approval |
 | **Hypothesis** | dev | property and fuzz tests | MPL-2.0 | active | ships `py.typed` | in stack |
@@ -529,11 +664,14 @@ none of them reads an unbounded body.
 | **benchmark-action/github-action-benchmark** | CI action, pinned by SHA like the others | named by the roadmap: stores the baseline and alerts | MIT | active, `@v1` line (v1.22.2 pinned) | n/a | **approved by the manager 2026-10-19** (new third-party action) |
 | geographiclib | — | rejected (§3.3) | | | | — |
 | defusedxml | — | rejected (§3.11) | | | | — |
-| lxml | — | must **not** be added: gpxpy would switch parsers silently, changing behaviour and benchmark numbers (the guard keeps it safe either way) | | | | — |
+| lxml | — | rejected (§3.11): a native dependency outside the stack | | | | — |
 
-`pyproject` changes: add `gpxpy` and `python-multipart` to `dependencies`, add `hypothesis` and `pytest-benchmark` to
-`dev`, and add `--benchmark-disable` to `addopts`. Benchmark tests then run once, as plain tests, inside `api-test`
-under coverage, and only the benchmark job times them.
+`pyproject` changes:
+- `dependencies` holds `python-multipart` and `anyio`. **`gpxpy` is removed** (`uv remove gpxpy`). It has no
+  dependencies of its own, so only its entry leaves `uv.lock`.
+- `dev` holds `hypothesis` and `pytest-benchmark`.
+- `addopts` gets `--benchmark-disable`. Benchmark tests then run once, as plain tests, inside `api-test` under
+  coverage, and only the benchmark job times them.
 
 **Why not the stack?**
 - **python-multipart:** nothing in the stack parses `multipart/form-data`. Starlette delegates to this package, and
@@ -592,7 +730,8 @@ under coverage, and only the benchmark job times them.
      head/base for humans.
   7. Permissions: `contents: read` only.
 - **Proven red in CI** on the throwaway PR #28: run 39288735236 failed at 1.43× head/base.
-- **Measured (amendment):** the largest fixture has a min of 187 ms, about a tenth of the 2.0 s ceiling.
+- **Measured (amendment):** the largest fixture had a min of 187 ms with gpxpy, about a tenth of the 2.0 s ceiling.
+  QA records the own reader's number. This step's PR has no base benchmark, so only the absolute check runs.
 - **On push to `main`:** run the head only and append to the history with the action's `external-data-json-path`,
   persisted with `actions/cache`.
   - Key `benchmark-${{ github.sha }}` with restore-keys `benchmark-`; cache keys are immutable, so each run saves
@@ -632,10 +771,11 @@ MAX_NAME_LENGTH: Final = 200
 UNTITLED_ROUTE_NAME: Final = "Untitled route"
 MIN_PLAUSIBLE_ELEV_M: Final = -1000.0     # §3.1 step 8, inclusive
 MAX_PLAUSIBLE_ELEV_M: Final = 10000.0     # §3.1 step 8, inclusive
-MAX_RAW_POINTS: Final = 100_000           # §3.12; > this → too_many_points (manager-approved)
+MAX_RAW_POINTS: Final = 100_000           # §3.12; the 100,001st point aborts the pass → too_many_points (manager-approved)
+MAX_XML_DEPTH: Final = 64                 # §3.11; an element at depth 65 (root = 1) → invalid_gpx
 PRETHIN_MAX_POINTS: Final = 2_000         # §3.5
 RDP_TIE_TOLERANCE_M: Final = 1e-6         # §3.5 split rule
-MAX_CONCURRENT_PARSES: Final = 1          # §3.10 (amended from 2)
+MAX_CONCURRENT_PARSES: Final = 1          # §3.10 (amended from 2; kept at 1 for the own reader, §3.13)
 
 @dataclass(frozen=True, slots=True)
 class ParseParams:
@@ -675,15 +815,29 @@ class RawTrack:
     metadata_name: str | None
     track_name: str | None                    # first non-blank <trk><name> (or <rte><name>), raw
 
-# app/routes/xml_guard.py
-def check_gpx_prolog(data: bytes) -> None: ...   # raises InvalidGpx (DTD/entity, malformed prolog, unsupported
-                                                 # encoding, no root, root != gpx)
-def exceeds_point_cap(data: bytes, *, max_points: int = MAX_RAW_POINTS) -> bool: ...
-    # §3.12: > max_points <trkpt/<rtept start tags (prefix-tolerant byte regex, stops at max_points + 1); pure
+# app/routes/xml_guard.py — DELETED (third amendment): check_gpx_prolog and exceeds_point_cap are folded into the pass
 
-# app/routes/parse.py — the only module that imports gpxpy
-def parse_gpx(data: bytes) -> RawTrack: ...      # raises InvalidGpx or TooManyPoints; order per §3.1 (NUL before cap)
-def drop_consecutive_duplicates(points: Sequence[RawPoint]) -> tuple[RawPoint, ...]: ...
+# app/routes/parse.py — our GPX reader on stdlib xml.parsers.expat (§3.1, §3.11, §3.12); no third-party parser
+def parse_gpx(data: bytes, *, max_points: int = MAX_RAW_POINTS) -> RawTrack: ...
+    # raises InvalidGpx or TooManyPoints only; steps and precedence per §3.1
+def drop_consecutive_duplicates(points: Sequence[RawPoint]) -> tuple[RawPoint, ...]: ...   # unchanged
+
+# private to parse.py; one _GpxReader per parse_gpx call, never shared
+class _GpxReader:
+    def __init__(self, parser: xml.parsers.expat.XMLParserType, *,
+                 max_points: int, max_depth: int = MAX_XML_DEPTH) -> None: ...
+        # registers the handlers below; keeps parser to install/remove CharacterDataHandler while capturing
+    def on_xml_decl(self, version: str | None, encoding: str | None, standalone: int) -> None: ...
+        # §3.1 step 4: declared encoding must pass _encoding_supported, else InvalidGpx
+    def on_start(self, name: str, attrs: list[str]) -> None: ...
+        # ordered_attributes: [k0, v0, k1, v1, ...]; depth cap, root check, §3.1 path table, point count / cap
+    def on_end(self, name: str) -> None: ...         # closes captures, finishes a point
+    def on_text(self, data: str) -> None: ...        # installed only while a name/ele is open
+    def result(self) -> RawTrack: ...                # §3.1 steps 6–8 (choose, merge, validate the chosen kind)
+def _reject_dtd(*_args: object) -> NoReturn: ...     # StartDoctypeDeclHandler and EntityDeclHandler → InvalidGpx
+def _encoding_supported(name: str) -> bool: ...      # pyexpat's rule: codec exists and maps 256 bytes to 256 chars
+def _parse_float(text: str | None) -> float | None: ...   # float(text.strip()); None if missing, ValueError or non-finite
+    # range checks (lat/lon → invalid point, ele → None) stay in the reader
 
 # app/routes/geo.py
 def geodesic_distance(a: RawPoint, b: RawPoint) -> float: ...                # haversine, metres, 2-D
@@ -802,7 +956,8 @@ async def parse_route(
     file: Annotated[UploadFile, File(description="GPX 1.0/1.1 file, at most 10 MB")],
     limiter: Annotated[anyio.CapacityLimiter, Depends(get_parse_limiter)],   # not in OpenAPI
 ) -> RouteSummary: ...
-    # read(MAX_UPLOAD_BYTES + 1) → 413
+    # try: data = await file.read(MAX_UPLOAD_BYTES + 1)  finally: await file.close()   (§3.10: frees the spool)
+    # > MAX_UPLOAD_BYTES → 413
     # | await anyio.to_thread.run_sync(summarise_gpx, data, file.filename, limiter=limiter)
     # RouteParseError → ApiError(422, e.code, e.message)
 
@@ -820,8 +975,8 @@ flowchart LR
     RT --> ER[errors.py ApiError + handlers]
   end
   subgraph pure [app/routes — pure]
-    SUM[summary.summarise_gpx] --> XG[xml_guard] & PG[parse.parse_gpx → RawTrack] & GEO[geo] & ELE[elevation] & SIM[simplify] & NM[naming]
-    PG --> GPXPY[(gpxpy)]
+    SUM[summary.summarise_gpx] --> PG[parse.parse_gpx → RawTrack] & GEO[geo] & ELE[elevation] & SIM[simplify] & NM[naming]
+    PG --> EXPAT[(stdlib xml.parsers.expat)]
     SUM --> PAR[params]
   end
   RT -- "to_thread.run_sync (CapacityLimiter 1)" --> SUM
@@ -857,14 +1012,48 @@ Imports point one way: `routers → routes → models`. `app/routes/*` never imp
 - **RDP binary search on ε** — rejected: about 30 full RDP runs, and it lands at "≤ 500" with an ε tolerance.
   Ranked significance gives exactly the budget in one pass.
 - **Recursive RDP** — rejected: the recursion limit on long or pathological tracks would cause a 500.
-- **Point count with a streaming expat pass** (amendment) — rejected: it is exact, but it makes a Python callback
-  per element and so roughly doubles XML cost on large files. Exactness isn't needed, because over-counting is
-  safe.
-- **Point count with `bytes.count(b"<trkpt")`** (amendment) — rejected: it misses prefixed tags, so it is only
-  correct while gpxpy stays blind to prefixes.
-- **Counting the points after `gpxpy.parse`** (amendment) — rejected: the memory and CPU are already spent.
-- **Counting only the chosen source** (amendment) — rejected: the choice needs the parse, and gpxpy builds both
-  kinds anyway.
+- **gpxpy with more guards (option B)** (third amendment) — rejected by the manager. Review round 2 found three
+  independent defects inside gpxpy:
+  - `copy.deepcopy` recursion on deep `<extensions>` kills the process (a 140 KB file);
+  - a quadratic `xmlns` regex over the whole text (200 KB → 6.5 s), plus `ET.register_namespace` leaking into a
+    process-global map;
+  - a full ElementTree plus per-element objects, so memory isn't bounded by the point cap (10 MiB of `<trk/>` →
+    649 MiB RSS).
+
+  Each guard would be a byte pre-scan re-implementing part of XML tokenising, and the tree would still be built.
+- **Merging as is (option C)** (third amendment) — rejected by the manager: one request can OOM the instance.
+- **`xml.etree.ElementTree.iterparse` / `XMLPullParser`** (third amendment) — rejected. They run expat underneath, so
+  they add no safety. They build an `Element` for every element, skipped ones included, and keep it reachable from
+  its parent unless pruned by hand.
+- **`xml.sax`** (third amendment) — rejected: a wrapper over the same expat, with per-event method dispatch and
+  tuple names. It is slower, and it gives no control we need.
+- **No namespace processing, stripping prefixes by hand** (third amendment) — rejected. A prefix isn't a namespace:
+  `<x:trkpt>` in an extension would become a point, and a default namespace redeclared on a child would be missed.
+  It would also accept unbound prefixes. Expat's namespace processing is C and costs nothing measurable.
+- **An allow-list of root namespaces (1.0, 1.1, none)** (third amendment) — rejected: gpxpy accepted any, so it
+  would be a new rejection with no safety gain.
+- **Honouring the declared encoding plus a separate UTF-8 check** (third amendment) — rejected. It needs either a
+  decoded copy or chunked decoding, and it is a second error path. Expat would also decode a lying declaration's
+  names differently from gpxpy. `encoding="UTF-8"` plus pyexpat's own acceptance rule keeps gpxpy-era behaviour,
+  and expat does the validation.
+- **Refusing every declared encoding except UTF-8** (third amendment) — rejected: ASCII files that older exporters
+  declare as ISO-8859-1 or windows-1252 parse today.
+- **pyexpat's default name interning** (third amendment) — rejected: its dictionary gains one entry per distinct
+  element or attribute name (≈ 100 MiB on 10 MiB of distinct names). It saves only one small string per event.
+- **Dict attributes (pyexpat's default)** (third amendment) — rejected for `ordered_attributes`. A flat list is
+  cheaper per attribute, and we read only `lat`/`lon`.
+- **A start-tag-size or attribute-count cap** (third amendment) — not adopted. It would be a new product limit, and
+  one parse at a time keeps the estimated worst case (≈ 250 MiB, §3.13) inside the instance. It is the first
+  escalation option if QA's measurement exceeds 300 MiB.
+- **Parsing straight from the `UploadFile` spool, without `bytes`** (third amendment) — deferred. It would save
+  another 10 MiB per waiting request, but it breaks the pure `bytes →` seam that the tests, the fuzz test and the
+  benchmark use (Follow-ups).
+- **A byte-scan point cap (`exceeds_point_cap`)** (first and second amendments) — retired (third amendment). It
+  existed because gpxpy built everything before any count was known. The pass now counts exactly and stops itself.
+  The older rejections of `bytes.count`, of counting after `gpxpy.parse`, and of a separate streaming count were
+  all relative to gpxpy, and lapse with it.
+- **Counting only the chosen source** (amendment) — still rejected: the choice is known only at the end of the
+  pass, and rte points, which come first in schema order, are stored until then.
 - **Index-stride-only or distance-stride-only pre-thinning** (amendment) — rejected: index-only drops sparse
   stretches inside dense recordings, and distance-only can't guarantee ≥ 500 candidates.
 - **Radial-distance pre-filter** (amendment) — rejected: a second projected-distance pass, and like the
@@ -878,19 +1067,19 @@ Imports point one way: `routers → routes → models`. `app/routes/*` never imp
   which breaks `TestClient`'s per-request loops (§3.10).
 - **Rejecting with 503 when the slot is busy** (amendment) — rejected: it adds a new error state for clients and
   UX, while waiting fits inside Cloud Run's timeout.
-- **`MAX_CONCURRENT_PARSES = 2`** (second amendment) — rejected: the measured worst single parse is about 300 MiB,
-  so two don't fit in 512 MiB.
-- **An element-count cap** (count every start tag in the byte scan, reject above about 1M) (second amendment) —
-  rejected as not needed: one parse at a time already keeps the measured worst case (296 MiB) inside the instance,
-  and the cap would be a new product limit.
-- **Detecting and decoding UTF-16 so the point cap can scan it** (second amendment) — rejected: the contract is
-  UTF-8 only (Consequences), and rejecting NUL is one C-speed `in` test.
+- **`MAX_CONCURRENT_PARSES = 2`** (second amendment; re-checked in the third) — rejected. The estimated worst
+  single parse on the own reader is ≈ 250 MiB (§3.13), so two don't fit, and on 1 vCPU, under the GIL, a second
+  slot adds no throughput.
+- **An element-count cap** (second amendment) — still rejected as not needed: the own reader keeps nothing per
+  skipped element (§3.13), and the cap would be a new product limit.
+- **Accepting UTF-16 now that the cap no longer scans bytes** (third amendment) — rejected: the contract is UTF-8
+  only (Consequences), and rejecting NUL is one C-speed `in` test.
 - **Simplifying inputs of ≤ 500 points** — rejected: nothing gained under the cap.
 - **Size check via a dependency, app-wide middleware, or reading the raw `Request`** — rejected: §3.10.
 - **Reading the whole body and then checking its length** — rejected: unbounded memory on an in-memory filesystem.
 - **defusedxml** — rejected: §3.11.
 - **Trusting expat versions alone** — rejected: the Docker image's expat comes from Debian, not from us, and the
-  guard is cheap.
+  DTD and depth handlers are cheap.
 - **`code: str` in `ErrorResponse`** — rejected: a typed union gives exhaustiveness checks in TypeScript. Forward
   compatibility comes from the "unknown code ⇒ generic error" client rule.
 - **FastAPI's default `{"detail": …}` errors** — rejected: three shapes for clients to parse, and no stable codes.
@@ -912,12 +1101,13 @@ Imports point one way: `routers → routes → models`. `app/routes/*` never imp
 - **Easier:**
   - One pure entry point, `summarise_gpx`, is what endpoint tests, property tests, the fuzz test and the benchmark
     all hit.
-  - gpxpy is confined to one module, so replacing it later (e.g. with a streaming ElementTree parser for speed)
-    touches only `parse.py`.
+  - The GPX reader is one module, `parse.py`, with no third-party code. It is a single pass with explicit,
+    testable bounds (points, depth) and no process-global state. Its public surface (`parse_gpx`, `RawTrack`) is
+    what gpxpy's wrapper had, so the stages above it did not change.
   - Every error the API returns has one shape and a stable code, and the client generated for 1.10/Expo is fully
     typed, errors included.
   - The gain method is density-independent and exactly reversal-symmetric, and its parameters are in metres.
-  - XML attack surface: no DTDs, whatever expat or parser is present.
+  - XML attack surface: no DTDs and no deep nesting, whatever expat version is present.
   - The benchmark gate is robust to runner variance, and it needs no manager console work.
 - **Harder later:**
   - **Gain defaults are tuned on 3 AllTrails DEM routes in the low hills of central Israel.** When the Komoot,
@@ -926,8 +1116,20 @@ Imports point one way: `routers → routes → models`. `app/routes/*` never imp
     (§3.4 escalation options).
   - **A file with one missing or implausible `<ele>` loses its whole profile** until 1.3 supplies elevation. 1.3's
     backfill must handle both cases. It may revisit this, for example by filling short gaps.
+  - **We own a GPX reader** (third amendment). It is a deviation from the roadmap's "Parse with gpxpy", approved by
+    the manager.
+    - Any GPX feature beyond today's table is ours to add, each as a new path in the §3.1 table plus a test.
+      Examples: `<time>` for a later duration estimate, waypoints, `<extensions>` heart rate.
+    - Bugs are ours too; the fuzz test and the hostile-shape measurements are the safety net.
+  - **Behaviour that differs from gpxpy** (third amendment):
+    - prefixed GPX documents now yield their points;
+    - an unparseable coordinate in the *unchosen* source no longer rejects the file;
+    - a document nested deeper than 64 is refused (no real file is);
+    - a malformation placed before the 100,001st point wins over `too_many_points`;
+    - `trkpt` tags inside comments or extensions no longer count toward the cap.
   - **UTF-8 only.** A GPX file declared in Latin-1 with non-ASCII bytes, or saved as UTF-16 (with or without a
-    BOM), gets `invalid_gpx`. Supporting UTF-16 later means decoding before the point cap, which costs a copy.
+    BOM), gets `invalid_gpx`. Supporting UTF-16 later means replacing the NUL rule with a UTF-16 decode. The cap no
+    longer depends on it.
   - **Disjoint multi-segment files** (e.g. two days with a car shuttle between them) get a straight-line jump added
     to their distance.
   - **Changing the 500-point cap** changes the OpenAPI (`maxItems`), which is a visible contract diff, as intended.
@@ -945,9 +1147,15 @@ Imports point one way: `routers → routes → models`. `app/routes/*` never imp
   - **Parses run one at a time per instance.** Throughput on one instance is bounded by design, and a small file
     can wait behind a large one. Scaling means more instances (ADR 0002/0003, a cost decision), not a bigger
     limiter. Raising the upload size or the point cap means re-measuring the per-parse peak first.
-  - **Hostile worst case is now bounded:** at most 100k points through gpxpy, O(n) statistics and thinning, and
-    O(2000²) RDP. That is seconds, not hours (2.8–3.5 s measured). Element counts are not capped. Memory is bounded
-    by running one parse at a time (296 MiB measured), not by a limit on the file.
+  - **Hostile worst case is now bounded** (third amendment).
+    - At most 100k points are stored, depth is ≤ 64, time is O(bytes), statistics and thinning are O(n), and RDP
+      is O(2000²).
+    - Memory is O(points) in Python. Expat's name tables and its largest-element arrays are bounded by bytes, not
+      by points: ≈ 250 MiB estimated worst (§3.13). Running one parse at a time keeps that inside the instance.
+    - Element and attribute counts are not capped. If the measurement disproves the estimate, capping them is the
+      escalation.
+    - Waiting uploads are bounded only by Cloud Run's `--concurrency` (§3.10). At today's 80, a flood of 10 MB
+      uploads can still OOM the instance.
 
 ## How it is tested
 All tests run with no network (`--disable-socket`). QA writes the acceptance, property, endpoint, fuzz and benchmark
@@ -999,38 +1207,55 @@ tests red-first in `tests/routes/`. Backend adds unit tests for internals it int
     - L = 0 doesn't raise;
     - `ValueError` when `2·min_points > max_points` or |forced| > `min_points`;
     - small parameters (e.g. min 3, max 10) are table-tested by hand.
-  - **`exceeds_point_cap`** (small `max_points`, e.g. 3, plus one test at the real 100,000):
-    - exactly `max_points` tags → `False`; one more → `True`;
-    - `<trkpt>`, `<trkpt/>`, `<trkpt lat=…>`, a newline after the name, `<gpx:trkpt …>` and `<rtept` all count;
-      `trk` and `rte` tags count together;
-    - `</trkpt>`, `<trkptx>`, `<TRKPT` and `<trkseg` don't count;
-    - tags inside a comment do count (pinned as the documented over-count);
-    - **linear:** 10 MiB of `<` + `a`·k runs and 10 MiB of `<gpx:trkpt/>` each finish quickly. Use a generous
-      wall bound (e.g. < 1 s) or `pytest-benchmark` in disabled mode; never a tight timing assert.
   - **`route_name`:** metadata → track → `C:\x\My_Hike.GPX` gives "My Hike" → `None` gives "Untitled route";
     whitespace-only names skipped; control characters stripped; the 200 code-point cut; Hebrew names kept.
-  - **`check_gpx_prolog`:**
+  - **`parse_gpx`, XML safety** (rewritten in the third amendment; these replace the `check_gpx_prolog` tests):
     - billion-laughs document, XXE (`SYSTEM "file:///…"` pointing at a temp file whose content must not appear in
       any output), external DTD reference, internal subset → `InvalidGpx`;
-    - KML root → `InvalidGpx`; GPX 1.0, 1.1 and no-namespace roots pass;
+    - KML root, `<GPX/>`, and `<a><gpx/></a>` → `InvalidGpx`; GPX 1.0, 1.1, no-namespace and prefixed (`<g:gpx>`)
+      roots pass;
     - a UTF-8 BOM passes;
-    - a declared `encoding="x-unknown"` (`LookupError`), `"utf-32"` and `"shift_jis"` (`ValueError`) →
-      `InvalidGpx`, and the same files through HTTP → 422 `invalid_gpx`;
+    - declared `encoding=` `"x-unknown"`, `""`, `"utf-32"`, `"utf-16"`, `"utf-7"`, `"shift_jis"` or `"big5"` →
+      `InvalidGpx`, and the same files through HTTP → 422 `invalid_gpx`. `"utf-8"` in any case passes, and
+      `"iso-8859-1"`, `"us-ascii"` or `"windows-1252"` on ASCII content pass;
+    - **depth:** a document whose deepest element is at depth 64 parses; depth 65 → `InvalidGpx`. That includes
+      65 levels of `<extensions>` inside a `trkpt`, and the round-2 140 KB file through HTTP (422, process alive);
+    - **no global state:** parsing a file with `xmlns:foo` declarations leaves
+      `xml.etree.ElementTree._namespace_map` unchanged;
+    - **gpxpy is gone:** `importlib.util.find_spec("gpxpy") is None`, and an AST check that `app/routes/parse.py`
+      imports only stdlib and `app.*`;
     - `pyexpat.EXPAT_VERSION ≥ 2.6.0`.
-  - **`parse_gpx`:**
-    - `trk` preferred over `rte`; `rte` fallback;
-    - multiple tracks and segments merged in order;
-    - lat 91, lon NaN or missing lat → `InvalidGpx`;
-    - `<ele>nan</ele>` → `None`; non-UTF-8 bytes → `InvalidGpx`;
+  - **`parse_gpx`, reading:**
+    - `trk` preferred over `rte`, including when `<rte>` comes first in the document (schema order); `rte`
+      fallback; multiple tracks and segments merged in order;
+    - lat 91, lon NaN or missing lat in the chosen source → `InvalidGpx`; `lat="x"` or `lat="95"` in the
+      *unchosen* source → accepted;
+    - **namespaces:** a prefixed document (`<g:gpx xmlns:g=…><g:trk><g:trkseg><g:trkpt …>`) yields its points;
+      `<trk xmlns="urn:other">` under a 1.1 root is skipped; an unbound prefix → `InvalidGpx`;
+    - **structure:** `trkpt` inside `<extensions>`, `<wpt>`, a comment or CDATA is not a point; a `<trkpt>`
+      directly under `<trk>` is not a point; `<ele>` inside a point's `<extensions>` is ignored;
+    - **names:** GPX 1.0 `<gpx><name>` → `metadata_name`; CDATA names, `&amp;` and `&#x5D0;` decoded; a child
+      element's text inside `<name>` excluded; whitespace kept raw (`route_name` normalises it);
+    - **`<ele>`:** `"  12.5\n "` → 12.5; `<![CDATA[12]]>` → 12.0; empty, `"high"` or `nan` → `None`; of two
+      `<ele>`s the first wins;
     - **elevation bounds:** −1000 and 10000 are kept, while −1000.001, 10000.001, 1e308, `inf` and `-inf` →
       `None`; through `summarise_gpx`, one such point gives `has_elevation` false and every `elev_m` null;
-    - **cap before gpxpy:** a 100,001-point file raises `TooManyPoints` with `gpxpy.parse` monkeypatched to fail
-      the test if called; a 100,000-point file parses;
-    - **precedence:** a DOCTYPE plus 100,001 tags → `InvalidGpx`; 100,001 tags plus a non-UTF-8 byte →
-      `TooManyPoints`; 100,001 tags plus a NUL → `InvalidGpx`;
-    - **NUL:** any `\x00` → `InvalidGpx` without calling gpxpy. This includes a BOM-less UTF-16 file of more
-      than 100,000 points, which must not reach gpxpy;
+    - **UTF-8 (pins expat's validation):** each of these → `InvalidGpx`: `\xff` in a name, in a comment, in CDATA,
+      in an attribute value and after the root; overlong `\xc0\xaf`; surrogate `\xed\xa0\x80`; `\xf4\x90\x80\x80`
+      (above U+10FFFF); a sequence truncated at EOF; Latin-1 bytes declared `iso-8859-1`. If any of these passes,
+      backend adds a strict decoder check (it is then testable) and tells the architect;
+    - **NUL:** any `\x00` → `InvalidGpx`. This includes a BOM-less UTF-16 file of more than 100,000 points;
     - waypoint-only → empty points (and then `too_few_points` from the pipeline).
+  - **`parse_gpx`, point cap** (`max_points=3` for the tables, plus the real 100,000):
+    - exactly `max_points` points → parses; one more → `TooManyPoints`; trk and rte points count together
+      (50,001 + 50,000 at the real cap);
+    - `<trkpt>`, `<trkpt/>`, attributes on a new line or after a tab, and prefixed points in N all count;
+    - **abort:** 100,001 points followed by a malformed tail, or by `\xff` → `TooManyPoints` (proof that the pass
+      stopped); `\xff` *before* the 100,001st point → `InvalidGpx` (document order);
+    - **precedence:** DOCTYPE, unsupported declared encoding or a wrong root, each before 100,001 points →
+      `InvalidGpx`; 100,001 points plus a NUL anywhere → `InvalidGpx`.
+  - **Retention does not scale with skipped elements** (CI, cheap): for each of `<trk/>`, `<wpt …/>`,
+    `<trkseg/>` and `<a/>`, the `tracemalloc` peak of `parse_gpx` on 4 MiB is within 1 MiB of the peak on 1 MiB.
   - **`ParseParams`:** invalid values raise, including `prethin_max_points < 2·max_points`.
 - **Fixture acceptance (parametrised with `tests.fixtures.loader`):**
   - **Distance:** within 2 % on every `valid_fixtures()`.
@@ -1053,7 +1278,8 @@ tests red-first in `tests/routes/`. Backend adds unit tests for internals it int
   - The strategy draws 2–200 points: a start point anywhere, including near ±89.9° and the antimeridian, then
     steps of 0–500 m on random bearings, with random duplicates, finite elevations from −400 to 8 848 m, and
     optional missing `<ele>`.
-  - The tracks are written to GPX by a test helper (gpxpy can write GPX) as `trk`, `rte` or multi-segment.
+  - The tracks are written to GPX by the test helper `tests/routes/gpx_builders.py` (no gpxpy) as `trk`, `rte` or
+    multi-segment.
   - **Sign:** `distance_m ≥ 0`, `gain_m ≥ 0`, `loss_m ≥ 0` (or `None` without elevation).
   - **Reversal:** the reversed track has the same distance (rel 1e-9), and gain and loss swap (abs 1e-6 m). At the
     unit level, `gain_loss(reversed(y)) == (loss, gain)` **exactly**, for arbitrary finite floats and T ≥ 0.
@@ -1076,7 +1302,10 @@ tests red-first in `tests/routes/`. Backend adds unit tests for internals it int
     `app.routers.routes.summarise_gpx` with a stub that records how many calls are in flight and blocks on a
     `threading.Event`. Fire 4 requests, then assert that exactly `MAX_CONCURRENT_PARSES` (1) is in flight while
     the others wait. Release the event, and all 4 must return 200. Also, a fresh `create_app()` has its own limiter (no state leaks
-    between apps);
+    between apps), and a test pins `MAX_CONCURRENT_PARSES == 1` (review round 2 should-fix);
+  - **upload closed before the parse** (third amendment): the patched `summarise_gpx` stub asserts that the
+    request's `UploadFile` is already closed when it runs. One way is to spy on `UploadFile.close` and record the
+    call order. A 413 from layer 3 also closes it;
   - 422 `validation_error` with a missing `file` field, with `detail[0].loc == ["body", "file"]` and no `input` key;
   - **Size limits:**
     - 413 `file_too_large` for an 11 MB file (`Content-Length` path);
@@ -1100,15 +1329,21 @@ tests red-first in `tests/routes/`. Backend adds unit tests for internals it int
   a correctness test.
 - **Checkpoint (QA, recorded in `PROGRESS.md`):** the per-fixture table; `TestClient` timing of the > 10k fixture;
   the post-merge timing against the deployed URL (curl/httpx, outside unit tests); fuzz runs with 0 × 500.
-- **Hostile-input measurements (QA verify, recorded in `PROGRESS.md`, not CI gates).** Each case below records the
-  `tracemalloc` peak and the wall time of `summarise_gpx`. Results on the amended code:
-  1. a 100,000-point real-shaped file (`ele` + `time`): 127 MiB;
-  2. a 100,000-point zigzag, the RDP worst case: 2.8–3.5 s end to end, mostly in gpxpy (raw RDP before thinning:
-     1.6 / 6.3 / 27 s at 2k / 4k / 8k points);
-  3. a 10 MiB file of `<trkseg/>`: 296 MiB; a 10 MiB file of unknown empty elements (`<a/>`) inside one `<trk>`:
-     238 MiB. Together these set `MAX_CONCURRENT_PARSES = 1` (§3.10).
+- **Hostile-input measurements (QA verify, recorded in `PROGRESS.md`, not CI gates).** Rewritten in the third
+  amendment. Measure every row of the §3.13 table. For each, record three things:
+  - the `tracemalloc` peak of `summarise_gpx`, with tracing started *after* the input bytes are built. Expat
+    allocates through `PyObject_Malloc`, so its tables are included;
+  - the wall time;
+  - the RSS high-water of a fresh subprocess (`resource.getrusage(RUSAGE_SELF).ru_maxrss`, Linux) minus that
+    subprocess's RSS before parsing.
 
-  Re-run these whenever the upload size, the point cap, the parser or `MAX_CONCURRENT_PARSES` changes.
+  Also record the idle RSS of the app container (B in §3.10), from `docker stats` locally or Cloud Run's memory
+  metric. Any row above its §3.13 bound → stop and report to the tech lead (escalation options in §3.13); do not
+  tune the code to the measurement. gpxpy-era results, for comparison: real-shaped 100k 127 MiB; zigzag 100k
+  2.8–3.5 s; `<trkseg/>` 296 MiB; `<a/>` 238 MiB; `<trk/>` 649 MiB RSS; `<wpt>` 394 MiB RSS.
+
+  Re-run these whenever the upload size, the point cap, the depth cap, the parser or `MAX_CONCURRENT_PARSES`
+  changes.
 - **No e2e in 1.2:** there is no screen. 1.10 adds the UI path.
 
 ## Manager decisions needed
@@ -1121,8 +1356,18 @@ tests red-first in `tests/routes/`. Backend adds unit tests for internals it int
 4. *(Amendment, done.)* `too_many_points` above 100,000 raw points was approved on 2026-10-19.
 5. *(Amendment, for the tech lead to confirm.)* Declaring `anyio` explicitly in `pyproject` adds no new package to
    the lock (§4).
-6. *(Second amendment, open; the tech lead has asked.)* Lower Cloud Run `--concurrency` from 80 to 8. See
-   Follow-ups for both outcomes. The element-count cap is **not** a decision any more (rejected, §3.10).
+6. *(Open; the third amendment adds the numbers.)* **Lower Cloud Run `--concurrency` from 80 to 8.** The upload
+   is closed after `read()` either way.
+   - With the close, 8 fits 512 MiB with ≈ 31 MiB to spare against the estimated hostile worst case. 80 cannot fit
+     at all (≈ 1.2 GiB).
+   - 4 fits even without the close (§3.10 table).
+   - Cost: above 8 simultaneous requests on the single instance, Cloud Run may answer 429 itself.
+   - Recommended: **8**. See Follow-ups for the not-lowered outcome. The element-count cap is **not** a decision
+     (rejected, §3.10).
+7. *(Done 2026-10-19, third amendment.)* **Option A: replace gpxpy with our own expat reader**, a roadmap deviation
+   recorded in the brief. No new dependency results, and one is removed.
+8. *(Third amendment, for the tech lead to confirm with the manager, or not.)* The **depth cap of 64** (§3.11) is a
+   malformed-input rule under `invalid_gpx` that refuses no real file. I do not count it as a product limit.
 
 Conditional, and not triggered: escalation was needed **only if** no parameter point in §3.4's grid met 10 % on
 every fixture. 23 points did (§3.4).
@@ -1131,7 +1376,8 @@ every fixture. 23 points did (§3.4).
 - **CORS:** `create_app` allows only `GET, OPTIONS`. The 1.10 web upload needs `POST` in `allow_methods`; add it
   with 1.10, or in 1.2 if the tech lead prefers, since the checkpoint's deployed timing uses curl and needs no CORS.
 - **Docker image expat:** `python:3.12-slim` builds against Debian's system expat. Devops could add a build-time
-  `python -c "import pyexpat; print(pyexpat.EXPAT_VERSION)"` check. The DTD guard makes this defence-in-depth only.
+  `python -c "import pyexpat; print(pyexpat.EXPAT_VERSION)"` check. The DTD handler makes this defence-in-depth
+  only. Expat is now the whole parser, so it matters more than it did.
 - **1.3: give the elevation lookup a seam.** Split `summarise_gpx` into three stages:
   1. `parse_gpx(data) → RawTrack`, which is pure;
   2. at the I/O edge (router or service), detect when elevation is missing **or implausible** (§3.1 step 8) and
@@ -1141,19 +1387,26 @@ every fixture. 23 points did (§3.4).
 
   `summarise_gpx` then stays as a thin pure composition of 1 and 3, so the benchmark target doesn't move. This
   belongs to 1.3's ADR, not to this amendment.
-- **Open: memory held by waiting requests (Cloud Run `--concurrency`).** This is not decided by this ADR. The
-  parse limiter bounds parse memory, not buffered uploads. At `--concurrency=80`, about 80 requests can each hold
-  a 10 MiB upload, spooled to the in-memory "disk", plus the bytes read from it. That is far beyond 512 MiB before
-  any parse runs. The tech lead has asked the manager to lower it to 8. The two outcomes:
-  - **Lowered in 1.2.** Devops sets `--concurrency=8` in `deploy-api.yml`, and the brief records it. The
-    worst-case wait drops to about 28 s (§3.10). Check the arithmetic: 8 × (about 10 MiB spool + 10 MiB bytes),
-    plus one parse of about 300 MiB, plus the baseline, is close to 512 MiB. Closing the upload right after
-    `file.read` would roughly halve each request's share. That is a backend change, unmeasured so far; weigh it
-    if a concurrent-upload measurement shows the margin is thin.
+- **Open: memory held by waiting requests (Cloud Run `--concurrency`).** The arithmetic is in §3.10, and the
+  decision is the manager's (Manager decisions 6). The two outcomes:
+  - **Lowered in 1.2.** Devops sets `--concurrency=8` in `deploy-api.yml`, and the brief records it. The worst-case
+    wait drops to about 28 s. With the close after `read()`, the estimated worst case is 481 of 512 MiB. QA's
+    measured B and P_max replace the estimates. If they leave less than about 20 MiB spare, the answer is 4.
   - **Not lowered in 1.2.** It becomes a hardening follow-up before public launch: lower the concurrency, or add
     the rate limiting ADR 0003 already flags before Phase 3. Until then, 1.2's memory bound covers parses only, and
     a flood of large uploads can still OOM the instance. Cloud Run restarts it, and the client sees 5xx from the
     platform.
+- **429 from the platform (1.10 UX):** at a lowered concurrency, Cloud Run can answer 429 "no available instance"
+  with no `ErrorResponse` body. The web client should treat it as a generic "busy, try again" error, by status.
+- **expat ≥ 2.7.2 allocation tracker:** expat 2.7.2 (CVE-2025-59375) can cap its own allocations relative to the
+  input. Its default (64 MiB activation, ×100) is too loose to matter at 10 MiB. Once the image's expat is ≥ 2.7.2
+  and CPython exposes `SetAllocTrackerMaximumAmplification` on our 3.12 build, setting it tighter would bound
+  §3.13's expat tables directly. It is version-dependent, so not now.
+- **Parse from the upload spool:** streaming the `UploadFile` into expat would drop the 10 MiB `bytes` per waiting
+  request. It needs a `summarise_gpx` variant over a binary reader, and a re-think of the NUL scan. Revisit only if
+  upload memory, not parse memory, becomes the limit.
+- **Benchmark history:** the first `main` run after this merge records the own reader. The gpxpy-era 187 ms stays
+  in this ADR as context only.
 - **UX copy (1.10):** `too_many_points` needs a user-facing string, for example "This file has too many points
   (more than 100,000)". It falls under the unknown-code rule until then.
 - **Payload size:** about 500 × 4 unrounded floats ≈ 50 KB of JSON. Consider rounding at the edge (lat/lon 6 dp,
@@ -1163,7 +1416,36 @@ every fixture. 23 points did (§3.4).
 - **Re-tune gain** when the deferred Komoot/Strava/watch fixtures land (see "Harder later").
 
 ## References
-- gpxpy source, `gpxpy/parser.py`:
+- **Third amendment (own reader):**
+  - pyexpat docs: `ParserCreate(encoding=…)` "will override the implicit or explicit encoding of the document";
+    `namespace_separator` gives `uri<sep>local` names; `buffer_text` and `buffer_size`; `CharacterDataHandler` also
+    receives CDATA content; `XmlDeclHandler(version, encoding, standalone)`; reparse deferral since expat 2.6.0.
+    https://docs.python.org/3.12/library/pyexpat.html
+  - CPython 3.12 `Modules/pyexpat.c`, read for exact behaviour:
+    - expat allocates through `PyObject_Malloc`/`PyObject_Realloc`/`PyObject_Free` (`ExpatMemoryHandler`), so
+      `tracemalloc` sees it;
+    - `Parse` takes any buffer without copying and feeds expat in `MAX_CHUNK_SIZE` (1 MiB) slices;
+    - an exception in a handler calls `XML_StopParser` and propagates;
+    - setting `CharacterDataHandler` flushes the text buffer first;
+    - `intern=None` disables name interning;
+    - the attribute container is built for every start tag (a list with `ordered_attributes`);
+    - the unknown-encoding handler refuses codecs that don't decode 256 bytes to 256 characters ("multi-byte
+      encodings are not supported").
+
+    https://github.com/python/cpython/blob/3.12/Modules/pyexpat.c
+  - Cloud Run concurrency: the default is 80 per vCPU, the maximum 1,000, and "We recommend starting with a lower
+    concurrency like 8"; concurrency 1 when each request uses most of the memory.
+    https://docs.cloud.google.com/run/docs/about-concurrency
+  - Cloud Run max instances: at the limit, a revision returns "No available container instances" (429).
+    https://docs.cloud.google.com/run/docs/configuring/max-instances
+  - Expat 2.7.2 (2025-09-16), CVE-2025-59375, "Disallow use of disproportional amounts of dynamic memory": activation
+    threshold 64 MiB, maximum amplification 100; CPython backports `SetAllocTrackerActivationThreshold` and
+    `SetAllocTrackerMaximumAmplification` (e.g. python/cpython#139532, 3.10).
+    https://kernelsources.org/source/xref/freebsd/contrib/expat/Changes , https://github.com/python/cpython/pull/139532
+  - Expat internals behind the §3.13 estimates (per-open-element `TAG` records, the per-distinct-name
+    `elementTypes`/`attributeIds`/`prefixes` tables, the per-element `m_atts` array): libexpat `lib/xmlparse.c`.
+    https://github.com/libexpat/libexpat/blob/master/expat/lib/xmlparse.c
+- gpxpy source, `gpxpy/parser.py` (context for why it was used, then removed):
   - it uses lxml if importable, else `xml.etree` (c)ElementTree;
   - bytes are decoded with `.decode()`; XML errors → `GPXXMLSyntaxException`; there is no root-name check;
   - it builds the whole tree with `mod_etree.XML(self.xml)` and strips only the first default `xmlns`.

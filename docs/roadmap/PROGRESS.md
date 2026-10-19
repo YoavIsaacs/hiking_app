@@ -15,18 +15,15 @@ The tech lead keeps this file true. A step moves to Done only with checkpoint ev
 ## Current state (handoff for a fresh session)
 Read this, then `docs/steps/<current step>.md`. Nothing here lives only in chat.
 
-- **Current step:** 1.1 GPX test corpus — **not started**; branch `step/1.1-gpx-test-corpus` exists (pushed, no PR),
-  merged up to `main` @ 17e3ff3 and carrying the 0.6 close-out commits (this file, `docs/steps/0.6.md`) — they reach
-  `main` with the 1.1 PR. Phase 0 complete; `v0.1.0` released (tag `v0.1.0`, `CHANGELOG.md`).
+- **Current step:** 1.1 GPX test corpus — **PR stage, partial corpus by manager deviation** (brief `docs/steps/1.1.md`).
+  Branch `step/1.1-gpx-test-corpus` also carries the 0.6 close-out commits. Phase 0 complete; `v0.1.0` released.
   **Next session starts here:**
-  1. `git switch step/1.1-gpx-test-corpus && git pull --ff-only && git merge origin/main` (if `main` moved).
-  2. Manager already agreed to start 1.1 (2026-10-19). Step loop 2 — write `docs/steps/1.1.md` from
-     `docs/roadmap/phase-1.md` § 1.1 + `overview.md` 1.1 (Tests/CI/Checkpoint verbatim). Expected team: `qa` (fixtures)
-     + `backend-expert` only if the step needs code; no designers (no screens).
-  3. **Asked of the manager, not yet answered:** GPX exports from hikes he has done, ideally from several apps
-     (Strava, Komoot, Garmin, AllTrails…); the Phase 1 exit checkpoint uses 3 of his real hikes. Ask again in the brief's
-     Manager actions. Public-repo note: real GPX files reveal locations (home/trailheads) — confirm he's fine committing
-     them, or trim start/end points.
+  1. Check the 1.1 PR (`gh pr list`, `gh pr checks`); after the manager merges, close per the step loop: record 1.1 as
+     **partial** (9/10 files, 6/7 edge cases — no out-and-back, 1/4 sources) with evidence; the step stays open.
+  2. **Owed by the manager (deferred, 2026-10-19):** Komoot out-and-back, Strava recording, own watch/phone recording
+     (+ each app's distance and gain) into `docs/maps/` (uncommitted). Then QA adds them, removes `out_and_back` from
+     `DEFERRED_BY_MANAGER` in `api/tests/fixtures/test_gpx_corpus.py`, and 1.1 can close.
+  3. Next step: 1.2 GPX parser (can start before 1.1 closes — read the brief's "Follow-ups for 1.2").
   - Dependabot #24 (actions minor) and #26 (`setup-uv` 7.6 → 10.3; changelog checked: no impact — we set
     `enable-cache: true` explicitly, no `.tool-versions`) merged 2026-10-19; post-merge Deploy API 69 s green, live
     `git_sha` 17e3ff3. No open PRs.

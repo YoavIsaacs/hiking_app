@@ -1,8 +1,12 @@
 """The three upload-size layers (ADR 0004 3.10): Content-Length pre-check,
 streaming cap, exact file length. All before any GPX parsing."""
 
+import httpx
+import pytest
 from fastapi.testclient import TestClient
 
+from app.config import Settings
+from app.main import create_app
 from app.routes.params import MAX_UPLOAD_BYTES, MULTIPART_OVERHEAD_BYTES
 from tests.routes.gpx_builders import gpx_bytes, out_and_back
 from tests.routes.http_helpers import (
@@ -143,3 +147,89 @@ def test_the_cap_applies_to_the_whole_body_not_just_one_part(
 def test_streamed_multipart_helper_totals_the_requested_size() -> None:
     total = sum(len(c) for c in streamed_multipart(3 * MIB, chunk=MIB))
     assert total == len(multipart_head()) + 3 * MIB + len(multipart_tail())
+
+
+# --- malformed Content-Length headers: never a 500 (reviewer round 1, body_limit.py) --
+
+HEADER_VALUES_THAT_BREAK_INT = [
+    pytest.param("9" * 5000, id="5000-digits"),
+    pytest.param("1" + "0" * 4300, id="4301-digits"),
+    pytest.param("9" * 4301, id="4301-nines"),
+    pytest.param("\u00b2", id="superscript-two"),
+    pytest.param("\u00b3\u00b9", id="superscript-three-one"),
+    pytest.param("\u00b9" * 5000, id="superscript-5000"),
+]
+HEADER_VALUES_THAT_ARE_NOT_NUMBERS = [
+    pytest.param("", id="empty"),
+    pytest.param("-1", id="negative"),
+    pytest.param("abc", id="letters"),
+    pytest.param("1.5", id="decimal"),
+    pytest.param("1e9", id="exponent"),
+    pytest.param("0x10", id="hex"),
+    pytest.param("12 34", id="inner-space"),
+    pytest.param("+5", id="plus-sign"),
+]
+
+
+@pytest.fixture
+def tolerant_client(settings: Settings) -> TestClient:
+    """A 500 comes back as a response (and fails the assertion), not as a raise."""
+    return TestClient(create_app(settings), raise_server_exceptions=False)
+
+
+def _post_with_length(client: TestClient, value: str) -> httpx.Response:
+    response: httpx.Response = client.post(
+        URL,
+        content=multipart_head() + VALID + multipart_tail(),
+        headers={
+            "content-type": multipart_content_type(),
+            "content-length": value,
+        },
+    )
+    return response
+
+
+@pytest.mark.parametrize("value", HEADER_VALUES_THAT_BREAK_INT)
+def test_a_content_length_that_int_cannot_parse_is_an_error_response_not_a_500(
+    tolerant_client: TestClient, value: str
+) -> None:
+    response = _post_with_length(tolerant_client, value)
+    assert response.status_code in {400, 413}, response.text
+    expected = "file_too_large" if response.status_code == 413 else "bad_request"
+    assert_error(response, response.status_code, expected)
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        pytest.param("9" * 5000, id="5000-nines"),
+        pytest.param("1" + "0" * 4300, id="1-then-4300-zeros"),
+    ],
+)
+def test_a_huge_all_ascii_digit_content_length_is_413_it_is_over_the_limit(
+    tolerant_client: TestClient, value: str
+) -> None:
+    assert_error(_post_with_length(tolerant_client, value), 413, "file_too_large")
+
+
+@pytest.mark.parametrize("value", HEADER_VALUES_THAT_ARE_NOT_NUMBERS)
+def test_a_non_numeric_content_length_never_causes_a_500(
+    tolerant_client: TestClient, value: str
+) -> None:
+    response = _post_with_length(tolerant_client, value)
+    assert response.status_code in {200, 400, 413}, response.text
+    if response.status_code != 200:
+        assert set(response.json()) == {"code", "message", "detail"}
+
+
+def test_a_malformed_content_length_does_not_disable_the_streaming_cap(
+    tolerant_client: TestClient,
+) -> None:
+    """Whatever the header says, a 12 MiB body is still refused by layer 2."""
+    body = multipart_head() + b" " * (12 * MIB) + multipart_tail()
+    response = tolerant_client.post(
+        URL,
+        content=body,
+        headers={"content-type": multipart_content_type(), "content-length": "\u00b2"},
+    )
+    assert response.status_code in {400, 413}, response.text

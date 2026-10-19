@@ -94,3 +94,15 @@ def test_elevation_source_and_source_format_enums(spec: Schema) -> None:
     props = spec["components"]["schemas"]["RouteSummary"]["properties"]
     assert set(props["elevation_source"]["enum"]) == {"file", "lookup", "none"}
     assert set(props["source_format"]["enum"]) == {"trk", "rte"}
+
+
+def test_the_parse_limiter_dependency_is_not_an_openapi_parameter(spec: Schema) -> None:
+    """``limiter`` is injected by ``Depends(get_parse_limiter)``: it must not leak into
+    the contract, or the generated client would require callers to send it."""
+    operation = spec["paths"]["/v1/routes/parse"]["post"]
+    assert operation.get("parameters", []) == []
+    assert "limiter" not in str(operation).lower()
+    ref = operation["requestBody"]["content"]["multipart/form-data"]["schema"]["$ref"]
+    body = spec["components"]["schemas"][ref.rsplit("/", 1)[-1]]
+    assert set(body["properties"]) == {"file"}
+    assert "CapacityLimiter" not in str(spec)

@@ -6,6 +6,8 @@
 #   bench.sh seed  <bench.json> <out.json> <sha>    write a github-action-benchmark data file whose only
 #                                                   entry is <bench.json> recorded under commit <sha>
 #   bench.sh check <bench.json> <limit-seconds>     fail if any min >= limit (the absolute ceiling)
+#   bench.sh names <base.json> <head.json>          fail unless both files hold the same, non-empty set of
+#                                                   benchmark names (the action skips unmatched names silently)
 #   bench.sh ratio <base.json> <head.json>          print base/head min and head/base (log only)
 set -euo pipefail
 
@@ -57,13 +59,21 @@ check)
   fi
   echo "absolute check passed: $(jq -c '[.[].value]' "$1") s < $2 s"
   ;;
+names)
+  if ! jq -e -n --slurpfile b "$1" --slurpfile h "$2"     '($b[0] | map(.name) | sort) as $bn | ($h[0] | map(.name) | sort) as $hn |
+     ($bn | length) > 0 and $bn == $hn' >/dev/null; then
+    echo "::error::benchmark names differ or are empty: base $(jq -c 'map(.name) | sort' "$1"), head $(jq -c 'map(.name) | sort' "$2"). The comparison action skips unmatched names, so this would be a silent no-op; rename the test on the base first or update the gate deliberately."
+    exit 1
+  fi
+  echo "benchmark names match: $(jq -c 'map(.name) | sort' "$2")"
+  ;;
 ratio)
   jq -rn --slurpfile b "$1" --slurpfile h "$2" \
     '($b[0][0].value) as $bv | ($h[0][0].value) as $hv |
      "base min \($bv) s, head min \($hv) s, head/base = \($hv / $bv) (fails above 1.2)"'
   ;;
 *)
-  echo "usage: bench.sh run|seed|check|ratio ..." >&2
+  echo "usage: bench.sh run|seed|check|names|ratio ..." >&2
   exit 2
   ;;
 esac

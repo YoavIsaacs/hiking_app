@@ -61,6 +61,7 @@ jobs:
               - 'pnpm-workspace.yaml'
             ci:
               - '.github/workflows/**'
+              - '.github/scripts/**'
               - 'justfile'
               - '.pre-commit-config.yaml'
       # Anything that is not a PR (push to main, nightly, manual) runs everything;
@@ -220,6 +221,7 @@ jobs:
           bash head/.github/scripts/bench.sh run head bench/head.json
           bash head/.github/scripts/bench.sh check bench/head.json "$BENCH_CEILING_S"
           if [ "${{ steps.base.outputs.present }}" = "true" ]; then
+            bash head/.github/scripts/bench.sh names bench/base.json bench/head.json
             bash head/.github/scripts/bench.sh ratio bench/base.json bench/head.json
           fi
 

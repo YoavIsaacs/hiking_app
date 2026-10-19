@@ -15,7 +15,7 @@ The tech lead keeps this file true. A step moves to Done only with checkpoint ev
 ## Current state (handoff for a fresh session)
 Read this, then `docs/steps/<current step>.md`. Nothing here lives only in chat.
 
-- **Current step:** 0.6 Pipeline rules on branch `step/0.6-pipeline-rules` (created 2026-10-19, pushed; brief not written yet).
+- **Current step:** 0.6 Pipeline rules on branch `step/0.6-pipeline-rules` (created 2026-10-19; brief `docs/steps/0.6.md`; draft PR #18).
   **Next session starts here:** step loop 1–2 for 0.6 — write `docs/steps/0.6.md` from `docs/roadmap/phase-0.md` + `overview.md`
   0.6, folding in the 0.6 carry-forward list below; triage Dependabot #12–#15.
   0.5 closed 2026-10-19. Open Dependabot PRs #12–#15 held during 0.5: **#13 (python 3.12 → 3.14 image) must not be

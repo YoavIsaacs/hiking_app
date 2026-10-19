@@ -1,6 +1,25 @@
 # 0004 — GPX parser: module boundary, RouteSummary/ErrorResponse contract, algorithms, upload limits, benchmark
 
-Status: accepted · Date: 2026-10-19 · Step: 1.2
+Status: accepted · Date: 2026-10-19 · Amended: 2026-10-19 · Step: 1.2
+
+## Amendments
+**2026-10-19.** These record decisions already taken in step 1.2: review round 1, QA verify and the devops
+benchmark deviation (see `docs/steps/1.2.md`, "Decisions and deviations"). The sections they touch have been
+rewritten in place, so the body of the ADR is current.
+1. **Hostile-input bounds.** The reviewer showed that hostile uploads were unbounded: RDP was O(n²) on
+   near-collinear or zigzag input, and a 300k-point file peaked at about 239 MiB. Three bounds fix this.
+   - **Point cap.** A file with more than 100,000 `<trkpt>`/`<rtept>` start tags gets 422 `too_many_points`.
+     The tags are counted with a byte scan before gpxpy runs (§3.1 step 3, §3.12). The manager approved this
+     cap.
+   - **Pre-thinning.** A track with more than 2,000 points is thinned in O(n) before ranked RDP runs (§3.5).
+   - **Concurrency.** At most 2 parses run at once per instance (§3.10).
+2. **Elevation plausibility.** An `<ele>` outside [−1000, 10000] m is treated as missing (§2, §3.1 step 8).
+3. **XML encoding.** An unsupported declared encoding (expat `LookupError`/`ValueError`) is now `invalid_gpx`
+   (§3.11). Before this, it escaped as a 500.
+4. **Benchmark.** §5 now describes what is implemented: a base entry seeded into the data file, one comparison
+   run on the head, and the name-intersection rule. The original two-run A/B could never alert.
+5. **RDP ties.** The split rule now uses a near-tie tolerance of 1e-6 m and splits nearest the midpoint (§3.5).
+6. **Follow-up for 1.3.** `summarise_gpx` should be split so the elevation lookup has a seam (Follow-ups).
 
 ## Context
 Step 1.2 adds `POST /v1/routes/parse`. It turns an uploaded GPX file into a typed `RouteSummary`, rejects bad input
@@ -25,9 +44,8 @@ against regressions. The forces at play:
 - **Runtime:** Cloud Run with 512 MiB of memory, concurrency 80 and max 1 instance (ADR 0002/0003). The
   filesystem is in memory, and Cloud Run caps HTTP/1 requests at 32 MiB. Starlette spools uploads to a
   `SpooledTemporaryFile` (1 MiB in memory, then "disk", which is RAM here) and has **no total file-size limit**.
-- **Path:** the brief notes that `overview.md` says `/routes/parse` and is pending manager confirmation. This ADR
-  uses `/v1/routes/parse`, the phase-1 checklist path. If the manager picks the other path, only the router prefix
-  changes.
+- **Path:** `overview.md` says `/routes/parse`, but the phase-1 checklist path `/v1/routes/parse` is used. The
+  manager confirmed it on 2026-10-19 and is correcting the master doc.
 
 ## Decision
 
@@ -37,7 +55,7 @@ against regressions. The forces at play:
 | `app/models/route.py` | `LatLonElev`, `TrackPoint`, `RouteSummary` (Pydantic, response-only) | pydantic, `app.routes.params` (the 500 cap) |
 | `app/models/errors.py` | `ErrorCode`, `FieldError`, `ErrorResponse` | pydantic |
 | `app/routes/` | **pure** pipeline: bytes in, `RouteSummary` or a `RouteParseError` out | stdlib, gpxpy (in `parse.py` only), `app.models.route` |
-| `app/routers/routes.py` | the I/O edge: multipart upload, size limit, threadpool, error mapping | fastapi, `app.routes`, `app.errors`, `app.body_limit` |
+| `app/routers/routes.py` | the I/O edge: multipart upload, size limit, worker thread under the parse limiter, error mapping | fastapi, anyio, `app.routes`, `app.errors`, `app.body_limit`, `app.dependencies` |
 | `app/errors.py` | `ApiError`, global exception handlers, `ERROR_RESPONSES` for OpenAPI | fastapi/starlette, `app.models.errors` |
 | `app/body_limit.py` | `UploadLimitRoute`: streaming request-body cap | fastapi/starlette, `app.routes.params`, `app.errors` |
 
@@ -50,7 +68,8 @@ the brief.
 bytes in memory counts as pure: it does no I/O.
 
 **One place for parameters: `app/routes/params.py`.** It holds the frozen `ParseParams` dataclass plus `Final`
-constants: the upload limit, the 500-point cap, Earth's radius and the name limits. Each pure function takes its
+constants: the upload limit, the raw-point cap, the 500-point cap, the plausible-elevation range, the parse
+concurrency, Earth's radius and the name limits. Each pure function takes its
 parameters as keyword arguments whose defaults come from `DEFAULT_PARAMS`. Parameters are **not** `Settings`/env:
 the accuracy gates are tuned against these exact values, and env overrides would let environments drift away from
 what was tested. `ParseParams.__post_init__` raises `ValueError` on nonsense values (a programming error, never
@@ -83,14 +102,16 @@ decreases along `points`, the first value is 0, and the last equals `distance_m`
 | `start`, `end` | `LatLonElev` | first and last de-duplicated point (`elev_m` null when there is no elevation) |
 | `is_loop` | bool | §3.8 |
 | `points` | list[`TrackPoint`], 2..500 items | §3.5; always includes start, end and the high point |
-| `has_elevation` | bool | true iff **every** de-duplicated point has a finite `<ele>` |
+| `has_elevation` | bool | true iff **every** de-duplicated point has a *plausible* `<ele>`: present, finite and within [−1000, 10000] m inclusive (§3.1 step 8) |
 | `elevation_source` | `"file"` \| `"lookup"` \| `"none"` | 1.2 emits only `file`/`none`; `lookup` is reserved for 1.3 and is in the enum now so 1.3 doesn't change the type |
 | `source_format` | `"trk"` \| `"rte"` | §3.1 |
-| `point_count_original` | int ≥ 2 | points in the chosen source as the file has them (all segments, before de-duplication) |
+| `point_count_original` | int ≥ 2 | points in the chosen source as the file has them (all segments, before de-duplication). It can be lower than the §3.12 tag count, which counts both kinds |
 
 No elevation means **null, not 0**. Zero gain is a real value (a flat route), and the Phase 2 rules must not mistake
-"unknown" for "flat". A file where only some points have `<ele>` counts as having no elevation, and every `elev_m`
-is null. That keeps clients from ever drawing a profile with holes. 1.3's lookup then supplies elevation.
+"unknown" for "flat". A file where only some points have a plausible `<ele>` counts as having no elevation, and every
+`elev_m` is null. One point at 1e300 m or −5000 m is enough. This keeps clients from ever drawing a profile with
+holes. 1.3's lookup then supplies elevation, so **1.3's backfill must cover the implausible-value case as well as
+the missing one**.
 
 **`ErrorResponse`, shared by every error the app returns:**
 ```json
@@ -106,7 +127,8 @@ is null. That keeps clients from ever drawing a profile with holes. 1.3's lookup
 | Status | `code` | Raised by |
 | --- | --- | --- |
 | 413 | `file_too_large` | the `Content-Length` pre-check, the streaming body cap, or the file-length check (§3.10) |
-| 422 | `invalid_gpx` | empty file, not UTF-8, not well-formed, DTD/entity present, root not `<gpx>`, any gpxpy failure, coordinates out of range or not finite |
+| 422 | `invalid_gpx` | empty file, unsupported declared XML encoding, not UTF-8, not well-formed, DTD/entity present, root not `<gpx>`, any gpxpy failure, coordinates out of range or not finite |
+| 422 | `too_many_points` | more than `MAX_RAW_POINTS` (100,000) `<trkpt>`/`<rtept>` start tags in the raw bytes, decided before gpxpy runs (§3.12) |
 | 422 | `too_few_points` | fewer than 2 points after merging and de-duplication (this includes waypoint-only files) |
 | 422 | `validation_error` | FastAPI `RequestValidationError`, e.g. the `file` field is missing, or `file` is a text field |
 | 400 | `bad_request` | Starlette multipart errors (FastAPI turns form-parsing failures into `HTTPException(400)`) |
@@ -144,16 +166,25 @@ can't be updated in lock-step.
 **3.1 Parse (`parse_gpx`).** The input bytes go through these steps, in order:
 1. **Empty input** → `invalid_gpx`.
 2. **XML prolog guard** (`check_gpx_prolog`, §3.11) on the raw bytes.
-3. **Decode** as `utf-8-sig`, strict, which strips a BOM. Failure → `invalid_gpx` "file must be UTF-8".
-4. **Parse:** `gpxpy.parse(text)`. **Every** exception from that one call (`GPXXMLSyntaxException`, `GPXException`,
+3. **Point cap** (`exceeds_point_cap`, §3.12) on the raw bytes → `too_many_points`. It runs before decoding so
+   the cap never pays for a decoded copy. Errors take precedence in this order: a prolog error, then
+   `too_many_points`, then "not UTF-8", then a gpxpy failure.
+4. **Decode** as `utf-8-sig`, strict, which strips a BOM. Failure → `invalid_gpx` "file must be UTF-8".
+5. **Parse:** `gpxpy.parse(text)`. **Every** exception from that one call (`GPXXMLSyntaxException`, `GPXException`,
    `ValueError`, …) → `invalid_gpx`, chained with `from`. This catch-all is justified because gpxpy is a
    third-party parser of untrusted input. It wraps **only** the gpxpy call. Our own bugs still surface as 500, and
    the fuzz test hunts for them.
-5. **Choose a source.** `trk` if all `<trk>` together hold ≥ 2 points. Otherwise `rte` if all `<rte>` together hold
+6. **Choose a source.** `trk` if all `<trk>` together hold ≥ 2 points. Otherwise `rte` if all `<rte>` together hold
    ≥ 2. Otherwise whichever has more points (`trk` on a tie); the later < 2 check then raises `too_few_points`.
-6. **Merge:** within the chosen kind, every track (or route) and every segment, in document order.
-7. **Validate:** every chosen point must have finite lat in −90..90 and lon in −180..180, else `invalid_gpx`. A
-   missing or non-finite `<ele>` becomes `None`.
+7. **Merge:** within the chosen kind, every track (or route) and every segment, in document order.
+8. **Validate:** every chosen point must have a finite lat in −90..90 and a finite lon in −180..180, else
+   `invalid_gpx`. An `<ele>` that is missing, non-finite, or outside **[`MIN_PLAUSIBLE_ELEV_M`,
+   `MAX_PLAUSIBLE_ELEV_M`] = [−1000, 10000] m, inclusive**, becomes `None`.
+   - The range covers the Dead Sea shore (−430 m) and Everest (8 849 m) with a margin. Anything outside it is a
+     unit or encoding error, not terrain.
+   - It also keeps the downstream arithmetic and the finite-float response model safe. Extreme values produced a
+     500 in QA verify.
+   - Following §2, one such point makes `has_elevation` false for the whole file.
 
 `RawTrack` carries the names: `metadata_name` from `<metadata><name>`, and `track_name` from the first non-blank
 `<trk><name>` (or `<rte><name>` when the source is `rte`).
@@ -236,6 +267,8 @@ elevations.
     best-row summary plus the neighbours) goes into the backend report, and QA's per-fixture table into
     `PROGRESS.md`.
   - **Leaving the grid** (a value outside it, or a different method) is an ADR amendment.
+  - **Result (backend, 2026-10-19):** window **20 m**, threshold **9.5 m**. 23 of the 125 grid points are feasible;
+    the worst-case margin is 6.67 % (Tel Hadid −3.3 %), and T is a plateau from 9.5 to 10.5 m.
 - **Forbidden:**
   - per-file or per-`creator` parameters;
   - excluding a fixture;
@@ -245,24 +278,58 @@ elevations.
   2. a per-elevation-source threshold, once more sources exist;
   3. a gate the manager accepts for DEM-elevation routes.
 
-**3.5 Simplify: ranked Ramer–Douglas–Peucker to `max_points` (500).**
+**3.5 Simplify: O(n) pre-thinning to ≤ `prethin_max_points` (2,000), then ranked Ramer–Douglas–Peucker to
+`max_points` (500).**
 - **Input up to 500 points:** returned unchanged. The cap is a payload cap, and dropping collinear points under it
   gains nothing.
+- **Pre-thinning (`prethin`), only when n > 2,000.** It works on the full-resolution `dist_m` (§3.3) and returns
+  sorted candidate indices. Let F = {0, n−1} ∪ keep (the high point), M = `max_points` and P =
+  `prethin_max_points`.
+  - **Index stride, M picks:** i_j = 1 + ⌊j·(n−2)/M⌋ for j = 0..M−1. These are distinct interior indices
+    because n − 2 ≥ P − 1 ≥ M. They guarantee at least M + 2 candidates, so RDP can always fill its budget and
+    `simplify()` still returns exactly min(n, M).
+  - **Distance stride, the rest of the budget:** r_d = P − |F| − M picks. Targets are t_j = j·L/(r_d+1) for
+    j = 1..r_d, with L = `dist_m[-1]`. For each target, one forward sweep picks the first index with
+    `dist_m[i] ≥ t_j`. Targets that land on the same index give one candidate. If L = 0 there are no distance
+    picks.
+  - **Result:** F ∪ index picks ∪ distance picks, sorted. Its size is between M + 2 and P. It is deterministic
+    and costs O(n + P).
+  - **Why both strides:** the distance stride keeps sparse stretches. An index stride alone would keep about
+    1 point of a 50-point, 10 km planned stretch inside a 100k-point recording. The index stride guarantees the
+    count, which the distance stride alone does not: it collapses when most of the points sit in a few
+    metres.
+  - **Preconditions:** `ParseParams` enforces P ≥ 2M. `simplify` already raises `ValueError` if |F| > M. Together
+    these give r_d ≥ 0.
+  - **What stays at full resolution:** distance, gain/loss, min/max, the high point, `point_count_original` and
+    every returned `dist_m`. Pre-thinning only chooses which indices RDP may rank.
 - **Distance space:** a local equirectangular projection in metres, x = R·cos φ₀·Δλ and y = R·Δφ.
-  - φ₀ is the midpoint of the track's latitude range.
+  - φ₀ is the midpoint of the latitude range of the points RDP sees (the candidates).
   - Δλ is unwrapped relative to the first point into (−180°, 180°], so tracks across the antimeridian work.
   - Distances are horizontal only; elevation is not part of the RDP metric.
   - Each point's distance is measured to the *segment*, not the infinite line, so the degenerate chord of a loop
     (start == end) gives the distance to that point.
-- **Strategy:** compute every point's **RDP significance** once, with an iterative explicit stack and **no
-  recursion**. A 10k-point track could exceed Python's recursion limit and produce a 500.
+- **Strategy:** compute the **RDP significance** of every candidate once, over the candidate subsequence (the
+  thinned track, or the whole track when n ≤ 2,000). It uses an iterative explicit stack and **no recursion**,
+  because deep recursion would hit Python's recursion limit and produce a 500.
   - sig(endpoints) = ∞.
-  - When splitting (a, b) at the farthest point i: sig(i) = min(d_max, sig(parent split)).
-  - The clamp makes {i : sig(i) > ε} exactly RDP(ε)'s output for every ε, so this *is* RDP, with the ε that
-    lands on the budget found implicitly. No binary search, and no "≤ 500 but which ε" ambiguity.
-- **Selection:** the forced indices {0, n−1, high point} plus the top `max_points − |forced|` remaining indices by
-  (significance descending, index ascending), returned sorted by index. Output = exactly min(n, max_points) points.
-- **Cost:** O(n log n) on real tracks and O(n²) in the pathological worst case (see follow-ups).
+  - **Split rule.** For a split (a, b), let d_i be each interior point's distance to the segment and d_max their
+    maximum. The split point is the i with d_i ≥ d_max − `RDP_TIE_TOLERANCE_M` (1e-6 m) that is nearest the
+    midpoint (a+b)/2. When two indices are equally near the midpoint, the smaller one wins. Then
+    sig(i) = min(d_i, sig(parent split)).
+    - Why a tolerance: exact ties were already split at the midpoint, but projection float noise (about 1e-9 m)
+      turns exact collinearity into strict inequalities, so the exact rule rarely fired. The tolerance restores
+      O(m log m) on collinear runs.
+    - The tolerance is **kept as a performance nicety**. It is no longer a DoS guard, since pre-thinning bounds
+      the worst case. It does not absorb coordinate quantisation: 6-dp rounding is about 5 cm.
+  - The clamp makes {i : sig(i) > ε} exactly the output of RDP(ε) with this split rule, for every ε. So on the
+    candidates this *is* RDP, with the ε that lands on the budget found implicitly. There is no binary search and
+    no "≤ 500 but which ε" ambiguity. RDP is **no longer applied to the full track** when n > 2,000.
+- **Selection:** the forced indices {0, n−1, high point} plus the top `max_points − |forced|` remaining candidates
+  by (significance descending, index ascending), returned as full-track indices sorted ascending. The output is
+  exactly min(n, max_points) points.
+- **Cost:** O(n) to thin plus O(m log m) RDP on real tracks, where m ≤ 2,000. The pathological worst case is
+  **O(n) + O(2000²)**. For scale, the tech lead measured 1.55 s for a hostile 2k-point zigzag before thinning
+  existed, so 2,000² is the ceiling, and n is capped at 100k by §3.12.
 
 **3.6 High point.** The first index of the maximum raw elevation, which keeps it deterministic on plateaus. It is
 in `points` because simplify forces it, so `max(p.elev_m for p in points) == max_elev_m` holds.
@@ -281,7 +348,8 @@ to its start, so it is a loop; the brief requires `true`. A one-way route is `fa
   to one space, trim, and cut to 200 code points.
 - The router passes `UploadFile.filename`, which may be `None`.
 
-**3.10 Upload size: three layers, all before any GPX parsing, none of them reading an unbounded body.**
+**3.10 Upload size and parse concurrency.** The size check has three layers, all before any GPX parsing, and
+none of them reads an unbounded body.
 - `MAX_UPLOAD_BYTES = 10 * 1024 * 1024` (10 MiB; the user-facing copy says "10 MB"). A file of exactly
   `MAX_UPLOAD_BYTES` is accepted, and one byte more is rejected.
 - **Layer 1: `Content-Length` pre-check.** `UploadLimitRoute` is the router's `route_class`, the FastAPI "custom
@@ -297,9 +365,38 @@ to its start, so it is a loop; the brief requires `true`. A one-way route is `fa
   - a FastAPI dependency, because the body is parsed before dependencies run;
   - an app-wide ASGI middleware, which would give JSON endpoints a "file" error code;
   - reading `Request` by hand, which loses the OpenAPI multipart schema the generated client needs.
-- **Threadpool.** The handler is `async def`. It awaits the read, then runs `summarise_gpx` via Starlette's
-  `run_in_threadpool`, so a CPU-bound parse of about 0.5 s doesn't block the event loop (or `/health`) for the
-  other 79 concurrent requests.
+- **Worker thread with a concurrency cap.** The handler is `async def`. It awaits the read, then runs
+  `summarise_gpx` in a worker thread with `anyio.to_thread.run_sync(summarise_gpx, data, filename,
+  limiter=parse_limiter)`. Starlette's `run_in_threadpool` is that same call with the default limiter, so the
+  parse never blocks the event loop (or `/health`).
+  - **The limiter.** `parse_limiter` is an `anyio.CapacityLimiter(MAX_CONCURRENT_PARSES)` with
+    `MAX_CONCURRENT_PARSES = 2`. `create_app` creates it and stores it on `app.state.parse_limiter`. That gives one
+    limiter per instance in production and a fresh one per app in tests. The handler receives it through the
+    dependency `get_parse_limiter`, the same pattern as `get_settings`.
+  - **Why `CapacityLimiter` and not a semaphore around `run_in_threadpool`:** the two behave the same, but the
+    limiter is one call and anyio's purpose-built primitive for capping worker threads. The token is held
+    exactly while the worker thread runs. This holds even when the awaiting request is cancelled, because
+    `run_sync` does not abandon its thread by default (`abandon_on_cancel=False`). A third request waits in the
+    event loop and holds no thread while it waits.
+  - **Why not a stdlib `asyncio.Semaphore`:** it binds to the first event loop that contends on it, and
+    `TestClient` without a context manager runs each request on a new loop, so tests could fail with
+    `RuntimeError`.
+  - **Dependency:** anyio is already in `uv.lock` (4.15.1) as FastAPI/Starlette's own concurrency layer, and the
+    tests already use its pytest plugin. Backend declares it explicitly in `pyproject` `dependencies`, since app
+    code now imports it. No new package enters the lock (§4).
+  - **What a waiting request sees:** a slower 200 or 422. There is no new error code, no queue limit and no 503.
+    If the total time exceeds Cloud Run's request timeout (the default 300 s; `deploy-api.yml` doesn't set
+    `--timeout`), Cloud Run's front end returns 504. That 504 does not come from the app, so it doesn't break
+    "0 × 500".
+  - **Rough worst case:** 80 concurrent requests ÷ 2 slots × a few seconds each is well under 300 s.
+  - **Why 2.** It is a memory budget.
+    - One parse at the 100k cap peaks at about 80 MiB. **This is an estimate** scaled from the reviewer's
+      239 MiB at 300k points, and QA measures it.
+    - Two parses plus the process baseline and the buffered uploads fit in a 512 MiB instance. Three or more
+      would not leave a margin.
+    - CPU gives no reason to go higher: the instance has 1 vCPU and the parse holds the GIL. 2 rather than 1 lets
+      a small file finish while a large one runs.
+  - The limiter is acquired *after* the upload is read and size-checked, so a slow uploader never holds a slot.
 
 **3.11 XML safety: stdlib only, no defusedxml; we forbid DTDs ourselves.**
 - **Which parser gpxpy uses:** it parses with `lxml` if that is importable, otherwise `xml.etree.ElementTree`
@@ -314,9 +411,15 @@ to its start, so it is a loop; the brief requires `true`. A one-way route is `fa
   - `EntityDeclHandler` → the same;
   - `StartElementHandler` records the root's local name, then **stops the scan** by raising a private sentinel. A
     DOCTYPE can only precede the root, so the scan costs only the prolog.
-- **What the guard rejects:** an `ExpatError` before the root (`invalid_gpx` with line/column), no root at all, or a
-  root whose local name is not `gpx`. That last check is how the KML fixture fails: gpxpy doesn't check the root
-  element and would return an empty GPX.
+- **What the guard rejects:**
+  - an `ExpatError` before the root (`invalid_gpx` with line/column);
+  - an **unsupported declared encoding**. expat raises `LookupError` for an unknown encoding name and
+    `ValueError` for encodings it can't handle (utf-32, utf-7, shift_jis, …). Both → `invalid_gpx` "unsupported
+    XML encoding", chained with `from`. Before this, they escaped as a 500 (QA verify). The catch is safe because
+    our handlers raise neither exception;
+  - no root at all;
+  - a root whose local name is not `gpx`. This check is how the KML fixture fails: gpxpy doesn't check the root
+    element and would return an empty GPX.
 - **Why this is enough:** GPX is defined by an XSD and never needs a DTD. Every entity attack needs a DTD, so
   rejecting DTDs removes XXE, billion laughs, quadratic blowup and DTD retrieval no matter which expat version or
   parser gpxpy picks. Large-token quadratic parsing is bounded by the 10 MiB cap and fixed in expat ≥ 2.6. A test
@@ -324,14 +427,49 @@ to its start, so it is a loop; the brief requires `true`. A one-way route is `fa
 - **defusedxml is rejected:** a new dependency, and gpxpy calls ElementTree internally, so it would need
   monkey-patching (`defuse_stdlib`) for no protection beyond the guard.
 
+**3.12 Point cap: a byte scan, before gpxpy builds its tree.**
+- **Why before gpxpy:** gpxpy calls `ElementTree.XML(text)` on the whole document and then builds one Python
+  object per point. Memory and time are spent before any count is known, so the count must come from the raw
+  bytes.
+- **`exceeds_point_cap(data, max_points=MAX_RAW_POINTS)`** counts the matches of one compiled bytes regex and
+  stops at `max_points + 1` (`itertools.islice` over `finditer`):
+  ```
+  rb"<(?:[^\s<>/]*:)?(?:trkpt|rtept)[\s/>]"
+  ```
+  - More than `MAX_RAW_POINTS = 100_000` matches → `TooManyPoints`. Exactly 100,000 is accepted.
+- **What is counted:** `<trkpt` and `<rtept` start tags **together**, across all tracks, routes and segments,
+  before de-duplication.
+  - This is conservative. The cap protects gpxpy's object tree, and gpxpy builds both kinds whichever source
+    §3.1 later chooses.
+  - A file with 60k of each kind is therefore rejected, even though its chosen source has 60k points.
+- **Namespaces and prefixes:**
+  - The optional `prefix:` group counts `<gpx:trkpt>` and `<a:b:trkpt>` too. That is more than gpxpy uses: it
+    matches `child.tag == "trkpt"` exactly, after stripping only the first default `xmlns`, so it ignores
+    prefixed points.
+  - Over-counting is the safe direction, and it stays correct if the parser is ever replaced by one that
+    resolves namespaces.
+  - Matching is case-sensitive, like XML and gpxpy.
+- **It can only over-count:**
+  - Tags inside comments, CDATA or processing instructions also match. A real file never has 100k of those.
+  - `</trkpt>` does not match.
+  - No real point can be missed:
+    - DTDs are rejected (§3.11), so no element can come from entity expansion;
+    - step 4 requires UTF-8, so in every file that reaches gpxpy the tags are ASCII bytes;
+    - XML allows no whitespace between `<` and the name.
+- **Cost:** a C-speed scan, linear time, constant memory.
+  - The pattern starts with the literal `<`, so `re` skips quickly to each candidate.
+  - The prefix class excludes `<`, so backtracking is bounded by the run up to the next `<`.
+  - Total work is O(bytes): tens of milliseconds on 10 MiB.
+
 ### 4. Dependencies
 | Package | Where | Why | License | Maintenance | Types (mypy strict) | Approval |
 | --- | --- | --- | --- | --- | --- | --- |
 | **gpxpy** | runtime | the roadmap's parser | Apache-2.0 | 1.6.2 (2023-11); slow cadence, but a stable format and no deps | ships `py.typed` (inline hints; the project requires mypy-clean code) | in stack |
-| **python-multipart** | runtime | FastAPI/Starlette need it for any `File()`/`Form()` ("To receive uploaded files, first install python-multipart"); without it the route fails at import | Apache-2.0 | 0.0.32 (2026-06), maintained by Kludex (Starlette's maintainer) | not imported by our code | **needs manager approval** (not in the CLAUDE.md list; it is FastAPI's own optional dependency) |
+| **python-multipart** | runtime | FastAPI/Starlette need it for any `File()`/`Form()` ("To receive uploaded files, first install python-multipart"); without it the route fails at import | Apache-2.0 | 0.0.32 (2026-06), maintained by Kludex (Starlette's maintainer) | not imported by our code | **approved by the manager 2026-10-19** (not in the CLAUDE.md list; it is FastAPI's own optional dependency) |
+| **anyio** (amendment) | runtime, declared explicitly | `CapacityLimiter` for the parse cap (§3.10) | MIT | 4.15.1 already locked; FastAPI/Starlette require it | ships `py.typed` | no new package in `uv.lock`; tech lead to confirm with the manager that declaring an already-locked transitive dependency needs no separate approval |
 | **Hypothesis** | dev | property and fuzz tests | MPL-2.0 | active | ships `py.typed` | in stack |
-| **pytest-benchmark** | dev | named by the roadmap for the benchmark | BSD-2-Clause | 5.3.0 (2026-08), supports pytest 9 | "minimal typing" since 5.2. If mypy reports no `py.typed`, type the fixture parameter with a local `Protocol` in the test (no `ignore_missing_imports`) | **needs manager approval** (named by the roadmap, not in the CLAUDE.md list) |
-| **benchmark-action/github-action-benchmark** | CI action, pinned by SHA like the others | named by the roadmap: stores the baseline and alerts | MIT | active, `@v1` line | n/a | **needs manager approval** (new third-party action) |
+| **pytest-benchmark** | dev | named by the roadmap for the benchmark | BSD-2-Clause | 5.3.0 (2026-08), supports pytest 9 | "minimal typing" since 5.2. If mypy reports no `py.typed`, type the fixture parameter with a local `Protocol` in the test (no `ignore_missing_imports`) | **approved by the manager 2026-10-19** (named by the roadmap, not in the CLAUDE.md list) |
+| **benchmark-action/github-action-benchmark** | CI action, pinned by SHA like the others | named by the roadmap: stores the baseline and alerts | MIT | active, `@v1` line (v1.22.2 pinned) | n/a | **approved by the manager 2026-10-19** (new third-party action) |
 | geographiclib | — | rejected (§3.3) | | | | — |
 | defusedxml | — | rejected (§3.11) | | | | — |
 | lxml | — | must **not** be added: gpxpy would switch parsers silently, changing behaviour and benchmark numbers (the guard keeps it safe either way) | | | | — |
@@ -372,15 +510,31 @@ under coverage, and only the benchmark job times them.
 **Regression rule: within one job, on one runner (A/B), not against a stored number from another machine.**
 - **Why A/B:** shared GitHub runners vary by CPU model and neighbours, and cross-run differences of 10–30 % are
   common. A required 20 % gate against a cross-machine baseline would flake.
+- **Why one action run, not two (amended).** github-action-benchmark v1.22.2 finds "previous" by commit id, and on
+  `pull_request` it records the head SHA for every run. Feeding base and head through the action in turn makes
+  both entries the same commit, so it never alerts. The base result is therefore seeded into the data file by
+  `.github/scripts/bench.sh` and only the head goes through the action.
 - **On a PR:**
-  1. Check out the base SHA and run the benchmark. Feed the result to the action with
-     `external-data-json-path: ./bench/ab.json`, `save-data-file: true` and no alert. This is the stored baseline.
-  2. Check out the head SHA and run it again. Feed the action the same file with `alert-threshold: "120%"`,
-     `fail-on-alert: true`, `fail-threshold: "120%"`, `save-data-file: false` and `summary-always: true`.
-  3. The job **also** fails if head `min ≥ 2.0 s`, the absolute checkpoint ceiling.
-  4. If the base has no benchmark test (this step's own PR), skip the comparison with a notice, but keep the
-     absolute check.
-  5. Permissions: `contents: read` only.
+  1. Check out base and head side by side, each with its own `uv sync --frozen` environment.
+  2. **Base present?** If `base/api/tests/routes/test_benchmark.py` is missing (this step's own PR), skip steps
+     3, 5 and 6 with a `::notice::`. The absolute check still runs.
+  3. **Base run:** `bench.sh run base bench/base.json`.
+  4. **Head run:** `bench.sh run head bench/head.json`, then `bench.sh check bench/head.json 2.0`. The job fails
+     if any head `min ≥ 2.0 s`, the absolute checkpoint ceiling.
+  5. **Name rule (`bench.sh names`):**
+     - fail if the head produced no benchmarks, or if base ∩ head is empty, since the gate would then be a
+       silent no-op;
+     - otherwise rewrite both files to the intersection, sorted by name, and `::warning::` about names on one
+       side only;
+     - a rename therefore takes two PRs: add the new name and keep the old, then remove the old. Requiring equal
+       name sets would deadlock any PR that adds or renames a benchmark under a no-bypass ruleset.
+  6. **Seed and compare.** `bench.sh seed bench/base.json bench/ab.json <base SHA>` writes a data file whose only
+     entry is the base result under the base SHA. One action run then feeds `bench/head.json` with
+     `external-data-json-path: bench/ab.json`, `save-data-file: false`, `alert-threshold: "120%"`,
+     `fail-threshold: "120%"`, `fail-on-alert: true` and `summary-always: true`. `bench.sh ratio` logs
+     head/base for humans.
+  7. Permissions: `contents: read` only.
+- **Proven red in CI** on the throwaway PR #28: run 39288735236 failed at 1.43× head/base.
 - **On push to `main`:** run the head only and append to the history with the action's `external-data-json-path`,
   persisted with `actions/cache`.
   - Key `benchmark-${{ github.sha }}` with restore-keys `benchmark-`; cache keys are immutable, so each run saves
@@ -388,8 +542,9 @@ under coverage, and only the benchmark job times them.
   - `fail-on-alert: false`. The PR already gated, and a post-merge failure can't block anything.
   - Skip the job for the nightly/`fresh-deps` `workflow_call`, so other dependency versions don't pollute the
     history.
-- **Path filter:** the job follows `changes.api` like `api-test`; a skip counts as passing. Its name, `benchmark`, is
-  a required-check contract.
+- **Path filter:** the job follows `changes.api` like `api-test`. A change under `.github/workflows/**` or
+  `.github/scripts/**` (which includes `bench.sh`) runs every job, so it runs the benchmark too. A skip counts as
+  passing. Its name, `benchmark`, is a required-check contract.
 
 **Baseline storage options** (for the main-branch history; the PR gate needs none):
 - **`actions/cache` (chosen):**
@@ -417,15 +572,22 @@ MAX_SUMMARY_POINTS: Final = 500
 EARTH_RADIUS_M: Final = 6_371_008.8
 MAX_NAME_LENGTH: Final = 200
 UNTITLED_ROUTE_NAME: Final = "Untitled route"
+MIN_PLAUSIBLE_ELEV_M: Final = -1000.0     # §3.1 step 8, inclusive
+MAX_PLAUSIBLE_ELEV_M: Final = 10000.0     # §3.1 step 8, inclusive
+MAX_RAW_POINTS: Final = 100_000           # §3.12; > this → too_many_points (manager-approved)
+PRETHIN_MAX_POINTS: Final = 2_000         # §3.5
+RDP_TIE_TOLERANCE_M: Final = 1e-6         # §3.5 split rule
+MAX_CONCURRENT_PARSES: Final = 2          # §3.10
 
 @dataclass(frozen=True, slots=True)
 class ParseParams:
     resample_step_m: float = 5.0
     max_resample_points: int = 100_000
-    smoothing_window_m: float = 30.0      # tuned per §3.4; starting value
-    gain_threshold_m: float = 10.0        # tuned per §3.4; starting value
+    smoothing_window_m: float = 20.0      # tuned per §3.4 (backend, 2026-10-19)
+    gain_threshold_m: float = 9.5         # tuned per §3.4 (backend, 2026-10-19)
     loop_threshold_m: float = 200.0
     max_points: int = MAX_SUMMARY_POINTS  # 3 <= max_points <= MAX_SUMMARY_POINTS
+    prethin_max_points: int = PRETHIN_MAX_POINTS  # >= 2 * max_points; small values let tests hit the path cheaply
     def __post_init__(self) -> None: ...  # ValueError on out-of-range values
 
 DEFAULT_PARAMS: Final = ParseParams()
@@ -433,11 +595,12 @@ DEFAULT_PARAMS: Final = ParseParams()
 ```python
 # app/routes/errors.py
 class RouteParseError(Exception):
-    code: ClassVar[Literal["invalid_gpx", "too_few_points"]]
+    code: ClassVar[Literal["invalid_gpx", "too_many_points", "too_few_points"]]
     def __init__(self, message: str) -> None: ...
     @property
     def message(self) -> str: ...
 class InvalidGpx(RouteParseError): ...        # code = "invalid_gpx"
+class TooManyPoints(RouteParseError): ...     # code = "too_many_points"
 class TooFewPoints(RouteParseError): ...      # code = "too_few_points"
 
 # app/routes/track.py
@@ -445,7 +608,7 @@ class TooFewPoints(RouteParseError): ...      # code = "too_few_points"
 class RawPoint:
     lat: float
     lon: float
-    elev_m: float | None                      # None: missing or non-finite <ele>
+    elev_m: float | None                      # None: missing, non-finite or outside [-1000, 10000] m
 
 @dataclass(frozen=True, slots=True)
 class RawTrack:
@@ -455,10 +618,13 @@ class RawTrack:
     track_name: str | None                    # first non-blank <trk><name> (or <rte><name>), raw
 
 # app/routes/xml_guard.py
-def check_gpx_prolog(data: bytes) -> None: ...   # raises InvalidGpx (DTD/entity, malformed prolog, no root, root != gpx)
+def check_gpx_prolog(data: bytes) -> None: ...   # raises InvalidGpx (DTD/entity, malformed prolog, unsupported
+                                                 # encoding, no root, root != gpx)
+def exceeds_point_cap(data: bytes, *, max_points: int = MAX_RAW_POINTS) -> bool: ...
+    # §3.12: > max_points <trkpt/<rtept start tags (prefix-tolerant byte regex, stops at max_points + 1); pure
 
 # app/routes/parse.py — the only module that imports gpxpy
-def parse_gpx(data: bytes) -> RawTrack: ...      # raises InvalidGpx only
+def parse_gpx(data: bytes) -> RawTrack: ...      # raises InvalidGpx or TooManyPoints
 def drop_consecutive_duplicates(points: Sequence[RawPoint]) -> tuple[RawPoint, ...]: ...
 
 # app/routes/geo.py
@@ -478,9 +644,19 @@ def gain_loss(elev_m: Sequence[float], *,
 def high_point_index(elev_m: Sequence[float]) -> int: ...    # first index of the maximum; ValueError if empty
 
 # app/routes/simplify.py
-def rdp_significance(points: Sequence[RawPoint]) -> tuple[float, ...]: ...  # inf at both ends; iterative
+def prethin(dist_m: Sequence[float], *, keep: Collection[int] = (),
+            min_points: int = DEFAULT_PARAMS.max_points,
+            max_points: int = DEFAULT_PARAMS.prethin_max_points) -> tuple[int, ...]: ...
+    # §3.5: n <= max_points → range(n); else sorted indices ⊇ {0, n-1} ∪ keep,
+    # min_points + 2 <= len <= max_points; ValueError unless 2*min_points <= max_points and |forced| <= min_points
+def rdp_significance(points: Sequence[RawPoint], *,
+                     tie_tolerance_m: float = RDP_TIE_TOLERANCE_M) -> tuple[float, ...]: ...  # inf at both ends; iterative
 def simplify(points: Sequence[RawPoint], *, keep: Collection[int] = (),
-             max_points: int = DEFAULT_PARAMS.max_points) -> tuple[int, ...]: ...  # sorted indices, len == min(n, max_points)
+             max_points: int = DEFAULT_PARAMS.max_points,
+             prethin_max_points: int = DEFAULT_PARAMS.prethin_max_points,
+             dist_m: Sequence[float] | None = None) -> tuple[int, ...]: ...
+    # sorted full-track indices, len == min(n, max_points); dist_m = full-resolution cumulative distance
+    # (computed with geo.cumulative_distance when None); RDP runs on prethin's candidates when n > prethin_max_points
 
 # app/routes/naming.py
 def route_name(metadata_name: str | None, track_name: str | None, filename: str | None) -> str: ...
@@ -488,6 +664,8 @@ def route_name(metadata_name: str | None, track_name: str | None, filename: str 
 # app/routes/summary.py — the whole pipeline; the benchmark target
 def summarise_gpx(data: bytes, filename: str | None,
                   params: ParseParams = DEFAULT_PARAMS) -> RouteSummary: ...   # raises RouteParseError only
+    # calls simplify(points, keep=[high], max_points=params.max_points,
+    #                prethin_max_points=params.prethin_max_points, dist_m=dist)  — reuses the full-resolution dist
 ```
 ```python
 # app/models/route.py
@@ -527,7 +705,8 @@ class RouteSummary(BaseModel):        # same config
 
 # app/models/errors.py
 ErrorCode = Literal["bad_request", "not_found", "method_not_allowed", "file_too_large", "invalid_gpx",
-                    "too_few_points", "validation_error", "http_error", "internal_error"]
+                    "too_many_points", "too_few_points", "validation_error", "http_error", "internal_error"]
+# → openapi.json ErrorResponse.code enum and the generated schema.d.ts gain "too_many_points" (pnpm gen:api)
 
 class FieldError(BaseModel):
     loc: list[str | int]
@@ -562,12 +741,18 @@ router = APIRouter(prefix="/v1/routes", tags=["routes"], route_class=UploadLimit
 @router.post("/parse", responses=ERROR_RESPONSES, summary="Parse a GPX file into a route summary")
 async def parse_route(
     file: Annotated[UploadFile, File(description="GPX 1.0/1.1 file, at most 10 MB")],
+    limiter: Annotated[anyio.CapacityLimiter, Depends(get_parse_limiter)],   # not in OpenAPI
 ) -> RouteSummary: ...
-    # read(MAX_UPLOAD_BYTES + 1) → 413 | run_in_threadpool(summarise_gpx, data, file.filename)
+    # read(MAX_UPLOAD_BYTES + 1) → 413
+    # | await anyio.to_thread.run_sync(summarise_gpx, data, file.filename, limiter=limiter)
     # RouteParseError → ApiError(422, e.code, e.message)
 
+# app/dependencies.py
+def get_parse_limiter(request: Request) -> anyio.CapacityLimiter: ...  # request.app.state.parse_limiter
+
 # app/middleware.py — RequestIdMiddleware's 500 body becomes error_body("internal_error", "Internal Server Error")
-# app/main.py — create_app: install_error_handlers(app); app.include_router(routes.router)
+# app/main.py — create_app: app.state.parse_limiter = anyio.CapacityLimiter(MAX_CONCURRENT_PARSES);
+#               install_error_handlers(app); app.include_router(routes.router)
 ```
 ```mermaid
 flowchart LR
@@ -580,7 +765,7 @@ flowchart LR
     PG --> GPXPY[(gpxpy)]
     SUM --> PAR[params]
   end
-  RT -- run_in_threadpool --> SUM
+  RT -- "to_thread.run_sync (CapacityLimiter 2)" --> SUM
   SUM --> MR[models/route.py]
   ER --> ME[models/errors.py]
   MR --> PAR
@@ -613,6 +798,26 @@ Imports point one way: `routers → routes → models`. `app/routes/*` never imp
 - **RDP binary search on ε** — rejected: about 30 full RDP runs, and it lands at "≤ 500" with an ε tolerance.
   Ranked significance gives exactly the budget in one pass.
 - **Recursive RDP** — rejected: the recursion limit on long or pathological tracks would cause a 500.
+- **Point count with a streaming expat pass** (amendment) — rejected: it is exact, but it makes a Python callback
+  per element and so roughly doubles XML cost on large files. Exactness isn't needed, because over-counting is
+  safe.
+- **Point count with `bytes.count(b"<trkpt")`** (amendment) — rejected: it misses prefixed tags, so it is only
+  correct while gpxpy stays blind to prefixes.
+- **Counting the points after `gpxpy.parse`** (amendment) — rejected: the memory and CPU are already spent.
+- **Counting only the chosen source** (amendment) — rejected: the choice needs the parse, and gpxpy builds both
+  kinds anyway.
+- **Index-stride-only or distance-stride-only pre-thinning** (amendment) — rejected: index-only drops sparse
+  stretches inside dense recordings, and distance-only can't guarantee ≥ 500 candidates.
+- **Radial-distance pre-filter** (amendment) — rejected: a second projected-distance pass, and like the
+  distance stride it can't guarantee the count.
+- **No RDP tie tolerance** (amendment) — rejected, though only narrowly: float noise makes collinear runs
+  quadratic again, which costs up to about 1.5 s on 2,000 points. Keeping the tolerance is cheap.
+- **A tie tolerance at map scale (≈ 0.1 m) to absorb coordinate rounding** (amendment) — rejected: it blurs RDP
+  semantics for a gain the pre-thinning bound already covers.
+- **`asyncio.Semaphore` around `run_in_threadpool`** (amendment) — rejected: it is loop-bound on contention,
+  which breaks `TestClient`'s per-request loops (§3.10).
+- **Rejecting with 503 when both slots are busy** (amendment) — rejected: it adds a new error state for clients
+  and UX, while waiting fits comfortably inside Cloud Run's timeout.
 - **Simplifying inputs of ≤ 500 points** — rejected: nothing gained under the cap.
 - **Size check via a dependency, app-wide middleware, or reading the raw `Request`** — rejected: §3.10.
 - **Reading the whole body and then checking its length** — rejected: unbounded memory on an in-memory filesystem.
@@ -627,6 +832,10 @@ Imports point one way: `routers → routes → models`. `app/routes/*` never imp
   runners.
 - **A gate against a stored baseline from another runner** — rejected: cross-machine noise is of the same order as
   the 20 % threshold, so a required check would flake.
+- **Feeding base and head through the action in turn** (amendment) — rejected: v1.22.2 records the head SHA for
+  both runs on `pull_request`, so the gate never alerts (§5).
+- **Failing unless base and head have identical benchmark names** (amendment) — rejected: under a no-bypass
+  ruleset, any PR that adds or renames a benchmark could never merge.
 - **gh-pages storage** — deferred: it needs a write token and a manager action, and the gate doesn't need it.
 - **Artifact storage** — rejected: cross-run artifact plumbing.
 - **Benchmarking through `TestClient`** — rejected for the regression gate: it adds HTTP and multipart noise. HTTP
@@ -648,8 +857,8 @@ Imports point one way: `routers → routes → models`. `app/routes/*` never imp
     Strava and watch fixtures land (1.1 follow-ups), the tuning must be re-run across the whole corpus. A single
     threshold may then conflict across elevation sources (GPS/barometric vs DEM), which is a manager decision
     (§3.4 escalation options).
-  - **A file with one missing `<ele>` loses its whole profile** until 1.3 supplies elevation. 1.3 may revisit this,
-    for example by filling short gaps.
+  - **A file with one missing or implausible `<ele>` loses its whole profile** until 1.3 supplies elevation. 1.3's
+    backfill must handle both cases. It may revisit this, for example by filling short gaps.
   - **UTF-8 only.** A GPX file declared in Latin-1 with non-ASCII bytes, or saved as UTF-16, gets `invalid_gpx`.
   - **Disjoint multi-segment files** (e.g. two days with a car shuttle between them) get a straight-line jump added
     to their distance.
@@ -657,9 +866,18 @@ Imports point one way: `routers → routes → models`. `app/routes/*` never imp
   - **The 500 body change** breaks anything that parsed `{"detail": "Internal Server Error"}`. Nothing does today;
     the web client classifies errors by status.
   - **The benchmark compares PR against base.** A PR that changes the benchmark itself compares two different
-    workloads, and reviewers must read the summary.
-  - **A 10 MiB hostile file** (about 170k points) costs several CPU-seconds, and on one instance a handful of them
-    stalls the API (follow-ups).
+    workloads, and reviewers must read the summary. Renaming a benchmark takes two PRs.
+  - **Real files above 100,000 points are refused.** That is about 28 h of 1 Hz recording. Raising the cap is a
+    manager decision, and it moves the memory budget behind `MAX_CONCURRENT_PARSES`.
+  - **Both kinds are counted** for the cap, so a file carrying a large `<trk>` and a large `<rte>` can be refused
+    even though its chosen source fits.
+  - **Above 2,000 points, `points[]` is RDP over the thinned candidates, not over the full track.** A feature
+    narrower than the stride, about L/1,500 (≈ 13 m on a 20 km route), can be missed. That doesn't matter at
+    500-point map scale.
+  - **Parses queue at 2 per instance.** Throughput on one instance is bounded by design. Scaling it means more
+    instances (ADR 0002/0003, a cost decision), not a bigger limiter.
+  - **Hostile worst case is now bounded:** at most 100k points through gpxpy, O(n) statistics and thinning, and
+    O(2000²) RDP. This is seconds, not hours. The element-count gap is still open (follow-ups).
 
 ## How it is tested
 All tests run with no network (`--disable-socket`). QA writes the acceptance, property, endpoint, fuzz and benchmark
@@ -695,7 +913,30 @@ tests red-first in `tests/routes/`. Backend adds unit tests for internals it int
       spike on a straight line);
     - a loop with start == end works;
     - a 20 000-point straight line and a spiral don't hit the recursion limit;
-    - `{i : sig(i) > ε}` equals a naive recursive reference RDP(ε), the latter written in the test.
+    - `{i : sig(i) > ε}` equals a naive recursive reference RDP(ε), written in the test with **the same split
+      rule** (near-tie tolerance, nearest the midpoint, then the smaller index);
+    - **near-tie rule:** on a line whose interior distances differ only by < 1e-6 m, the first split is the
+      midpoint; a point 1e-5 m farther than the rest wins wherever it is;
+    - **the thinning seam:** n = 2,000 never calls `prethin`. For n = 2,001 and n = 100,000 (a zigzag and a
+      straight line), `rdp_significance` is called with ≤ 2,000 points (spy via monkeypatch), and the output is
+      still exactly 500, contains 0, n−1 and the high point, and every returned index refers to the full track.
+  - **`prethin`:**
+    - n ≤ max_points → identity;
+    - otherwise sorted, distinct, ⊇ {0, n−1} ∪ keep, and `min_points + 2 ≤ len ≤ max_points`;
+    - deterministic (same input, same output);
+    - a sparse stretch survives: 50 points over 10 km after 100k points over 1 km keep ≥ 40 of the 50;
+    - all-but-one points within 1 m (the distance stride collapses) still give ≥ `min_points + 2`;
+    - L = 0 doesn't raise;
+    - `ValueError` when `2·min_points > max_points` or |forced| > `min_points`;
+    - small parameters (e.g. min 3, max 10) are table-tested by hand.
+  - **`exceeds_point_cap`** (small `max_points`, e.g. 3, plus one test at the real 100,000):
+    - exactly `max_points` tags → `False`; one more → `True`;
+    - `<trkpt>`, `<trkpt/>`, `<trkpt lat=…>`, a newline after the name, `<gpx:trkpt …>` and `<rtept` all count;
+      `trk` and `rte` tags count together;
+    - `</trkpt>`, `<trkptx>`, `<TRKPT` and `<trkseg` don't count;
+    - tags inside a comment do count (pinned as the documented over-count);
+    - **linear:** 10 MiB of `<` + `a`·k runs and 10 MiB of `<gpx:trkpt/>` each finish quickly. Use a generous
+      wall bound (e.g. < 1 s) or `pytest-benchmark` in disabled mode; never a tight timing assert.
   - **`route_name`:** metadata → track → `C:\x\My_Hike.GPX` gives "My Hike" → `None` gives "Untitled route";
     whitespace-only names skipped; control characters stripped; the 200 code-point cut; Hebrew names kept.
   - **`check_gpx_prolog`:**
@@ -703,14 +944,22 @@ tests red-first in `tests/routes/`. Backend adds unit tests for internals it int
       any output), external DTD reference, internal subset → `InvalidGpx`;
     - KML root → `InvalidGpx`; GPX 1.0, 1.1 and no-namespace roots pass;
     - a UTF-8 BOM passes;
+    - a declared `encoding="x-unknown"` (`LookupError`), `"utf-32"` and `"shift_jis"` (`ValueError`) →
+      `InvalidGpx`, and the same files through HTTP → 422 `invalid_gpx`;
     - `pyexpat.EXPAT_VERSION ≥ 2.6.0`.
   - **`parse_gpx`:**
     - `trk` preferred over `rte`; `rte` fallback;
     - multiple tracks and segments merged in order;
     - lat 91, lon NaN or missing lat → `InvalidGpx`;
     - `<ele>nan</ele>` → `None`; non-UTF-8 bytes → `InvalidGpx`;
+    - **elevation bounds:** −1000 and 10000 are kept, while −1000.001, 10000.001, 1e308, `inf` and `-inf` →
+      `None`; through `summarise_gpx`, one such point gives `has_elevation` false and every `elev_m` null;
+    - **cap before gpxpy:** a 100,001-point file raises `TooManyPoints` with `gpxpy.parse` monkeypatched to fail
+      the test if called; a 100,000-point file parses;
+    - **precedence:** a DOCTYPE plus 100,001 tags → `InvalidGpx`; 100,001 tags plus a non-UTF-8 byte →
+      `TooManyPoints`;
     - waypoint-only → empty points (and then `too_few_points` from the pipeline).
-  - **`ParseParams`:** invalid values raise.
+  - **`ParseParams`:** invalid values raise, including `prethin_max_points < 2·max_points`.
 - **Fixture acceptance (parametrised with `tests.fixtures.loader`):**
   - **Distance:** within 2 % on every `valid_fixtures()`.
   - **Gain:** within 10 % on every valid fixture with `has_elevation`. QA's report prints the per-fixture % error
@@ -750,6 +999,12 @@ tests red-first in `tests/routes/`. Backend adds unit tests for internals it int
 - **Endpoint (`TestClient`):**
   - 200 for every valid fixture, with the body validating as `RouteSummary`;
   - 422 `invalid_gpx` (truncated, KML, empty file), 422 `too_few_points` (1-point file, and two identical points);
+  - 422 `too_many_points` for 100,001 minimal `<trkpt lat="0" lon="0"/>` (about 2.6 MB, under the size cap);
+  - **concurrency cap:** in an anyio test with `httpx.AsyncClient(transport=ASGITransport(app))`, patch
+    `app.routers.routes.summarise_gpx` with a stub that records how many calls are in flight and blocks on a
+    `threading.Event`. Fire 4 requests, then assert that exactly 2 are in flight while the others wait. Release
+    the event, and all 4 must return 200. Also, a fresh `create_app()` has its own limiter (no state leaks
+    between apps);
   - 422 `validation_error` with a missing `file` field, with `detail[0].loc == ["body", "file"]` and no `input` key;
   - **Size limits:**
     - 413 `file_too_large` for an 11 MB file (`Content-Length` path);
@@ -762,36 +1017,66 @@ tests red-first in `tests/routes/`. Backend adds unit tests for internals it int
   - `parseRoute` exists;
   - the 200 schema is `RouteSummary`;
   - 400/413/422/500 reference `ErrorResponse`;
+  - the `ErrorResponse.code` enum includes `too_many_points`;
   - no `HTTPValidationError` component exists;
+  - the `parseRoute` operation has no parameter coming from the limiter dependency;
   - `points.maxItems == 500`;
   - the nullable fields are required with a `null` branch.
 - **Benchmark:** §5, in the `benchmark` job. Under `api-test` the same test runs once with benchmarking disabled, as
   a correctness test.
 - **Checkpoint (QA, recorded in `PROGRESS.md`):** the per-fixture table; `TestClient` timing of the > 10k fixture;
   the post-merge timing against the deployed URL (curl/httpx, outside unit tests); fuzz runs with 0 × 500.
+- **Hostile-input measurements (QA verify, recorded in `PROGRESS.md`, not CI gates).** Each case below records the
+  `tracemalloc` peak and the wall time of `summarise_gpx`:
+  1. a 100,000-point real-shaped file (`ele` + `time`). This checks the ≈ 80 MiB estimate behind
+     `MAX_CONCURRENT_PARSES = 2`. If the peak is above about 150 MiB, report it to the tech lead and don't change
+     the constant;
+  2. a 100,000-point zigzag, the RDP worst case;
+  3. a 10 MiB file of `<trkseg/>` and a 10 MiB file of unknown empty elements inside one `<trk>`, for the
+     element-count follow-up.
 - **No e2e in 1.2:** there is no screen. 1.10 adds the UI path.
 
 ## Manager decisions needed
-1. **Approve the new dependencies:**
+1. *(Done 2026-10-19.)* **Approve the new dependencies:**
    - `python-multipart` (runtime);
    - `pytest-benchmark` (dev);
    - `benchmark-action/github-action-benchmark` (CI action, SHA-pinned).
-2. **Confirm the path `/v1/routes/parse`** (already pending in the brief).
+2. *(Done 2026-10-19.)* **Confirm the path `/v1/routes/parse`.**
 3. **Mark `benchmark` required** after merge (already in the brief).
+4. *(Amendment, done.)* `too_many_points` above 100,000 raw points was approved on 2026-10-19.
+5. *(Amendment, for the tech lead to confirm.)* Declaring `anyio` explicitly in `pyproject` adds no new package to
+   the lock (§4).
 
-Conditional: **only if** no parameter point in §3.4's grid meets 10 % on every fixture. In that case, backend stops
-and the tech lead brings the grid table and the three options to the manager.
+Conditional, and not triggered: escalation was needed **only if** no parameter point in §3.4's grid met 10 % on
+every fixture. 23 points did (§3.4).
 
 ## Follow-ups (out of scope for this ADR)
 - **CORS:** `create_app` allows only `GET, OPTIONS`. The 1.10 web upload needs `POST` in `allow_methods`; add it
   with 1.10, or in 1.2 if the tech lead prefers, since the checkpoint's deployed timing uses curl and needs no CORS.
 - **Docker image expat:** `python:3.12-slim` builds against Debian's system expat. Devops could add a build-time
   `python -c "import pyexpat; print(pyexpat.EXPAT_VERSION)"` check. The DTD guard makes this defence-in-depth only.
-- **CPU cost of hostile uploads:**
-  - A 10 MiB file of about 170k points takes several seconds, through gpxpy and the O(n²) worst case of RDP.
-  - With max-instances 1 this is a cheap DoS.
-  - Options for a later step: a point cap (`too_many_points`), rate limiting before Phase 3 (which ADR 0003
-    already flags), or a streaming parser.
+- **1.3: give the elevation lookup a seam.** Split `summarise_gpx` into three stages:
+  1. `parse_gpx(data) → RawTrack`, which is pure;
+  2. at the I/O edge (router or service), detect when elevation is missing **or implausible** (§3.1 step 8) and
+     backfill it through the lookup adapter;
+  3. a pure `summarise_track(track: RawTrack, filename: str | None, params: ParseParams = DEFAULT_PARAMS,
+     *, elevation_source: ElevationSource) -> RouteSummary`.
+
+  `summarise_gpx` then stays as a thin pure composition of 1 and 3, so the benchmark target doesn't move. This
+  belongs to 1.3's ADR, not to this amendment.
+- **Element-count gap (hostile input), likely needing a decision.** The point cap bounds gpxpy's *point*
+  objects. It does not bound `ElementTree.XML`'s tree, or gpxpy's per-`<trkseg>`/`<trk>`/`<wpt>` objects.
+  - A 10 MiB file of `<trkseg/>` is about 1.1M elements, and one of `<a/>` is about 2.6M. My estimate of
+    ≈ 200 MiB or more for the tree alone is **unmeasured** (QA measurement 3 above).
+  - If QA confirms it, the cheap fix uses the same byte scan: count every start tag (`rb"<[^\s<>/!?]"`) and
+    reject above, say, 1,000,000 with `too_many_points`. A real point is ≤ about 8 elements, so 100k points fit.
+  - That is a new limit, and so a manager decision.
+- **Memory held by waiting requests.** The parse limiter bounds parse memory, not buffered uploads. Up to 80
+  concurrent requests can each hold up to 10 MiB of bytes plus the multipart spool.
+  - Options: lower Cloud Run `--concurrency` for this service, which is devops and needs the manager; or rate
+    limiting before Phase 3, which ADR 0003 already flags.
+- **UX copy (1.10):** `too_many_points` needs a user-facing string, for example "This file has too many points
+  (more than 100,000)". It falls under the unknown-code rule until then.
 - **Payload size:** about 500 × 4 unrounded floats ≈ 50 KB of JSON. Consider rounding at the edge (lat/lon 6 dp,
   metres 1 dp) or `GZipMiddleware` when 1.10/1.11 set the performance budget.
 - **Elevation chart (1.10):** RDP is horizontal only, so a 500-point profile can lose small elevation features.
@@ -799,8 +1084,18 @@ and the tech lead brings the grid table and the three options to the manager.
 - **Re-tune gain** when the deferred Komoot/Strava/watch fixtures land (see "Harder later").
 
 ## References
-- gpxpy source, `gpxpy/parser.py`: lxml if importable, else `xml.etree` (c)ElementTree; bytes decoded with
-  `.decode()`; XML errors → `GPXXMLSyntaxException`; no root-name check. https://github.com/tkrajina/gpxpy/blob/master/gpxpy/parser.py
+- gpxpy source, `gpxpy/parser.py`:
+  - it uses lxml if importable, else `xml.etree` (c)ElementTree;
+  - bytes are decoded with `.decode()`; XML errors → `GPXXMLSyntaxException`; there is no root-name check;
+  - it builds the whole tree with `mod_etree.XML(self.xml)` and strips only the first default `xmlns`.
+
+  https://github.com/tkrajina/gpxpy/blob/master/gpxpy/parser.py
+- gpxpy `gpxfield.py`: list children are matched with `child.tag == self.tag`, case-sensitive, and prefixes are
+  not stripped on read. https://github.com/tkrajina/gpxpy/blob/master/gpxpy/gpxfield.py
+- Cloud Run request timeout: the default is 300 s and the maximum 3600 s; when it is exceeded the client gets 504
+  and the instance keeps running. https://docs.cloud.google.com/run/docs/configuring/request-timeout
+- anyio `to_thread.run_sync(..., limiter=)`, `CapacityLimiter`, `abandon_on_cancel`:
+  https://anyio.readthedocs.io/en/stable/threads.html
 - gpxpy `py.typed` and `package_data={"gpxpy": ["py.typed"]}`: https://github.com/tkrajina/gpxpy/tree/master/gpxpy ,
   https://github.com/tkrajina/gpxpy/blob/master/setup.py ; PyPI 1.6.2 (Apache-2.0): https://pypi.org/project/gpxpy/
 - Python XML vulnerabilities table and expat footnotes (2.4.1 billion laughs/quadratic, 2.6.0 large tokens; etree

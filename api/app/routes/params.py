@@ -16,8 +16,10 @@ UNTITLED_ROUTE_NAME: Final = "Untitled route"
 class ParseParams:
     resample_step_m: float = 5.0
     max_resample_points: int = 100_000
-    smoothing_window_m: float = 30.0  # tuned per ADR 0004 §3.4; starting value
-    gain_threshold_m: float = 10.0  # tuned per ADR 0004 §3.4; starting value
+    # Tuned on the ADR 0004 §3.4 grid (window 20..80 m x T 3..15 m): the point with the
+    # best worst-case margin to +-10 % gain on every valid fixture with elevation.
+    smoothing_window_m: float = 20.0
+    gain_threshold_m: float = 9.5
     loop_threshold_m: float = 200.0
     max_points: int = MAX_SUMMARY_POINTS  # 3 <= max_points <= MAX_SUMMARY_POINTS
 

@@ -1,6 +1,6 @@
 # 0004 — GPX parser: module boundary, RouteSummary/ErrorResponse contract, algorithms, upload limits, benchmark
 
-Status: accepted · Date: 2026-10-19 · Amended: 2026-10-19 · Step: 1.2
+Status: accepted · Date: 2026-10-19 · Amended: 2026-10-19 (two rounds) · Step: 1.2
 
 ## Amendments
 **2026-10-19.** These record decisions already taken in step 1.2: review round 1, QA verify and the devops
@@ -12,14 +12,39 @@ rewritten in place, so the body of the ADR is current.
      The tags are counted with a byte scan before gpxpy runs (§3.1 step 3, §3.12). The manager approved this
      cap.
    - **Pre-thinning.** A track with more than 2,000 points is thinned in O(n) before ranked RDP runs (§3.5).
-   - **Concurrency.** At most 2 parses run at once per instance (§3.10).
+   - **Concurrency.** At most 1 parse runs at a time per instance (§3.10). It was 2; item 7 changed it.
 2. **Elevation plausibility.** An `<ele>` outside [−1000, 10000] m is treated as missing (§2, §3.1 step 8).
 3. **XML encoding.** An unsupported declared encoding (expat `LookupError`/`ValueError`) is now `invalid_gpx`
    (§3.11). Before this, it escaped as a 500.
 4. **Benchmark.** §5 now describes what is implemented: a base entry seeded into the data file, one comparison
    run on the head, and the name-intersection rule. The original two-run A/B could never alert.
 5. **RDP ties.** The split rule now uses a near-tie tolerance of 1e-6 m and splits nearest the midpoint (§3.5).
+   Item 10 narrows what the tolerance is for.
 6. **Follow-up for 1.3.** `summarise_gpx` should be split so the elevation lookup has a seam (Follow-ups).
+
+**2026-10-19, second round.** These record QA's red tests and measurements on the amended code, and the tech lead's
+decisions on them (`docs/steps/1.2.md`, the entry committed in 26c1e97). The sections they touch have been rewritten
+in place.
+
+7. **One parse at a time.** `MAX_CONCURRENT_PARSES` is **1**, not 2 (§3.10). QA measured the `tracemalloc` peak of
+   one parse: 296 MiB for 10 MiB of `<trkseg/>`, 238 MiB for 10 MiB of `<a/>`, and 127 MiB for a real-shaped
+   100k-point file, against my estimate of 80. On a 512 MiB instance, one worst-case parse fits and two don't.
+   Running one parse at a time bounds memory without a new limit, so the **element-count cap is rejected as not
+   needed**. It is no longer a pending manager decision (Options considered).
+8. **NUL bytes.** Any `\x00` byte → `invalid_gpx` "file must be UTF-8". The order is now empty → prolog guard →
+   NUL → point cap → decode → gpxpy (§3.1 step 3). The reason: BOM-less UTF-16 passes the strict UTF-8 decode,
+   because NUL is valid UTF-8. gpxpy then re-encodes the text, expat auto-detects UTF-16, and the ASCII byte scan
+   never sees the tags. QA parsed a 150k-point UTF-16 file past the cap. §3.12's premise ("every file that reaches
+   gpxpy has ASCII tags") was false, and is corrected there.
+9. **`Content-Length` hardening** (§3.10). Only ASCII digits are parsed. More than 19 digits ⇒ 413 before `int()`
+   is called. Non-ASCII digits (e.g. `²`) ⇒ 400 `bad_request`.
+10. **Pre-thinning is the only worst-case bound for RDP** (§3.5). Backend measured about 9.4M distance calls for raw
+    `rdp_significance` on a 20k-point diagonal with 6-dp coordinates. The 1e-6 m tolerance does nothing against
+    about 5 cm of coordinate rounding.
+11. **Measured results** (§3.5, §3.10, §5). The largest fixture has a min of 187 ms. A 100k-point adversarial zigzag
+    takes 2.8–3.5 s end to end, mostly in gpxpy.
+12. **Open: Cloud Run `--concurrency`.** This is not decided here (Follow-ups). The tech lead has asked the manager to
+    lower it from 80 to 8.
 
 ## Context
 Step 1.2 adds `POST /v1/routes/parse`. It turns an uploaded GPX file into a typed `RouteSummary`, rejects bad input
@@ -41,7 +66,8 @@ against regressions. The forces at play:
 - **Existing error shape:** `RequestIdMiddleware` turns unhandled exceptions into
   `500 {"detail": "Internal Server Error"}`, and `tests/test_errors.py` asserts exactly that body. FastAPI's own
   422 is `{"detail": [...]}`, and Starlette's 404/405 is `{"detail": "Not Found"}`. Neither is `ErrorResponse`.
-- **Runtime:** Cloud Run with 512 MiB of memory, concurrency 80 and max 1 instance (ADR 0002/0003). The
+- **Runtime:** Cloud Run with 512 MiB of memory, concurrency 80 (lowering it is open; Follow-ups) and max 1
+  instance (ADR 0002/0003). The
   filesystem is in memory, and Cloud Run caps HTTP/1 requests at 32 MiB. Starlette spools uploads to a
   `SpooledTemporaryFile` (1 MiB in memory, then "disk", which is RAM here) and has **no total file-size limit**.
 - **Path:** `overview.md` says `/routes/parse`, but the phase-1 checklist path `/v1/routes/parse` is used. The
@@ -127,11 +153,11 @@ the missing one**.
 | Status | `code` | Raised by |
 | --- | --- | --- |
 | 413 | `file_too_large` | the `Content-Length` pre-check, the streaming body cap, or the file-length check (§3.10) |
-| 422 | `invalid_gpx` | empty file, unsupported declared XML encoding, not UTF-8, not well-formed, DTD/entity present, root not `<gpx>`, any gpxpy failure, coordinates out of range or not finite |
+| 422 | `invalid_gpx` | empty file, unsupported declared XML encoding, a NUL byte or not UTF-8, not well-formed, DTD/entity present, root not `<gpx>`, any gpxpy failure, coordinates out of range or not finite |
 | 422 | `too_many_points` | more than `MAX_RAW_POINTS` (100,000) `<trkpt>`/`<rtept>` start tags in the raw bytes, decided before gpxpy runs (§3.12) |
 | 422 | `too_few_points` | fewer than 2 points after merging and de-duplication (this includes waypoint-only files) |
 | 422 | `validation_error` | FastAPI `RequestValidationError`, e.g. the `file` field is missing, or `file` is a text field |
-| 400 | `bad_request` | Starlette multipart errors (FastAPI turns form-parsing failures into `HTTPException(400)`) |
+| 400 | `bad_request` | Starlette multipart errors (FastAPI turns form-parsing failures into `HTTPException(400)`); a `Content-Length` made of non-ASCII digits (§3.10) |
 | 404 / 405 | `not_found` / `method_not_allowed` | Starlette routing; the `Allow` header is kept |
 | other 4xx | `http_error` | any other `HTTPException` |
 | 500 | `internal_error` | `RequestIdMiddleware`'s catch-all (a bug; the fuzz test exists so this never happens) |
@@ -166,9 +192,13 @@ can't be updated in lock-step.
 **3.1 Parse (`parse_gpx`).** The input bytes go through these steps, in order:
 1. **Empty input** → `invalid_gpx`.
 2. **XML prolog guard** (`check_gpx_prolog`, §3.11) on the raw bytes.
-3. **Point cap** (`exceeds_point_cap`, §3.12) on the raw bytes → `too_many_points`. It runs before decoding so
-   the cap never pays for a decoded copy. Errors take precedence in this order: a prolog error, then
-   `too_many_points`, then "not UTF-8", then a gpxpy failure.
+3. **Byte checks** on the raw bytes. They run before decoding, so they never pay for a decoded copy.
+   - **NUL:** any `\x00` byte → `invalid_gpx` "file must be UTF-8". XML 1.0 forbids U+0000, so no valid UTF-8
+     GPX contains that byte. UTF-16 and UTF-32 put a NUL beside every ASCII character, and BOM-less UTF-16 would
+     otherwise pass step 4 and hide its tags from the point cap (§3.12).
+   - **Point cap** (`exceeds_point_cap`, §3.12) → `too_many_points`.
+   - Errors take precedence in this order: a prolog error, then a NUL, then `too_many_points`, then "not UTF-8",
+     then a gpxpy failure.
 4. **Decode** as `utf-8-sig`, strict, which strips a BOM. Failure → `invalid_gpx` "file must be UTF-8".
 5. **Parse:** `gpxpy.parse(text)`. **Every** exception from that one call (`GPXXMLSyntaxException`, `GPXException`,
    `ValueError`, …) → `invalid_gpx`, chained with `from`. This catch-all is justified because gpxpy is a
@@ -319,8 +349,12 @@ elevations.
     - Why a tolerance: exact ties were already split at the midpoint, but projection float noise (about 1e-9 m)
       turns exact collinearity into strict inequalities, so the exact rule rarely fired. The tolerance restores
       O(m log m) on collinear runs.
-    - The tolerance is **kept as a performance nicety**. It is no longer a DoS guard, since pre-thinning bounds
-      the worst case. It does not absorb coordinate quantisation: 6-dp rounding is about 5 cm.
+    - The tolerance is **kept as a performance nicety for exactly collinear input, and it is not a bound**. It
+      does not absorb coordinate quantisation: 6-dp rounding is about 5 cm, some 50,000 times larger.
+      Backend measured about 9.4M distance calls for raw `rdp_significance` on a 20k-point diagonal with 6-dp
+      coordinates. Balanced splits would need about n·log₂ n ≈ 0.3M.
+    - **Pre-thinning is the only worst-case bound.** RDP never sees more than 2,000 points, so it makes at most
+      about 2,000² / 2 = 2M distance calls, whatever the input's shape.
   - The clamp makes {i : sig(i) > ε} exactly the output of RDP(ε) with this split rule, for every ε. So on the
     candidates this *is* RDP, with the ε that lands on the budget found implicitly. There is no binary search and
     no "≤ 500 but which ε" ambiguity. RDP is **no longer applied to the full track** when n > 2,000.
@@ -328,8 +362,11 @@ elevations.
   by (significance descending, index ascending), returned as full-track indices sorted ascending. The output is
   exactly min(n, max_points) points.
 - **Cost:** O(n) to thin plus O(m log m) RDP on real tracks, where m ≤ 2,000. The pathological worst case is
-  **O(n) + O(2000²)**. For scale, the tech lead measured 1.55 s for a hostile 2k-point zigzag before thinning
-  existed, so 2,000² is the ceiling, and n is capped at 100k by §3.12.
+  **O(n) + O(2000²)**, and n is capped at 100k by §3.12.
+  - For scale, raw RDP on an adversarial zigzag (QA) took 1.6 s at 2k points, 6.3 s at 4k and 27 s at 8k, so
+    2,000² is the ceiling.
+  - **Measured with thinning:** a 100k-point adversarial zigzag takes 2.8–3.5 s end to end, mostly in gpxpy. The
+    largest fixture has a min of 187 ms (§5).
 
 **3.6 High point.** The first index of the maximum raw elevation, which keeps it deterministic on plateaus. It is
 in `points` because simplify forces it, so `max(p.elev_m for p in points) == max_elev_m` holds.
@@ -356,6 +393,10 @@ none of them reads an unbounded body.
   APIRoute" pattern. Its handler wrapper raises `ApiError(413, "file_too_large")` before reading anything if the
   header says more than `MAX_UPLOAD_BYTES + MULTIPART_OVERHEAD_BYTES` (64 KiB for the boundary and part headers).
   Browsers' `FormData` uploads always send `Content-Length`.
+  - **Header hardening (amendment).** Only ASCII digits are parsed. More than 19 digits ⇒ 413 without calling
+    `int()`: no 64-bit length is longer, and a header of thousands of digits would otherwise hit Python's int/str
+    conversion limit and become a 500. Non-ASCII digits (e.g. `²`, which `str.isdigit()` accepts and `int()`
+    rejects) ⇒ 400 `bad_request`. Any other non-numeric value is left to layer 2.
 - **Layer 2: streaming cap.** The wrapper hands FastAPI a `BodyLimitRequest`, whose `stream()` (the public method
   Starlette's form parser consumes) counts bytes and raises the same `ApiError` once the body passes that limit.
   This covers chunked bodies and lying headers. The multipart spool is therefore bounded at about 10 MiB + 64 KiB.
@@ -370,13 +411,13 @@ none of them reads an unbounded body.
   limiter=parse_limiter)`. Starlette's `run_in_threadpool` is that same call with the default limiter, so the
   parse never blocks the event loop (or `/health`).
   - **The limiter.** `parse_limiter` is an `anyio.CapacityLimiter(MAX_CONCURRENT_PARSES)` with
-    `MAX_CONCURRENT_PARSES = 2`. `create_app` creates it and stores it on `app.state.parse_limiter`. That gives one
+    `MAX_CONCURRENT_PARSES = 1`. `create_app` creates it and stores it on `app.state.parse_limiter`. That gives one
     limiter per instance in production and a fresh one per app in tests. The handler receives it through the
     dependency `get_parse_limiter`, the same pattern as `get_settings`.
   - **Why `CapacityLimiter` and not a semaphore around `run_in_threadpool`:** the two behave the same, but the
     limiter is one call and anyio's purpose-built primitive for capping worker threads. The token is held
     exactly while the worker thread runs. This holds even when the awaiting request is cancelled, because
-    `run_sync` does not abandon its thread by default (`abandon_on_cancel=False`). A third request waits in the
+    `run_sync` does not abandon its thread by default (`abandon_on_cancel=False`). A second request waits in the
     event loop and holds no thread while it waits.
   - **Why not a stdlib `asyncio.Semaphore`:** it binds to the first event loop that contends on it, and
     `TestClient` without a context manager runs each request on a new loop, so tests could fail with
@@ -388,15 +429,25 @@ none of them reads an unbounded body.
     If the total time exceeds Cloud Run's request timeout (the default 300 s; `deploy-api.yml` doesn't set
     `--timeout`), Cloud Run's front end returns 504. That 504 does not come from the app, so it doesn't break
     "0 × 500".
-  - **Rough worst case:** 80 concurrent requests ÷ 2 slots × a few seconds each is well under 300 s.
-  - **Why 2.** It is a memory budget.
-    - One parse at the 100k cap peaks at about 80 MiB. **This is an estimate** scaled from the reviewer's
-      239 MiB at 300k points, and QA measures it.
-    - Two parses plus the process baseline and the buffered uploads fit in a 512 MiB instance. Three or more
-      would not leave a margin.
-    - CPU gives no reason to go higher: the instance has 1 vCPU and the parse holds the GIL. 2 rather than 1 lets
-      a small file finish while a large one runs.
-  - The limiter is acquired *after* the upload is read and size-checked, so a slow uploader never holds a slot.
+  - **Worst case:** at Cloud Run's concurrency of 80, with every request a 100k-point zigzag at about 3.5 s,
+    the last request waits about 80 × 3.5 ≈ 280 s, just under the 300 s timeout. Real files take about 0.2 s. At
+    a concurrency of 8 (Follow-ups) the worst case is about 28 s.
+  - **Why 1 (amended from 2).** It is a memory budget, and these are the peaks QA measured (`tracemalloc`, current
+    code):
+
+    | Input | Peak |
+    | --- | --- |
+    | 10 MiB of `<trkseg/>` | 296 MiB |
+    | 10 MiB of `<a/>` | 238 MiB |
+    | real-shaped 100k points (`ele` + `time`) | 127 MiB (my estimate was 80) |
+
+    - One worst-case parse plus the process baseline fits in a 512 MiB instance, and two do not.
+    - One slot bounds memory **without an element-count cap**, which would have been a new product limit
+      (Options considered).
+    - CPU loses nothing: the instance has 1 vCPU and the parse holds the GIL. The cost is that a small file can
+      wait behind a large one, for up to about 3.5 s per parse ahead of it.
+    - This bounds *parse* memory only. Uploads waiting for the slot still hold their bytes (Follow-ups).
+  - The limiter is acquired *after* the upload is read and size-checked, so a slow uploader never holds the slot.
 
 **3.11 XML safety: stdlib only, no defusedxml; we forbid DTDs ourselves.**
 - **Which parser gpxpy uses:** it parses with `lxml` if that is importable, otherwise `xml.etree.ElementTree`
@@ -454,8 +505,14 @@ none of them reads an unbounded body.
   - `</trkpt>` does not match.
   - No real point can be missed:
     - DTDs are rejected (§3.11), so no element can come from entity expansion;
-    - step 4 requires UTF-8, so in every file that reaches gpxpy the tags are ASCII bytes;
+    - the scan assumes the tags are spelled in ASCII bytes. §3.1 step 3 rejects any NUL byte before the scan,
+      which closes UTF-16 and UTF-32, since both put a NUL beside every ASCII character. Step 4 then requires
+      UTF-8;
     - XML allows no whitespace between `<` and the name.
+  - **Correction (amendment).** The first version claimed that step 4's UTF-8 requirement alone meant every file
+    reaching gpxpy had ASCII tags. That was false. BOM-less UTF-16 decodes as valid UTF-8, because NUL is valid
+    UTF-8. gpxpy then re-encodes the text, expat auto-detects UTF-16, and the scan never saw the tags. QA parsed a
+    150k-point UTF-16 file past the cap that way.
 - **Cost:** a C-speed scan, linear time, constant memory.
   - The pattern starts with the literal `<`, so `re` skips quickly to each candidate.
   - The prefix class excludes `<`, so backtracking is bounded by the run up to the next `<`.
@@ -535,6 +592,7 @@ under coverage, and only the benchmark job times them.
      head/base for humans.
   7. Permissions: `contents: read` only.
 - **Proven red in CI** on the throwaway PR #28: run 39288735236 failed at 1.43× head/base.
+- **Measured (amendment):** the largest fixture has a min of 187 ms, about a tenth of the 2.0 s ceiling.
 - **On push to `main`:** run the head only and append to the history with the action's `external-data-json-path`,
   persisted with `actions/cache`.
   - Key `benchmark-${{ github.sha }}` with restore-keys `benchmark-`; cache keys are immutable, so each run saves
@@ -577,7 +635,7 @@ MAX_PLAUSIBLE_ELEV_M: Final = 10000.0     # §3.1 step 8, inclusive
 MAX_RAW_POINTS: Final = 100_000           # §3.12; > this → too_many_points (manager-approved)
 PRETHIN_MAX_POINTS: Final = 2_000         # §3.5
 RDP_TIE_TOLERANCE_M: Final = 1e-6         # §3.5 split rule
-MAX_CONCURRENT_PARSES: Final = 2          # §3.10
+MAX_CONCURRENT_PARSES: Final = 1          # §3.10 (amended from 2)
 
 @dataclass(frozen=True, slots=True)
 class ParseParams:
@@ -624,7 +682,7 @@ def exceeds_point_cap(data: bytes, *, max_points: int = MAX_RAW_POINTS) -> bool:
     # §3.12: > max_points <trkpt/<rtept start tags (prefix-tolerant byte regex, stops at max_points + 1); pure
 
 # app/routes/parse.py — the only module that imports gpxpy
-def parse_gpx(data: bytes) -> RawTrack: ...      # raises InvalidGpx or TooManyPoints
+def parse_gpx(data: bytes) -> RawTrack: ...      # raises InvalidGpx or TooManyPoints; order per §3.1 (NUL before cap)
 def drop_consecutive_duplicates(points: Sequence[RawPoint]) -> tuple[RawPoint, ...]: ...
 
 # app/routes/geo.py
@@ -731,6 +789,7 @@ ERROR_RESPONSES: Final[dict[int | str, dict[str, Any]]]  # Any: FastAPI's `respo
 class BodyLimitRequest(Request):
     def __init__(self, scope: Scope, receive: Receive, *, max_body_bytes: int) -> None: ...
     async def stream(self) -> AsyncGenerator[bytes, None]: ...  # raises ApiError(413, "file_too_large")
+# UploadLimitRoute's handler: ASCII-digit Content-Length only; > 19 digits → 413 before int(); non-ASCII digits → 400
 class UploadLimitRoute(APIRoute):
     max_body_bytes: ClassVar[int] = MAX_UPLOAD_BYTES + MULTIPART_OVERHEAD_BYTES
     def get_route_handler(self) -> Callable[[Request], Coroutine[Any, Any, Response]]: ...  # Any: FastAPI's signature
@@ -765,7 +824,7 @@ flowchart LR
     PG --> GPXPY[(gpxpy)]
     SUM --> PAR[params]
   end
-  RT -- "to_thread.run_sync (CapacityLimiter 2)" --> SUM
+  RT -- "to_thread.run_sync (CapacityLimiter 1)" --> SUM
   SUM --> MR[models/route.py]
   ER --> ME[models/errors.py]
   MR --> PAR
@@ -813,11 +872,19 @@ Imports point one way: `routers → routes → models`. `app/routes/*` never imp
 - **No RDP tie tolerance** (amendment) — rejected, though only narrowly: float noise makes collinear runs
   quadratic again, which costs up to about 1.5 s on 2,000 points. Keeping the tolerance is cheap.
 - **A tie tolerance at map scale (≈ 0.1 m) to absorb coordinate rounding** (amendment) — rejected: it blurs RDP
-  semantics for a gain the pre-thinning bound already covers.
+  semantics for a gain the pre-thinning bound already covers. The 9.4M-call measurement (§3.5) confirms that only
+  pre-thinning bounds rounded input.
 - **`asyncio.Semaphore` around `run_in_threadpool`** (amendment) — rejected: it is loop-bound on contention,
   which breaks `TestClient`'s per-request loops (§3.10).
-- **Rejecting with 503 when both slots are busy** (amendment) — rejected: it adds a new error state for clients
-  and UX, while waiting fits comfortably inside Cloud Run's timeout.
+- **Rejecting with 503 when the slot is busy** (amendment) — rejected: it adds a new error state for clients and
+  UX, while waiting fits inside Cloud Run's timeout.
+- **`MAX_CONCURRENT_PARSES = 2`** (second amendment) — rejected: the measured worst single parse is about 300 MiB,
+  so two don't fit in 512 MiB.
+- **An element-count cap** (count every start tag in the byte scan, reject above about 1M) (second amendment) —
+  rejected as not needed: one parse at a time already keeps the measured worst case (296 MiB) inside the instance,
+  and the cap would be a new product limit.
+- **Detecting and decoding UTF-16 so the point cap can scan it** (second amendment) — rejected: the contract is
+  UTF-8 only (Consequences), and rejecting NUL is one C-speed `in` test.
 - **Simplifying inputs of ≤ 500 points** — rejected: nothing gained under the cap.
 - **Size check via a dependency, app-wide middleware, or reading the raw `Request`** — rejected: §3.10.
 - **Reading the whole body and then checking its length** — rejected: unbounded memory on an in-memory filesystem.
@@ -859,7 +926,8 @@ Imports point one way: `routers → routes → models`. `app/routes/*` never imp
     (§3.4 escalation options).
   - **A file with one missing or implausible `<ele>` loses its whole profile** until 1.3 supplies elevation. 1.3's
     backfill must handle both cases. It may revisit this, for example by filling short gaps.
-  - **UTF-8 only.** A GPX file declared in Latin-1 with non-ASCII bytes, or saved as UTF-16, gets `invalid_gpx`.
+  - **UTF-8 only.** A GPX file declared in Latin-1 with non-ASCII bytes, or saved as UTF-16 (with or without a
+    BOM), gets `invalid_gpx`. Supporting UTF-16 later means decoding before the point cap, which costs a copy.
   - **Disjoint multi-segment files** (e.g. two days with a car shuttle between them) get a straight-line jump added
     to their distance.
   - **Changing the 500-point cap** changes the OpenAPI (`maxItems`), which is a visible contract diff, as intended.
@@ -874,10 +942,12 @@ Imports point one way: `routers → routes → models`. `app/routes/*` never imp
   - **Above 2,000 points, `points[]` is RDP over the thinned candidates, not over the full track.** A feature
     narrower than the stride, about L/1,500 (≈ 13 m on a 20 km route), can be missed. That doesn't matter at
     500-point map scale.
-  - **Parses queue at 2 per instance.** Throughput on one instance is bounded by design. Scaling it means more
-    instances (ADR 0002/0003, a cost decision), not a bigger limiter.
+  - **Parses run one at a time per instance.** Throughput on one instance is bounded by design, and a small file
+    can wait behind a large one. Scaling means more instances (ADR 0002/0003, a cost decision), not a bigger
+    limiter. Raising the upload size or the point cap means re-measuring the per-parse peak first.
   - **Hostile worst case is now bounded:** at most 100k points through gpxpy, O(n) statistics and thinning, and
-    O(2000²) RDP. This is seconds, not hours. The element-count gap is still open (follow-ups).
+    O(2000²) RDP. That is seconds, not hours (2.8–3.5 s measured). Element counts are not capped. Memory is bounded
+    by running one parse at a time (296 MiB measured), not by a limit on the file.
 
 ## How it is tested
 All tests run with no network (`--disable-socket`). QA writes the acceptance, property, endpoint, fuzz and benchmark
@@ -957,7 +1027,9 @@ tests red-first in `tests/routes/`. Backend adds unit tests for internals it int
     - **cap before gpxpy:** a 100,001-point file raises `TooManyPoints` with `gpxpy.parse` monkeypatched to fail
       the test if called; a 100,000-point file parses;
     - **precedence:** a DOCTYPE plus 100,001 tags → `InvalidGpx`; 100,001 tags plus a non-UTF-8 byte →
-      `TooManyPoints`;
+      `TooManyPoints`; 100,001 tags plus a NUL → `InvalidGpx`;
+    - **NUL:** any `\x00` → `InvalidGpx` without calling gpxpy. This includes a BOM-less UTF-16 file of more
+      than 100,000 points, which must not reach gpxpy;
     - waypoint-only → empty points (and then `too_few_points` from the pipeline).
   - **`ParseParams`:** invalid values raise, including `prethin_max_points < 2·max_points`.
 - **Fixture acceptance (parametrised with `tests.fixtures.loader`):**
@@ -1002,14 +1074,16 @@ tests red-first in `tests/routes/`. Backend adds unit tests for internals it int
   - 422 `too_many_points` for 100,001 minimal `<trkpt lat="0" lon="0"/>` (about 2.6 MB, under the size cap);
   - **concurrency cap:** in an anyio test with `httpx.AsyncClient(transport=ASGITransport(app))`, patch
     `app.routers.routes.summarise_gpx` with a stub that records how many calls are in flight and blocks on a
-    `threading.Event`. Fire 4 requests, then assert that exactly 2 are in flight while the others wait. Release
-    the event, and all 4 must return 200. Also, a fresh `create_app()` has its own limiter (no state leaks
+    `threading.Event`. Fire 4 requests, then assert that exactly `MAX_CONCURRENT_PARSES` (1) is in flight while
+    the others wait. Release the event, and all 4 must return 200. Also, a fresh `create_app()` has its own limiter (no state leaks
     between apps);
   - 422 `validation_error` with a missing `file` field, with `detail[0].loc == ["body", "file"]` and no `input` key;
   - **Size limits:**
     - 413 `file_too_large` for an 11 MB file (`Content-Length` path);
     - 413 for a chunked/streamed body with no `Content-Length` (generator body);
     - a valid GPX padded to exactly `MAX_UPLOAD_BYTES` → 200, and `MAX_UPLOAD_BYTES + 1` → 413;
+    - malformed `Content-Length`, sent byte-exactly: 20 digits and thousands of digits → 413, `²` → 400
+      `bad_request`, never 500;
   - 404/405 have the `ErrorResponse` shape, and 405 keeps `Allow`;
   - `X-Request-ID` is present on errors;
   - the updated `test_errors.py` asserts the `internal_error` body.
@@ -1027,13 +1101,14 @@ tests red-first in `tests/routes/`. Backend adds unit tests for internals it int
 - **Checkpoint (QA, recorded in `PROGRESS.md`):** the per-fixture table; `TestClient` timing of the > 10k fixture;
   the post-merge timing against the deployed URL (curl/httpx, outside unit tests); fuzz runs with 0 × 500.
 - **Hostile-input measurements (QA verify, recorded in `PROGRESS.md`, not CI gates).** Each case below records the
-  `tracemalloc` peak and the wall time of `summarise_gpx`:
-  1. a 100,000-point real-shaped file (`ele` + `time`). This checks the ≈ 80 MiB estimate behind
-     `MAX_CONCURRENT_PARSES = 2`. If the peak is above about 150 MiB, report it to the tech lead and don't change
-     the constant;
-  2. a 100,000-point zigzag, the RDP worst case;
-  3. a 10 MiB file of `<trkseg/>` and a 10 MiB file of unknown empty elements inside one `<trk>`, for the
-     element-count follow-up.
+  `tracemalloc` peak and the wall time of `summarise_gpx`. Results on the amended code:
+  1. a 100,000-point real-shaped file (`ele` + `time`): 127 MiB;
+  2. a 100,000-point zigzag, the RDP worst case: 2.8–3.5 s end to end, mostly in gpxpy (raw RDP before thinning:
+     1.6 / 6.3 / 27 s at 2k / 4k / 8k points);
+  3. a 10 MiB file of `<trkseg/>`: 296 MiB; a 10 MiB file of unknown empty elements (`<a/>`) inside one `<trk>`:
+     238 MiB. Together these set `MAX_CONCURRENT_PARSES = 1` (§3.10).
+
+  Re-run these whenever the upload size, the point cap, the parser or `MAX_CONCURRENT_PARSES` changes.
 - **No e2e in 1.2:** there is no screen. 1.10 adds the UI path.
 
 ## Manager decisions needed
@@ -1046,6 +1121,8 @@ tests red-first in `tests/routes/`. Backend adds unit tests for internals it int
 4. *(Amendment, done.)* `too_many_points` above 100,000 raw points was approved on 2026-10-19.
 5. *(Amendment, for the tech lead to confirm.)* Declaring `anyio` explicitly in `pyproject` adds no new package to
    the lock (§4).
+6. *(Second amendment, open; the tech lead has asked.)* Lower Cloud Run `--concurrency` from 80 to 8. See
+   Follow-ups for both outcomes. The element-count cap is **not** a decision any more (rejected, §3.10).
 
 Conditional, and not triggered: escalation was needed **only if** no parameter point in §3.4's grid met 10 % on
 every fixture. 23 points did (§3.4).
@@ -1064,17 +1141,19 @@ every fixture. 23 points did (§3.4).
 
   `summarise_gpx` then stays as a thin pure composition of 1 and 3, so the benchmark target doesn't move. This
   belongs to 1.3's ADR, not to this amendment.
-- **Element-count gap (hostile input), likely needing a decision.** The point cap bounds gpxpy's *point*
-  objects. It does not bound `ElementTree.XML`'s tree, or gpxpy's per-`<trkseg>`/`<trk>`/`<wpt>` objects.
-  - A 10 MiB file of `<trkseg/>` is about 1.1M elements, and one of `<a/>` is about 2.6M. My estimate of
-    ≈ 200 MiB or more for the tree alone is **unmeasured** (QA measurement 3 above).
-  - If QA confirms it, the cheap fix uses the same byte scan: count every start tag (`rb"<[^\s<>/!?]"`) and
-    reject above, say, 1,000,000 with `too_many_points`. A real point is ≤ about 8 elements, so 100k points fit.
-  - That is a new limit, and so a manager decision.
-- **Memory held by waiting requests.** The parse limiter bounds parse memory, not buffered uploads. Up to 80
-  concurrent requests can each hold up to 10 MiB of bytes plus the multipart spool.
-  - Options: lower Cloud Run `--concurrency` for this service, which is devops and needs the manager; or rate
-    limiting before Phase 3, which ADR 0003 already flags.
+- **Open: memory held by waiting requests (Cloud Run `--concurrency`).** This is not decided by this ADR. The
+  parse limiter bounds parse memory, not buffered uploads. At `--concurrency=80`, about 80 requests can each hold
+  a 10 MiB upload, spooled to the in-memory "disk", plus the bytes read from it. That is far beyond 512 MiB before
+  any parse runs. The tech lead has asked the manager to lower it to 8. The two outcomes:
+  - **Lowered in 1.2.** Devops sets `--concurrency=8` in `deploy-api.yml`, and the brief records it. The
+    worst-case wait drops to about 28 s (§3.10). Check the arithmetic: 8 × (about 10 MiB spool + 10 MiB bytes),
+    plus one parse of about 300 MiB, plus the baseline, is close to 512 MiB. Closing the upload right after
+    `file.read` would roughly halve each request's share. That is a backend change, unmeasured so far; weigh it
+    if a concurrent-upload measurement shows the margin is thin.
+  - **Not lowered in 1.2.** It becomes a hardening follow-up before public launch: lower the concurrency, or add
+    the rate limiting ADR 0003 already flags before Phase 3. Until then, 1.2's memory bound covers parses only, and
+    a flood of large uploads can still OOM the instance. Cloud Run restarts it, and the client sees 5xx from the
+    platform.
 - **UX copy (1.10):** `too_many_points` needs a user-facing string, for example "This file has too many points
   (more than 100,000)". It falls under the unknown-code rule until then.
 - **Payload size:** about 500 × 4 unrounded floats ≈ 50 KB of JSON. Consider rounding at the edge (lat/lon 6 dp,

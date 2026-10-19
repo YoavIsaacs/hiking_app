@@ -16,7 +16,7 @@ Everyone in this repo — the tech lead and every subagent — follows this file
 | Architect | `architect` | `docs/adr/`, `docs/architecture/`, interface/contract sketches | implementation, tests |
 | UX expert | `ux-expert` | `docs/ux/` — flows, wireframes, states, copy, accessibility, acceptance criteria | code, styles |
 | Graphic designer | `graphic-designer` | `docs/design/`, `design/tokens.json` + generated token outputs, icons and app assets | components, layout code |
-| Backend expert | `backend-expert` | `api/` application code | `web/`, `mobile/`, CI/Docker/deploy config, QA's acceptance tests |
+| Backend expert | `backend-expert` | `api/` application code; `ops/budget_guard/` code (ADR 0003) | `web/`, `mobile/`, CI/Docker/deploy config, QA's acceptance tests |
 | Frontend expert | `frontend-expert` | `web/` application code | `api/`, the generated `schema.d.ts` and token outputs by hand, CI config |
 | Mobile expert | `mobile-expert` | `mobile/` — **Phase 5 onward only** | `api/`, `web/` components, CI config |
 | DevOps | `devops` | `.github/`, pre-commit, `justfile`, `api/Dockerfile`, `firebase.json`, release config, `docs/runbooks/` | application code; never runs cloud commands |
@@ -67,6 +67,7 @@ web/                 React + Vite app (pnpm)         → frontend-expert
   public/icons/      app and PWA icons               → graphic-designer
   e2e/               Playwright                      → qa
 mobile/              Expo app (Phase 5+)             → mobile-expert
+ops/budget_guard/    billing kill switch (ADR 0003)  → backend-expert (code), qa (tests/), devops (CI, hooks)
 design/tokens.json   design token source             → graphic-designer
 .github/             CI, deploy, Dependabot          → devops
 docs/roadmap/        roadmap mirror + PROGRESS.md    → tech-lead

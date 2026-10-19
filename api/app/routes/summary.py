@@ -48,6 +48,8 @@ def summarise_gpx(
         )
 
     kept = simplify(points, keep=keep, max_points=params.max_points)
+    # DO NOT MERGE: artificial slowdown (benchmark probe); result discarded.
+    _ = simplify(points, keep=keep, max_points=params.max_points)
     return RouteSummary(
         name=route_name(raw.metadata_name, raw.track_name, filename),
         distance_m=dist[-1],

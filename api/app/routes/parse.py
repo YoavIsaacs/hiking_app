@@ -51,7 +51,7 @@ def _to_raw_point(point: _GpxPoint) -> RawPoint:
     return RawPoint(lat, lon, ele if plausible else None)
 
 
-def parse_gpx(data: bytes) -> RawTrack:
+def parse_gpx(data: bytes, *, max_points: int = MAX_RAW_POINTS) -> RawTrack:
     """Raise InvalidGpx only."""
     if not data:
         raise InvalidGpx("The file is empty.")
@@ -60,8 +60,8 @@ def parse_gpx(data: bytes) -> RawTrack:
         # XML 1.0 forbids U+0000; NUL-interleaved UTF-16 would hide tags from the
         # ASCII point-cap scan below.
         raise InvalidGpx("The file must be UTF-8 encoded.")
-    if exceeds_point_cap(data):
-        raise TooManyPoints(f"The file has more than {MAX_RAW_POINTS:,} track points.")
+    if exceeds_point_cap(data, max_points=max_points):
+        raise TooManyPoints(f"The file has more than {max_points:,} track points.")
     try:
         text = data.decode("utf-8-sig")
     except UnicodeDecodeError as exc:

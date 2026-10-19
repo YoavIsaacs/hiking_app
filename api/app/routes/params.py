@@ -19,6 +19,9 @@ MAX_RAW_POINTS: Final = (
 PRETHIN_MAX_POINTS: Final = 2_000  # ADR 0004 3.5
 RDP_TIE_TOLERANCE_M: Final = 1e-6  # ADR 0004 3.5 split rule
 MAX_CONCURRENT_PARSES: Final = 1  # ADR 0004 3.10; one 10 MiB parse peaks ~300 MiB
+MAX_XML_DEPTH: Final = (
+    64  # ADR 0004 amendment (round 3): deeper element nesting -> invalid_gpx
+)
 
 
 @dataclass(frozen=True, slots=True)

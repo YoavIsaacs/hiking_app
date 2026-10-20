@@ -17,12 +17,25 @@ The tech lead keeps this file true. A step moves to Done only with checkpoint ev
 ## Current state (handoff for a fresh session)
 Read this, then `docs/steps/<current step>.md`. Nothing here lives only in chat.
 
-- **Current step:** none in flight — 1.2 closed 2026-10-20 (#33). Closing branch `step/1.2-close`: this row, ADR 0004 item 53,
-  Cloud Run `--concurrency=8` (manager, 2026-10-20) enforced in `deploy-api.yml`. **Next:** 1.3 Elevation backfill (proposed).
+- **Current step:** none in flight. 1.2 closed 2026-10-20 (#33). **Next session: start 1.3 Elevation backfill**
+  (manager, 2026-10-20). Loop: brief → `architect` (Open-Meteo integration ADR: batching ≤ 100 coords, timeout →
+  "elevation unavailable", respx recordings) → contract stub → `qa` red tests → `backend-expert` → `qa` verify → `reviewer`.
+  No UX/design (no screen).
+  **First, on session start:**
+  1. Has the manager merged **#35** (`step/1.2-close`: this handoff, ADR 0004 item 53, `--concurrency=8` + the
+     "Verify candidate concurrency" deploy step via `tools.deploy concurrency`)? It was green 2026-10-20.
+  2. If yes, read that merge's Deploy API run. The new step must print `containerConcurrency=8` and promote. This
+     is its first real run. If it fails, the likely cause is the revision JSON shape; route the fix to backend
+     (`deploy.py`) or devops (workflow). Record the run link in the 1.2 row.
+  3. If #35 is not merged, the live API still runs at concurrency 80. Ask the manager to merge it first.
   **1.2 follow-ups to fold into 1.3:** pin the production image to uv-managed CPython 3.12.15 (expat 2.9.0, as CI; image has
   2.8.5) and re-run ADR 0004 H rows on it; fix the child-process P measurement (reads 0.0 on Linux, vacuous in CI); run
   H11(d) in QA's harness; 3 QA comment nits (`test_expat_tracker.py:201`, `test_namespace_uri_cap.py:360`,
   `test_text_caps.py:560`); ADR item 50 wording; split `summarise_gpx` into parse → backfill → `summarise_track`.
+  ADR 0004: relabel the stale "80 (today)" mentions (§3.10 tables ~l.940/~1037, ~l.980, Consequences ~l.2093) to
+  "80 (Cloud Run default)" (architect). `tools/deploy.py` `_load_service` error says "service JSON" for revision files too (nit).
+  **Tech-lead process note:** don't commit while a subagent is editing the same tree. Pre-commit stashes the
+  unstaged files mid-edit (it happened twice on `step/1.2-close` and restored cleanly).
   **For 1.10:** CORS POST, Blob typing, 429 copy. **Manager:** update the master roadmap doc (own expat reader, not
   gpxpy; `/v1/routes/parse`).
   **Owed by the manager (1.1 deferred, 2026-10-19):** Komoot out-and-back, Strava recording, own watch/phone recording
@@ -50,8 +63,9 @@ Read this, then `docs/steps/<current step>.md`. Nothing here lives only in chat.
   The ruleset UI also set `require_extra_approval_for_unattributed_changes: true` (not in the runbook) — harmless so far; first suspect if a PR is blocked unexpectedly.
 - **Releases:** release-please (GitHub App `hike-release-please`; var `RELEASE_APP_CLIENT_ID`, secret
   `RELEASE_APP_PRIVATE_KEY`) keeps a release PR open; the manager merges it to cut a release. Nightly 02:43 UTC on fresh deps; failures go to one open `nightly-failure` issue.
-- **Open PRs (2026-10-20):** #34 release 0.2.0 (release-please; manager merges to cut it); Dependabot #29 (uv image
-  0.13.1 → 0.13.3), #30 (fastapi 0.143.3), #31 (eslint 10.13) — tech lead to review.
+- **Open PRs (2026-10-20, all green, recommended to the manager for merge):** #35 1.2 close-out; #34 release
+  0.2.0 (release-please); Dependabot #29 (uv image 0.13.1 → 0.13.3, `api/Dockerfile`; the 1.3 image re-pin touches the
+  same file), #30 (fastapi 0.143.3), #31 (eslint 10.13). All were rebased after `benchmark` became required.
 - **Local leftovers (manager may delete):** temp clones `%TEMP%\tmp.7qIrHpAUnP`, `%TEMP%\tmp.GMVXYXKa6R`;
   Docker images `hike-api:qa`, `hike-api:test`.
 

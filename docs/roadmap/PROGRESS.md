@@ -16,16 +16,14 @@ The tech lead keeps this file true. A step moves to Done only with checkpoint ev
 ## Current state (handoff for a fresh session)
 Read this, then `docs/steps/<current step>.md`. Nothing here lives only in chat.
 
-- **Current step:** 1.2 GPX parser — brief `docs/steps/1.2.md`, branch `step/1.2-gpx-parser`; stage: **review round 4 fix**
-  (2026-10-20). Phase 0 complete; `v0.1.0` released. 1.1 merged as **partial** (#27).
-  **Next session starts here:** read `docs/steps/1.2.md` Decisions (the 2026-10-20 entries, newest last) and ADR 0004
-  items 28–44. Own expat reader (manager option A) built; memory bound by expat's allocation tracker (manager option 1,
-  round 3) — verified: no OOM at 512 MiB, worst P 64.5 MiB. Round 4 blocking: the 1,024-character namespace URI cap
-  admits a 17 s parse (repeated names under a long non-ASCII URI) → tech-lead decision: URI must be ASCII and ≤ 256.
-  Loop: architect ADR amendment → QA red tests → backend build (+ 2 nits) → QA verify in a **rebuilt** image (repeated-name
-  rows, S) → reviewer re-check → push → PR (new required check: `benchmark`). **Open manager decision:** Cloud Run
-  `--concurrency` (80 now; 8 recommended, ADR 0004 Manager decisions 6). Check `git log origin/step/1.2-gpx-parser..`
-  for unpushed commits.
+- **Current step:** 1.2 GPX parser — brief `docs/steps/1.2.md`, branch `step/1.2-gpx-parser`; stage: **review approved
+  (round-4 re-check) → push → PR** (2026-10-20). Phase 0 complete; `v0.1.0` released. 1.1 merged as **partial** (#27).
+  **Next session starts here:** read `docs/steps/1.2.md` Decisions (2026-10-20 entries, newest last) and ADR 0004 items
+  28–51. Own expat reader (manager option A); memory bounded by expat's allocation tracker (manager option 1) — worst P
+  62.5 MiB, RSS 97.3 MiB at 512 MiB, no OOM; namespace URI must be ASCII ≤ 256 (tech lead) — S ≈ 2.6 s vs 3.5 s bar.
+  Remaining: commit the architect's H11(d)/S edit if not yet committed, push, open the PR (new required check:
+  `benchmark`), watch CI, hand over, close in this file after merge. **Open manager decision:** Cloud Run `--concurrency`
+  (80 now; 8 recommended, ADR 0004 Manager decisions 6). Check `git log origin/step/1.2-gpx-parser..` for unpushed commits.
   **Owed by the manager (1.1 deferred, 2026-10-19):** Komoot out-and-back, Strava recording, own watch/phone recording
   (+ each app's distance and gain) into `docs/maps/` (uncommitted). Then QA adds them, removes `out_and_back` from
   `DEFERRED_BY_MANAGER` in `api/tests/fixtures/test_gpx_corpus.py`, and 1.1 can close.

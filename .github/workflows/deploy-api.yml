@@ -35,6 +35,8 @@ jobs:
       REGION: ${{ vars.GCP_REGION }}
       RUNTIME_SA: ${{ vars.API_RUNTIME_SA }}
       SERVICE: hike-api
+      UV_PYTHON_PREFERENCE: only-managed # never the runner's system python (ADR 0004 section 3.11)
+      PINNED_PYTHON: "3.12.15" # must equal api/.python-version; the Interpreter step fails if it drifts
       DEPLOY_TOOL: uv run --frozen --directory api python -m tools.deploy
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -43,9 +45,14 @@ jobs:
 
       - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
         with:
-          python-version: "3.12"
+          python-version: ${{ env.PINNED_PYTHON }}
           enable-cache: true
           cache-dependency-glob: api/uv.lock
+
+      - name: Interpreter (uv-managed, pinned)
+        run: |
+          uv sync --frozen --directory api
+          bash .github/scripts/check-interpreter.sh api --import-app
 
       - name: Authenticate to Google Cloud (WIF, no keys)
         uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3.0.0

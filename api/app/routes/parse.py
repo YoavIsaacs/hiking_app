@@ -45,10 +45,10 @@ _NESTED_POINT: Final = 7  # a point tag inside a point: counted for the cap, nev
 TOO_COMPLEX_MESSAGE: Final = "The file is too complex to parse."
 _RESOURCE_ERROR_CODES: Final[frozenset[int]] = frozenset(
     {
-        errors.codes[
-            errors.XML_ERROR_NO_MEMORY
-        ],  # what an allocation-tracker refusal reports
-        errors.codes[errors.XML_ERROR_AMPLIFICATION_LIMIT_BREACH],  # defensive
+        # what an allocation-tracker refusal reports
+        errors.codes[errors.XML_ERROR_NO_MEMORY],
+        # defensive
+        errors.codes[errors.XML_ERROR_AMPLIFICATION_LIMIT_BREACH],
     }
 )
 
@@ -287,6 +287,9 @@ class _GpxReader:
         if self._overflow:
             return  # never swap the handler from inside it; just keep nothing
         room = self._max_text_chars - self._text_len
+        if room == 0:
+            self._overflow = True
+            return
         if len(data) > room:
             self._chunks.append(data[:room])
             self._text_len = self._max_text_chars

@@ -1,12 +1,15 @@
+import anyio
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import Settings
 from app.cors import cors_policy
+from app.errors import install_error_handlers
 from app.logging_config import configure_logging
 from app.middleware import REQUEST_ID_HEADER, RequestIdMiddleware
 from app.operation_ids import check_operation_ids, operation_id
-from app.routers import health
+from app.routers import health, routes
+from app.routes.params import MAX_CONCURRENT_PARSES
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -20,6 +23,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         generate_unique_id_function=operation_id,
     )
     app.state.settings = settings
+    app.state.parse_limiter = anyio.CapacityLimiter(MAX_CONCURRENT_PARSES)
 
     app.add_middleware(
         CORSMiddleware,
@@ -32,6 +36,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # Added last so it is outermost: every response (incl. CORS preflights) gets an ID.
     app.add_middleware(RequestIdMiddleware)
 
+    install_error_handlers(app)
     app.include_router(health.router)
+    app.include_router(routes.router)
     check_operation_ids(app)
     return app

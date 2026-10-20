@@ -2,11 +2,14 @@
 name = "hike-prep-api"
 version = "0.1.0"
 description = "Hike Prep App API"
-requires-python = ">=3.12,<3.13"
+# First 3.12 with expat SetAllocTrackerActivationThreshold etc.; see docs/adr/0004 §3.11.
+requires-python = ">=3.12.13,<3.13"
 dependencies = [
+    "anyio>=4.15.1",
     "fastapi>=0.143.0",
     "pydantic>=2.14.1",
     "pydantic-settings>=2.15.0",
+    "python-multipart>=0.0.32",
     "uvicorn[standard]>=0.54.0",
 ]
 
@@ -16,7 +19,7 @@ testpaths = ["tests"]
 pythonpath = ["."]
 # --allow-hosts=127.0.0.1: Starlette's TestClient needs a loopback socketpair on Windows;
 # outbound network stays blocked.
-addopts = "--cov=app --cov=tools --cov-fail-under=85 --disable-socket --allow-hosts=127.0.0.1"
+addopts = "--cov=app --cov=tools --cov-fail-under=85 --disable-socket --allow-hosts=127.0.0.1 --benchmark-disable"
 filterwarnings = [
     "error",
     # Starlette deprecates httpx for TestClient in favour of httpx2, which would be an unapproved new dependency.
@@ -45,8 +48,10 @@ warn_required_dynamic_aliases = true
 [dependency-groups]
 dev = [
     "httpx>=0.28.1",
+    "hypothesis>=6.170.2",
     "mypy>=2.4.0",
     "pytest>=9.1.1",
+    "pytest-benchmark>=5.3.0",
     "pytest-cov>=7.1.0",
     "pytest-socket>=0.8.1",
     "respx>=0.23.1",

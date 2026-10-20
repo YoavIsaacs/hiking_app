@@ -47,3 +47,6 @@ playwright-report/
 test-results/
 blob-report/
 playwright/.cache/
+
+# pytest-benchmark storage (the benchmark job never writes it; this guards local runs)
+.benchmarks/

@@ -32,7 +32,7 @@ from tests.routes.hostile_shapes import (
 )
 
 P_CEILING_MIB = 120.0  # ADR 3.13: P <= 120 MiB, i.e. RSS high-water <= 160 MiB
-SECONDS_CEILING = 5.0  # ADR: <= 2 s in the image; CI runners get headroom
+SECONDS_CEILING = 5.0  # ADR: <= 3.5 s in the image; CI runners get headroom
 
 SHAPES = {
     "round-3: prefix bound to a 256 B URI, then distinct prefixed attributes": (

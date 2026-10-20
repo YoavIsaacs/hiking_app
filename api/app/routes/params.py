@@ -26,6 +26,8 @@ EXPAT_ALLOC_ACTIVATION_BYTES: Final = 32 * 1024 * 1024
 EXPAT_ALLOC_MAX_AMPLIFICATION: Final = 4.0
 # ADR 0004 3.1 text capture: the most characters kept of one <name> or <ele>
 MAX_CAPTURED_TEXT_CHARS: Final = 64 * 1024
+# ADR 0004 3.1 step 4 / 3.11 "Why a URI cap": the most characters of one namespace URI
+MAX_NAMESPACE_URI_CHARS: Final = 1024
 
 
 @dataclass(frozen=True, slots=True)

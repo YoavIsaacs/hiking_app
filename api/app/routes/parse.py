@@ -23,6 +23,7 @@ from app.routes.params import (
     EXPAT_ALLOC_ACTIVATION_BYTES,
     EXPAT_ALLOC_MAX_AMPLIFICATION,
     MAX_CAPTURED_TEXT_CHARS,
+    MAX_NAMESPACE_URI_CHARS,
     MAX_PLAUSIBLE_ELEV_M,
     MAX_RAW_POINTS,
     MAX_XML_DEPTH,
@@ -169,8 +170,10 @@ class _GpxReader:
         max_points: int,
         max_depth: int = MAX_XML_DEPTH,
         max_text_chars: int = MAX_CAPTURED_TEXT_CHARS,
+        max_namespace_uri_chars: int = MAX_NAMESPACE_URI_CHARS,
     ) -> None:
         self._parser = parser
+        self._max_namespace_uri_chars = max_namespace_uri_chars
         self._max_text_chars = max_text_chars
         self._max_points = max_points
         self._max_depth = max_depth
@@ -201,6 +204,7 @@ class _GpxReader:
         parser.XmlDeclHandler = self.on_xml_decl
         parser.StartDoctypeDeclHandler = _reject_dtd
         parser.EntityDeclHandler = _reject_dtd
+        parser.StartNamespaceDeclHandler = self.on_namespace_decl
         parser.StartElementHandler = self.on_start
         parser.EndElementHandler = self.on_end
 
@@ -210,6 +214,7 @@ class _GpxReader:
         parser.XmlDeclHandler = None
         parser.StartDoctypeDeclHandler = None
         parser.EntityDeclHandler = None
+        parser.StartNamespaceDeclHandler = None
         parser.StartElementHandler = None
         parser.EndElementHandler = None
         parser.CharacterDataHandler = None
@@ -219,6 +224,11 @@ class _GpxReader:
     ) -> None:
         if encoding is not None and not _encoding_supported(encoding):
             raise InvalidGpx("The file declares an unsupported XML encoding.")
+
+    def on_namespace_decl(self, prefix: str | None, uri: str | None) -> None:
+        """ADR 0004 3.1 step 4: a namespace URI over the cap is too complex."""
+        if uri is not None and len(uri) > self._max_namespace_uri_chars:
+            raise InvalidGpx(TOO_COMPLEX_MESSAGE)
 
     def _skip_element(self) -> None:
         self._skip = 1

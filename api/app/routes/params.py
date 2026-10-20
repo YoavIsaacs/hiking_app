@@ -17,10 +17,15 @@ MAX_PLAUSIBLE_ELEV_M: Final = 10000.0
 MAX_RAW_POINTS: Final = 100_000
 PRETHIN_MAX_POINTS: Final = 2_000  # ADR 0004 3.5
 RDP_TIE_TOLERANCE_M: Final = 1e-6  # ADR 0004 3.5 split rule
-# ADR 0004 3.10, 3.13: one parse at a time; the worst single parse is ~250 MiB
+# ADR 0004 3.10: one parse at a time (memory budget and worst-case size are there)
 MAX_CONCURRENT_PARSES: Final = 1
 # ADR 0004 3.11: an element at depth 65 (the root is depth 1) -> invalid_gpx
 MAX_XML_DEPTH: Final = 64
+# ADR 0004 3.1 step 3 (round 3): expat allocation tracker; its defaults bound nothing
+EXPAT_ALLOC_ACTIVATION_BYTES: Final = 32 * 1024 * 1024
+EXPAT_ALLOC_MAX_AMPLIFICATION: Final = 4.0
+# ADR 0004 3.1 text capture: the most characters kept of one <name> or <ele>
+MAX_CAPTURED_TEXT_CHARS: Final = 64 * 1024
 
 
 @dataclass(frozen=True, slots=True)

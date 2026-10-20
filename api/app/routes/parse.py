@@ -9,11 +9,20 @@ import codecs
 import math
 from collections.abc import Sequence
 from typing import Final, NoReturn
-from xml.parsers.expat import ExpatError, ParserCreate, XMLParserType
+from xml.parsers.expat import (
+    ExpatError,
+    ParserCreate,
+    XMLParserType,
+    errors,
+    version_info,
+)
 
 from app.models.route import SourceFormat
 from app.routes.errors import InvalidGpx, TooManyPoints
 from app.routes.params import (
+    EXPAT_ALLOC_ACTIVATION_BYTES,
+    EXPAT_ALLOC_MAX_AMPLIFICATION,
+    MAX_CAPTURED_TEXT_CHARS,
     MAX_PLAUSIBLE_ELEV_M,
     MAX_RAW_POINTS,
     MAX_XML_DEPTH,
@@ -30,6 +39,36 @@ _ELE: Final = 6
 # Expat copies a large single Parse() buffer; feeding slices keeps its memory constant.
 _CHUNK_BYTES: Final = 64 * 1024
 _NESTED_POINT: Final = 7  # a point tag inside a point: counted for the cap, never read
+# ADR 0004 3.1 step 5: the message for an expat resource refusal (tests assert it)
+TOO_COMPLEX_MESSAGE: Final = "The file is too complex to parse."
+_RESOURCE_ERROR_CODES: Final[frozenset[int]] = frozenset(
+    {
+        errors.codes[
+            errors.XML_ERROR_NO_MEMORY
+        ],  # what an allocation-tracker refusal reports
+        errors.codes[errors.XML_ERROR_AMPLIFICATION_LIMIT_BREACH],  # defensive
+    }
+)
+
+
+def require_alloc_tracker(
+    parser_type: type[object] = XMLParserType,
+    expat_version: tuple[int, int, int] = version_info,
+) -> None:
+    """Raise RuntimeError unless the expat allocation tracker exists (ADR 0004 3.11)."""
+    raise NotImplementedError
+
+
+def _new_parser(
+    *, alloc_threshold_bytes: int, alloc_max_amplification: float
+) -> XMLParserType:
+    """The only ParserCreate call in app/ (ADR 0004 3.11)."""
+    raise NotImplementedError
+
+
+def _invalid_gpx_from(exc: ExpatError) -> InvalidGpx:
+    """Map an ExpatError to InvalidGpx; resource codes get TOO_COMPLEX_MESSAGE."""
+    raise NotImplementedError
 
 
 class _Node:
@@ -97,8 +136,10 @@ class _GpxReader:
         *,
         max_points: int,
         max_depth: int = MAX_XML_DEPTH,
+        max_text_chars: int = MAX_CAPTURED_TEXT_CHARS,
     ) -> None:
         self._parser = parser
+        self._max_text_chars = max_text_chars
         self._max_points = max_points
         self._max_depth = max_depth
         self._depth = 0
@@ -302,7 +343,13 @@ class _GpxReader:
         )
 
 
-def parse_gpx(data: bytes, *, max_points: int = MAX_RAW_POINTS) -> RawTrack:
+def parse_gpx(
+    data: bytes,
+    *,
+    max_points: int = MAX_RAW_POINTS,
+    alloc_threshold_bytes: int = EXPAT_ALLOC_ACTIVATION_BYTES,
+    alloc_max_amplification: float = EXPAT_ALLOC_MAX_AMPLIFICATION,
+) -> RawTrack:
     """Read the GPX bytes in one expat pass. Raises InvalidGpx or TooManyPoints only."""
     if not data:
         raise InvalidGpx("The file is empty.")

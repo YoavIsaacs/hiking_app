@@ -268,7 +268,7 @@ items touch are rewritten in place.
       256-character ASCII URIs and are re-sized where the tracker must still refuse them.
     - The pin becomes `MAX_NAMESPACE_URI_CHARS == 256`.
 50. **Options re-weighed** (Options considered). These are now rejected, each because a measurement puts it over
-    the bar: a 1,024-byte cap, a 256-character cap of any script, and a 256-byte cap of any script. Item 37's
+    the bar (for the 1,024-byte cap, a native measurement only; see Options considered): a 1,024-byte cap, a 256-character cap of any script, and a 256-byte cap of any script. Item 37's
     "a lower URI cap (for example 256) — not chosen" is reversed.
 51. **Consequences.** A document that declares a non-ASCII namespace name (an IRI) or a URI longer than 256
     characters is refused. No known exporter does either. Loosening the rule is an amendment that re-measures H11.
@@ -937,7 +937,7 @@ none of them reads an unbounded body.
     | --- | --- | --- | --- | --- | --- |
     | **8** (decided, item 53) | 37.5 s | **28 s** | **21 s** ✓ | 952 s ✗: the 3rd request in the queue already passes 300 s | 137 s: inside, but about 5× the bar's 28 s |
     | 18 (pessimistic C_max, below) | 16.7 s | 63 s | 47 s ✓ | ✗ | 308 s ✗ |
-    | 80 (today) | 3.75 s | 280 s, just inside, with nothing left for uploads | 208 s ✓: inside, with about 92 s left for uploads | ✗ | 1,368 s ✗ |
+    | 80 (Cloud Run default) | 3.75 s | 280 s, just inside, with nothing left for uploads | 208 s ✓: inside, with about 92 s left for uploads | ✗ | 1,368 s ✗ |
 
     *Withdrawn (item 47): the column "S = 2.6 s quiet / 5.5 s loaded" (21 s / 44 s at 8; 208 s / 440 s at 80),
     computed from H4, which was not the slowest admitted row. The measured column shows 21 s and 208 s again only
@@ -947,7 +947,7 @@ none of them reads an unbounded body.
     - **The bar: S ≤ 3.5 s wall time in the image, one number for every hostile row** (§3.13). It is the bar H10
       already had. At the decided 8 (item 53) the queue drains in 28 s, under a tenth of the timeout. That leaves room
       for upload transfer and for the event loop sharing the one vCPU. It is also the largest round bar that keeps
-      even today's 80 inside 300 s, though with no room for uploads there. That is one more reason for 8.
+      even the Cloud Run default of 80 inside 300 s, though with no room for uploads there. That is one more reason for 8.
     - **It replaces the flat "≤ 2 s" estimate.** H7's 10 MiB floods of `<trk/>` and `<a/>` take 2.0–2.5 s in the
       image (Docker Desktop). That is Python's start and end handler overhead for about 2.5M elements. It is a
       floor of a reader on pyexpat, it is inside the bar, and lowering it would mean moving parsing to C, not
@@ -977,7 +977,7 @@ none of them reads an unbounded body.
     - **Bars are judged on a quiet host**, as the benchmark job's are. A loaded-host figure is recorded, not
       judged.
     - **The queue at the decided 8: 21 s measured** (8 × 2.6 s), and 28 s at the bar. At 18 it is 47 s.
-      At today's 80 it is 208 s measured, so 80 now holds on time too, but only with S measured and not at the
+      At the Cloud Run default of 80 it is 208 s measured, so 80 now holds on time too, but only with S measured and not at the
       bar (280 s, with nothing left for uploads). **8 is decided** (manager, 2026-10-20; Manager decisions 6,
       item 53). It was recommended for latency and for memory headroom: the last request in a full queue waits about 21 s at 8 against about 208 s at 80,
       and 80 does not fit 512 MiB for any P (the waiting-uploads table below), while 8 fits for any P ≤ 266 MiB.
@@ -1034,7 +1034,7 @@ none of them reads an unbounded body.
 
     | `--concurrency` C | steady (R = 10, T = 10) | pessimistic (R = 20) |
     | --- | --- | --- |
-    | 80 (today) | 906 + P MiB ✗ for any P | 1 686 + P MiB ✗ for any P |
+    | 80 (Cloud Run default) | 906 + P MiB ✗ for any P | 1 686 + P MiB ✗ for any P |
     | **8** | **186 + P = 250.5 MiB** ✓; safe iff P ≤ 326 MiB | **246 + P = 310.5 MiB** ✓; safe iff P ≤ 266 MiB |
     | C_max | ⌊(396 − P) / 10⌋ + 1 = ⌊33.15⌋ + 1 = **34** | ⌊(406 − P) / 20⌋ + 1 = ⌊17.08⌋ + 1 = **18** |
 
@@ -1898,7 +1898,9 @@ Imports point one way: `routers → routes → models`. `app/routes/*` never imp
 - **Keeping item 37's 1,024 decoded characters of any script** (item 45) — rejected: it admitted the round-4
   file, 1,024 × U+10000 plus a repeated `<a/>` flood, 17.1 s in the image and 25.4 s natively.
 - **A 1,024-byte cap, any script** (item 50) — rejected: 1,024 ASCII characters alone took 4.5 s natively on the
-  repeated-name flood, over the bar.
+  repeated-name flood, over the bar. This rejection rests on that native figure only: the shape was not re-run
+  in the image, where bars are judged. The in-image H11 figures (256-character cap) are in item 52 and Manager
+  decisions 12.
 - **A 256-character cap, any script** (item 50) — rejected: 64 four-byte characters took 4.6 s natively, so 256
   of them would be far over the bar.
 - **A 256-byte cap, any script** (item 50) — rejected: 64 four-byte characters fit in 256 bytes and took 4.6 s
@@ -2090,7 +2092,7 @@ Imports point one way: `routers → routes → models`. `app/routes/*` never imp
       floating `python:3.12-slim` tag makes that guard the line of defence (Follow-ups).
     - Element and attribute counts are not capped. If a later measurement exceeds a bound, capping them is the
       escalation.
-    - Waiting uploads are bounded only by Cloud Run's `--concurrency` (§3.10). At today's 80, a flood of 10 MB
+    - Waiting uploads are bounded only by Cloud Run's `--concurrency` (§3.10). At the Cloud Run default of 80, a flood of 10 MB
       uploads can still OOM the instance; at 8 it cannot, for any P ≤ 266 MiB (measured: 64.5).
     - **Tracker values are a trade-off we own.** A future legitimate file type with very large single tokens (for
       example a multi-MiB attribute value) could approach the threshold. QA's L rows are the tripwire, and the
@@ -2466,7 +2468,9 @@ every fixture. 23 points did (§3.4).
 - **CORS:** `create_app` allows only `GET, OPTIONS`. The 1.10 web upload needs `POST` in `allow_methods`; add it
   with 1.10, or in 1.2 if the tech lead prefers, since the checkpoint's deployed timing uses curl and needs no CORS.
 - ~~**Docker image expat**~~ — done (2026-10-20): the production image has expat 2.8.5, verified by the tech lead.
-- **1.3: give the elevation lookup a seam.** Split `summarise_gpx` into three stages:
+- ~~**1.3: give the elevation lookup a seam.**~~ — taken by ADR 0005 (step 1.3), which keeps the three stages
+  but drops stage 3's `elevation_source` argument (ADR 0005 §1). The original sketch: split `summarise_gpx` into
+  three stages:
   1. `parse_gpx(data) → RawTrack`, which is pure;
   2. at the I/O edge (router or service), detect when elevation is missing **or implausible** (§3.1 step 8) and
      backfill it through the lookup adapter;

@@ -1,6 +1,6 @@
 # 0004 — GPX parser: module boundary, RouteSummary/ErrorResponse contract, algorithms, upload limits, benchmark
 
-Status: accepted; post-build corrections accepted (tech lead, 2026-10-20); round-3 amendment (items 28–36) accepted (tech lead, 2026-10-20); round-3 measured values and the namespace URI cap (items 37–44) **proposed** · Date: 2026-10-19 · Amended: 2026-10-19 (three rounds), 2026-10-20 (post-build corrections; round-3 decision; round-3 measured values and URI cap) · Step: 1.2
+Status: accepted; post-build corrections accepted (tech lead, 2026-10-20); round-3 amendment (items 28–36) accepted (tech lead, 2026-10-20); round-3 measured values and the namespace URI cap (items 37–44) accepted (tech lead, 2026-10-20) · Date: 2026-10-19 · Amended: 2026-10-19 (three rounds), 2026-10-20 (post-build corrections; round-3 decision; round-3 measured values and URI cap; URI cap measured on the capped build, S final) · Step: 1.2
 
 ## Amendments
 **2026-10-19.** These record decisions already taken in step 1.2: review round 1, QA verify and the devops
@@ -133,10 +133,12 @@ rejected (`docs/steps/1.2.md`, 2026-10-20). The sections these items touch are r
 36. **Test seams.** `parse_gpx(data, *, max_points=…, alloc_threshold_bytes=…, alloc_max_amplification=…)` lets QA
     bisect the tracker values on real files. The defaults are the constants. `_GpxReader` takes `max_text_chars`.
 
-**2026-10-20, round-3 measured values; namespace URI cap (proposed).** QA measured §3.13 on the round-3 build
-(8d6bfc8) in the rebuilt image `hike-api:qa-r3` under `--memory=512m` (9b655cf). Every memory bar passed. One new
-finding was about time, not memory, and the tech lead decided it (`docs/steps/1.2.md`, 2026-10-20, "Build … +
-verify …"). The sections these items touch are rewritten in place.
+**2026-10-20, round-3 measured values; namespace URI cap (accepted by the tech lead, 2026-10-20).** QA measured
+§3.13 on the round-3 build (8d6bfc8) in the rebuilt image `hike-api:qa-r3` under `--memory=512m` (9b655cf). Every
+memory bar passed. One new finding was about time, not memory, and the tech lead decided it (`docs/steps/1.2.md`,
+2026-10-20, "Build … + verify …"). The cap was then built (ffd0c7b), pinned and re-measured by QA (ad0f45a,
+ee059c3), and the tech lead set S from it (`docs/steps/1.2.md`, 2026-10-20, "URI cap built …"). The sections
+these items touch are rewritten in place.
 
 37. **Namespace URI cap: `MAX_NAMESPACE_URI_CHARS = 1024`** (§3.1 step 4, §3.11; tech-lead decision). A
     `StartNamespaceDeclHandler` refuses any declared URI longer than 1,024 decoded characters with `invalid_gpx`
@@ -148,7 +150,8 @@ verify …"). The sections these items touch are rewritten in place.
     - The longest URI in the corpus and in `docs/maps/` is 53 characters, and Garmin's extension URIs are about
       55. The cap refuses no plausible GPX.
 38. **Tracker values final: 32 MiB / 4×** (§3.1 step 3, §3.13). Measured: worst P 64.5 MiB (bar 120); worst RSS
-    99.2 MiB in the child and 120.1 MiB over HTTP (bar 160); no OOM kill and no restart in any run. Legitimate
+    99.2 MiB in the child and 119.6 MiB over HTTP on the capped build (120.1 before it; bar 160); no OOM kill and
+    no restart in any run. Legitimate
     files: M_legit ≤ 64 KiB (the bisection resolution) and F_legit = 1.0. The "provisional" marks are removed.
 39. **F method corrected** (§3.13). Expat rejects any factor below 1.0, so 1.0 is the floor and "bisect to 0.05"
     could not be done. F_legit is a pass/fail run at 1.0, with an upward bisection only if that fails.
@@ -159,6 +162,11 @@ verify …"). The sections these items touch are rewritten in place.
     behind one parse slot against Cloud Run's 300 s request timeout. At C = 8 the queue drains in 8 × 3.5 = 28 s.
     H7's `<trk/>` and `<a/>` floods take 2.0–2.5 s: that is Python's per-element handler overhead, and it is inside
     the bar. The earlier "≤ 2 s" was an estimate, not a gate.
+    - **Measured S = 2.6 s** (tech-lead decision on QA's re-measure): H4 at U = 1,024 four-byte characters,
+      2.24–2.64 s on a quiet host. With about 45 % ambient host load it reached 5.5 s; that figure is recorded
+      beside S. Bars are judged on a quiet host, like the benchmark job.
+    - At `--concurrency=8` the queue holds even on the loaded figure (8 × 5.5 = 44 s ≪ 300 s). At today's 80 it
+      holds only on the quiet one (80 × 2.6 = 208 s). This strengthens the `--concurrency=8` recommendation.
 42. **§3.10 from measured numbers.** B is 55 MiB, the idle uvicorn process in this image, not 40.5. With
     P = 64.5 MiB: K_max = 5 in both columns at C = 8, and C_max at K = 1 is 34 (steady) and 18 (pessimistic).
     `--concurrency=8` is safe for any P ≤ 266 MiB. `MAX_CONCURRENT_PARSES` stays 1.
@@ -167,8 +175,16 @@ verify …"). The sections these items touch are rewritten in place.
       UTF-8);
     - H3's time, because the handler adds one Python call per admitted declaration;
     - H9, redefined at U = 1,024 characters, because a 64 KiB URI on the root is now refused before the first point.
+      It is trimmed to 10 MiB total. The literal form (100,001 points plus 9 MiB of H4, 11.3 MiB) is a 413 over
+      HTTP and never reaches the parser.
+
+    Measured (QA, `hike-api:qa-r3`, ee059c3): every row within its bars on a quiet host; the figures are in §3.13.
+    H3's expected outcome is corrected to "200 or 422".
 44. **Tests for the cap** (How it is tested): 1,024 accepted and 1,025 refused, default and prefixed, counted in
     characters; precedence in document order; the H4 shape at U = 64 KiB refused in < 1 s.
+    - *Correction:* pyexpat clears its handlers itself after a callback raises (§3.1 step 4, "How the exception
+      leaves `Parse`", step 1). So `detach()` after a refusal is belt-and-braces, and the after-return test is the
+      one that proves `detach`.
 
 ## Context
 Step 1.2 adds `POST /v1/routes/parse`. It turns an uploaded GPX file into a typed `RouteSummary`, rejects bad input
@@ -399,6 +415,9 @@ input bytes go through these steps, in order:
        4. In `parse_gpx` (`api/app/routes/parse.py`, the `try` around the slice loop), `except ExpatError` does not
           match. `finally: reader.detach()` runs, and the `InvalidGpx` leaves `parse_gpx` unchanged, with
           `__cause__` `None`.
+       - **`detach()` after a refusal is belt-and-braces** (item 44). pyexpat has already cleared every handler
+         in step 1, so the handlers are `None` after a refusal even without `detach()`. It is after a normal
+         return that `detach()` does the work, so the after-return test is the one that proves it.
        - **So `parse_gpx` needs no change.** The handler must raise `InvalidGpx` directly. It must not raise or
          build an `ExpatError`, go through `_invalid_gpx_from`, or gain its own `except` clause. The `__cause__`
          is how a test tells a URI-cap refusal (`None`) from a tracker refusal (`ExpatError` with
@@ -762,11 +781,11 @@ none of them reads an unbounded body.
     The last one then finishes after about C × S of parse time: (C − 1) × S waiting, plus its own parse. Its
     upload comes on top. So C × S must stay well under 300 s, which means S < 300 s / C:
 
-    | C | the most S may be (300 s / C) | C × S at the bar, S = 3.5 s | C × S before the URI cap (H4, U = 1 MiB, S = 119 s) |
-    | --- | --- | --- | --- |
-    | **8** (recommended) | 37.5 s | **28 s** | 952 s ✗: the 3rd request in the queue already passes 300 s |
-    | 18 (pessimistic C_max, below) | 16.7 s | 63 s | ✗ |
-    | 80 (today) | 3.75 s | 280 s, just inside, with nothing left for uploads | ✗ |
+    | C | the most S may be (300 s / C) | C × S at the bar, S = 3.5 s | C × S measured, S = 2.6 s quiet / 5.5 s loaded host | C × S before the URI cap (H4, U = 1 MiB, S = 119 s) |
+    | --- | --- | --- | --- | --- |
+    | **8** (recommended) | 37.5 s | **28 s** | **21 s / 44 s** | 952 s ✗: the 3rd request in the queue already passes 300 s |
+    | 18 (pessimistic C_max, below) | 16.7 s | 63 s | 47 s / 99 s | ✗ |
+    | 80 (today) | 3.75 s | 280 s, just inside, with nothing left for uploads | 208 s / 440 s ✗ | ✗ |
 
     - **The bar: S ≤ 3.5 s wall time in the image, one number for every hostile row** (§3.13). It is the bar H10
       already had. At the recommended 8 the queue drains in 28 s, under a tenth of the timeout. That leaves room
@@ -779,14 +798,23 @@ none of them reads an unbounded body.
     - **The bar is why the URI cap exists** (§3.11). Before it, one 10 MiB file of prefixed elements under a
       1 MiB URI parsed for 119 s, so at C = 8 the third request in the queue would get the platform's 504.
     - Legitimate files keep the checkpoint's < 2 s (the §3.13 L rows), and real files take about 0.1 s.
-    - **Measured S:** ⟨QA, after the H4 re-measure at U = 1,024 characters⟩. The slowest admitted row measured so
-      far is H7, at 2.5 s. If the re-measure comes in above 3.5 s, §3.13 escalation 4 applies.
+    - **Measured S = 2.6 s** (tech-lead decision on QA's re-measure of the capped build, `hike-api:qa-r3`,
+      ee059c3). The slowest admitted row is H4 at U = 1,024 four-byte characters (4 KiB of UTF-8): 2.24–2.64 s
+      on a quiet host. Loaded-host figure, recorded beside it: up to 5.5 s with about 45 % ambient host load
+      (H7's control flood rose from 2.0 to 4.0 s in the same runs). S is inside the 3.5 s bar, so §3.13
+      escalation 4 does not apply.
+    - **Bars are judged on a quiet host**, as the benchmark job's are. A loaded-host figure is recorded, not
+      judged.
+    - **The queue holds either way at the recommended 8:** 8 × 5.5 = 44 s, well under 300 s, even on the loaded
+      figure. At today's 80 it holds only on the quiet figure (80 × 2.6 = 208 s); on the loaded one,
+      80 × 5.5 = 440 s passes the timeout. This strengthens the `--concurrency=8` recommendation (Manager
+      decisions 6).
   - **Why 1 (round-3 amendment: re-derived from the tracker bound).** It is a memory budget and a CPU fact.
     - **The per-parse bound P** is the worst RSS high-water of one parse above the idle process. The
       post-build value, P ≈ 192 MiB, was under-measured: the round-3 shape needed more than the whole 512 MiB.
       Under the tracker, §3.13 bounds P analytically at ≈ 93 MiB and sets the QA bound at P ≤ 120 MiB (RSS ≤ 160
-      MiB). **QA measured P = 64.5 MiB** (item 38). Over HTTP the worst RSS was 120.1 MiB, and 120.1 − B (55) =
-      65.1 MiB agrees with P to within 1 MiB.
+      MiB). **QA measured P = 64.5 MiB** (item 38). Over HTTP the worst RSS was 119.6 MiB on the capped build
+      (120.1 before it), and 119.6 − B (55) = 64.6 MiB agrees with P to within 1 MiB.
     - **The formula.** With K = `MAX_CONCURRENT_PARSES` parse slots and C = Cloud Run `--concurrency` admitted
       requests, every request that isn't parsing holds R and the parsing ones hold P:
 
@@ -1010,7 +1038,8 @@ escalation, not a tweak.
   | **total, P** | **≈ 93 MiB**; QA bound **P ≤ 120 MiB**, i.e. RSS high-water ≤ 160 MiB; **measured 64.5 MiB** | the terms can't all peak together, so this is pessimistic |
 
   **Measured (QA, `hike-api:qa-r3`, item 38):** worst P 64.5 MiB against the bar of 120; worst RSS 99.2 MiB in the
-  child and 120.1 MiB over HTTP, against the bar of 160; no OOM kill and no restart in any run. The reviewer's
+  child and 119.6 MiB over HTTP on the capped build (120.1 before it), against the bar of 160; no OOM kill and no
+  restart in any run. The reviewer's
   earlier probe (P ≈ 58 MiB, ≤ 98 MiB RSS) agrees.
 - **Why 32 MiB and 4× (final, item 38).**
   - **Measured:** every L row parses at a threshold of 64 KiB with factor 1.0, so M_legit ≤ 64 KiB (the bisection
@@ -1098,18 +1127,21 @@ bounds are fixed here, before anyone measures.
 flagged on time. The brief records figures only for the extremes and for those two rows. QA's per-row figures go
 into `PROGRESS.md` with the checkpoint.
 The wall-time bar of every H row is now ≤ 3.5 s (item 41), replacing ≤ 2 s and, for H6, ≤ 1 s.
+**Bars are judged on a quiet host**, like the benchmark job (tech-lead decision). During part of QA's post-cap
+sweep the host carried about 45 % ambient CPU load, which inflated wall times up to about 2× (H7's control flood
+rose from 2.0 to 4.0 s). Those runs are recorded beside the quiet ones, not judged against the bar.
 
 | Row | Shape (10 MiB unless noted) | Bound (RSS high-water in the image / wall / outcome) | Measured |
 | --- | --- | --- | --- |
 | H1 | one `<gpx>` start tag of distinct **unprefixed** attributes, shortest-first | ≤ 160 MiB / ≤ 3.5 s / 422 | pass |
 | H2 | **the round-3 shape:** `<gpx xmlns:p="U">` plus distinct `p:`-prefixed attributes, shortest-first local names, × U | ≤ 160 MiB / ≤ 3.5 s / 422 `invalid_gpx` `TOO_COMPLEX_MESSAGE` | pass at every U (the tracker refuses it). Since item 37, U > 1,024 characters is refused at the declaration with the same message, `__cause__` `None` |
-| H3 | one element with distinct `xmlns:pN` declarations, shortest-first prefixes, × U; once with one shared URI and once with distinct URIs of length U | ≤ 160 MiB / ≤ 3.5 s / 422 | memory: pass at every U. Time with the namespace handler installed, at U = 1 B and U = 1,024 characters: ⟨QA⟩ |
-| H4 | distinct element names as `<gpx>`'s children (`<a/>`, `<b/>`, …), shortest-first; once unprefixed, once `p:`-prefixed with `xmlns:p="U"` on the root, × U | ≤ 160 MiB / ≤ 3.5 s / 200, 422 | memory: pass. **Time before the cap: 4.1 s at U = 64 KiB and 119 s at U = 1 MiB ✗** (natively, tech lead: 0.79 s at 1 KiB, 1.71 s at 4 KiB, 19 s at 64 KiB). After the cap, U > 1,024 characters is refused at the root's declaration. At U = 1,024 characters, the worst admitted case: ⟨QA⟩ in ASCII and ⟨QA⟩ in 4-byte characters |
+| H3 | one element with distinct `xmlns:pN` declarations, shortest-first prefixes, × U; once with one shared URI and once with distinct URIs of length U | ≤ 160 MiB / ≤ 3.5 s / **200 or 422** (corrected): the cap admits U ≤ 1,024 characters and refuses U above that at the first declaration | memory: pass at every U; this row holds the table's worst figures, at U = 1 B with one shared URI (P 64.5 MiB, RSS 99.2 MiB in the child; 119.6 MiB over HTTP on the capped build). Outcomes: 422 `TOO_COMPLEX_MESSAGE` at U = 1 B (the tracker), 200 at 256 B and at 1,024 characters, 422 at the cap from 4 KiB up. Time with the namespace handler installed, over every run (loaded ones included): 0.21–0.40 s at U = 1 B (shared URI); at U = 1,024 characters 0.14–0.23 s in ASCII and 0.11–0.17 s in 4-byte characters, shared or distinct URIs: pass |
+| H4 | distinct element names as `<gpx>`'s children (`<a/>`, `<b/>`, …), shortest-first; once unprefixed, once `p:`-prefixed with `xmlns:p="U"` on the root, × U | ≤ 160 MiB / ≤ 3.5 s / 200, 422 | memory: pass. **Time before the cap: 4.1 s at U = 64 KiB and 119 s at U = 1 MiB ✗** (natively, tech lead: 0.79 s at 1 KiB, 1.71 s at 4 KiB, 19 s at 64 KiB). After the cap, U > 1,024 characters is refused at the root's declaration. At U = 1,024 characters, the worst admitted case (422 `TOO_COMPLEX_MESSAGE` from the tracker, P 38.0 MiB): 0.68–0.98 s in ASCII (0.82 s over HTTP) and **2.24–2.64 s in 4-byte characters on a quiet host: pass, and this is S = 2.6 s** (§3.10). Loaded-host figure, recorded: up to 5.5 s at about 45 % ambient load (3.1 s over HTTP). Above 1,024 characters the root's declaration is refused in ≤ 0.013 s (U = 4 KiB to 1 MiB) |
 | H5 | nesting to the cap: 63 levels under the root, each start tag declaring distinct `xmlns:pN` with URIs of length U, sized to 10 MiB (the bindings stay alive while their elements are open); and 10 MiB of repeated 63-deep open/close cycles | ≤ 160 MiB / ≤ 3.5 s / 422 or 200; depth 65 still `invalid_gpx` "nested too deeply" | pass |
 | H6 | long text: 10 MiB inside the first `metadata/name`, `trk/name`, `rte/name`, the first `trkpt/ele`, and a skipped `<desc>`; each as plain text, as one CDATA section, and as `&amp;` repeated | ≤ 160 MiB / ≤ 3.5 s; `tracemalloc` peak ≤ 2 MiB above the same file with a 1 KiB text; name truncated to 65,536 characters, `ele` → `None` | pass |
-| H7 | skipped elements: the four post-build shapes (`<trk/>`, `<wpt lat="0" lon="0"/>`, `<trkseg/>`, `<a/>`) and one `trkpt`'s `<extensions>` holding distinct child names, shortest-first | ≤ 160 MiB / ≤ 3.5 s / 422 or `too_few_points` | memory: pass. Time: `<trk/>` and `<a/>` floods 2.0–2.5 s (Docker Desktop), over the old 2 s estimate and inside 3.5 s: pass |
+| H7 | skipped elements: the four post-build shapes (`<trk/>`, `<wpt lat="0" lon="0"/>`, `<trkseg/>`, `<a/>`) and one `trkpt`'s `<extensions>` holding distinct child names, shortest-first | ≤ 160 MiB / ≤ 3.5 s / 422 or `too_few_points` | memory: pass. Time: `<trk/>` and `<a/>` floods 2.0–2.5 s (Docker Desktop), over the old 2 s estimate and inside 3.5 s: pass. Re-run on the capped build: about 2.0 s on a quiet host (best runs: `<a/>` 1.96 s, `<trk/>` 2.12 s); up to 4.0 s at about 45 % ambient host load (recorded, not judged) |
 | H8 | one attribute value of ≈ 10 MiB (a single large token) on `<gpx>`, and on a `<trkpt>` | ≤ 160 MiB / ≤ 3.5 s / 422 | pass |
-| H9 | 100,001 points, then 9 MiB of H4 (prefixed). **Redefined (item 43): U = 1,024 characters.** The old U = 64 KiB on the root is now refused before the first point | ≤ 160 MiB / ≤ 3.5 s / `too_many_points` (the cap comes first in document order) | pass at U = 64 KiB, before the cap. At U = 1,024 characters: ⟨QA⟩ |
+| H9 | **Redefined (item 43): 100,001 points, then H4 (prefixed) at U = 1,024 characters, trimmed to 10 MiB total.** The literal "100,001 points, then 9 MiB of H4" form is 11.3 MiB: over HTTP it is a 413 `file_too_large` and never reaches the parser. The old U = 64 KiB on the root is now refused before the first point | ≤ 160 MiB / ≤ 3.5 s / `too_many_points` (the cap comes first in document order) | pass at U = 64 KiB, before the cap (that file was the 11.3 MiB form). At U = 1,024 characters, ASCII or 4-byte: pass, `too_many_points` in 0.44–0.86 s, P 22.8 MiB, RSS 57.6 MiB in the child; over HTTP 422 `too_many_points` in 1.1–1.37 s, peak RSS 78.5 MiB. The 11.3 MiB form: 413 over HTTP in ≤ 0.14 s; through the parse child alone, `too_many_points` in ≤ 0.63 s, P 24.0 MiB |
 | H10 | the 100k-point adversarial zigzag, end to end | ≤ 160 MiB / ≤ 3.5 s / 200 | pass |
 | L1 | every fixture | 200, output unchanged; M_legit ≤ 8 MiB; F_legit ≤ 2.0 | pass: 200, output byte-identical; M_legit ≤ 64 KiB; F_legit = 1.0 |
 | L2 | real-shaped 100k points (`ele` + `time`, ≈ 10 MB) | ≤ 160 MiB / ≤ 2 s / 200; M_legit ≤ 8 MiB; F_legit ≤ 2.0 | pass: M_legit ≤ 64 KiB; F_legit = 1.0 |
@@ -1120,7 +1152,11 @@ Also recorded (QA, `hike-api:qa-r3`):
 - B = 55 MiB, the idle uvicorn process;
 - P = 64.5 MiB;
 - K_max = 5 in both columns, and C_max = 34 (steady) and 18 (pessimistic) (§3.10);
-- S = ⟨QA, after the H4 re-measure⟩. Its bar is 3.5 s, and the slowest admitted row so far is H7 at 2.5 s.
+- worst RSS 99.2 MiB in the child and 119.6 MiB over HTTP on the capped build;
+- **S = 2.6 s** (tech-lead decision): H4 at U = 1,024 four-byte characters, 2.24–2.64 s on a quiet host, against
+  the bar of 3.5 s. Loaded-host figure, recorded beside it: up to 5.5 s at about 45 % ambient load. The queue
+  holds on either figure at `--concurrency=8` (8 × 5.5 = 44 s) and only on the quiet one at 80 (80 × 2.6 =
+  208 s) (§3.10).
 
 **History: post-build measurements (QA verify, 5070469/935d37d; before the tracker; generators not worst-case).**
 Re-measured by the table above; nothing below is a current bound.
@@ -1952,7 +1988,9 @@ tests red-first in `tests/routes/`. Backend adds unit tests for internals it int
       built before the timer starts). Without the cap the same input took 4.1 s in the image, so the test is red
       without it. Through HTTP: the same 422 body as above, with `X-Request-ID`;
     - **the reader lets go:** after `parse_gpx` returns or raises, the parser's `StartNamespaceDeclHandler` is
-      `None` (extend the existing `detach` test);
+      `None` (extend the existing `detach` test). pyexpat clears its handlers itself after a callback raises
+      (§3.1 step 4), so the after-refusal case is belt-and-braces and passes even without `detach`; the
+      after-return case is the one that proves `detach`;
     - **the guard on the old tests:** the existing tracker tests that assert `__cause__` is an `ExpatError` with
       `XML_ERROR_NO_MEMORY` keep their 1,024-character URIs. They then prove the cap did not take over the
       tracker's cases.
@@ -2073,7 +2111,9 @@ tests red-first in `tests/routes/`. Backend adds unit tests for internals it int
    - The max safe value from QA's P is 18 pessimistic and 34 steady (§3.10 table). Going above the post-build 12
      still needs a load measurement first. The post-build "12 / 22" rested on an under-measured P.
    - Time: at 8, the queue behind the one parse slot drains in ≤ 8 × 3.5 = 28 s against the 300 s timeout. At 80
-     it would take 280 s, with no room left for uploads (§3.10).
+     it would take 280 s, with no room left for uploads (§3.10). Measured S = 2.6 s (5.5 s on a loaded host):
+     8 × 5.5 = 44 s holds on either figure, while 80 holds only on the quiet one (208 s). This strengthens the
+     recommendation.
    - Cost: above 8 simultaneous requests on the single instance, Cloud Run may answer 429 itself.
    - Recommended: **8**. See Follow-ups for the not-lowered outcome. The element-count cap is **not** a decision
      (rejected, §3.10).

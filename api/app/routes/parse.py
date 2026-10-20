@@ -226,8 +226,10 @@ class _GpxReader:
             raise InvalidGpx("The file declares an unsupported XML encoding.")
 
     def on_namespace_decl(self, prefix: str | None, uri: str | None) -> None:
-        """ADR 0004 3.1 step 4: a namespace URI over the cap is too complex."""
-        if uri is not None and len(uri) > self._max_namespace_uri_chars:
+        """ADR 0004 3.1 step 4: a non-ASCII or over-cap namespace URI is too complex."""
+        if uri is not None and (
+            not uri.isascii() or len(uri) > self._max_namespace_uri_chars
+        ):
             raise InvalidGpx(TOO_COMPLEX_MESSAGE)
 
     def _skip_element(self) -> None:

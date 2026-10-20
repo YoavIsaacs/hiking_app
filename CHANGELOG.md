@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.0](https://github.com/YoavIsaacs/hiking_app/compare/v0.1.0...v0.2.0) (2026-10-20)
+
+
+### Features
+
+* **api:** GPX parser endpoint POST /v1/routes/parse (step 1.2) ([#33](https://github.com/YoavIsaacs/hiking_app/issues/33)) ([4870b23](https://github.com/YoavIsaacs/hiking_app/commit/4870b239f068992bc54a7df6c5b609b3017eb4ea))
+
 ## 0.1.0 (2026-10-19)
 
 

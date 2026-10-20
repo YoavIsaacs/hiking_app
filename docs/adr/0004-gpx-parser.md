@@ -1,6 +1,6 @@
 # 0004 — GPX parser: module boundary, RouteSummary/ErrorResponse contract, algorithms, upload limits, benchmark
 
-Status: accepted; post-build corrections accepted (tech lead, 2026-10-20); round-3 amendment (items 28–36) accepted (tech lead, 2026-10-20); round-3 measured values and the namespace URI cap (items 37–44) accepted (tech lead, 2026-10-20); round-4 amendment and its measured values (items 45–51) accepted (tech lead, 2026-10-20); round-4 re-check correction (item 52) accepted (tech lead, 2026-10-20) · Date: 2026-10-19 · Amended: 2026-10-19 (three rounds), 2026-10-20 (post-build corrections; round-3 decision; round-3 measured values and URI cap; URI cap measured on the capped build; round 4: URI cap tightened to ASCII ≤ 256; round-4 values measured in `hike-api:qa-r4`; round-4 re-check: new row H11(d), S = 2.6 s from H11(d), was 2.32 s from H11(a)) · Step: 1.2
+Status: accepted; post-build corrections accepted (tech lead, 2026-10-20); round-3 amendment (items 28–36) accepted (tech lead, 2026-10-20); round-3 measured values and the namespace URI cap (items 37–44) accepted (tech lead, 2026-10-20); round-4 amendment and its measured values (items 45–51) accepted (tech lead, 2026-10-20); round-4 re-check correction (item 52) accepted (tech lead, 2026-10-20); manager decision on Cloud Run `--concurrency` recorded (item 53) accepted (tech lead, 2026-10-20) · Date: 2026-10-19 · Amended: 2026-10-19 (three rounds), 2026-10-20 (post-build corrections; round-3 decision; round-3 measured values and URI cap; URI cap measured on the capped build; round 4: URI cap tightened to ASCII ≤ 256; round-4 values measured in `hike-api:qa-r4`; round-4 re-check: new row H11(d), S = 2.6 s from H11(d), was 2.32 s from H11(a); manager decision: Cloud Run `--concurrency=8`) · Step: 1.2
 
 ## Amendments
 **2026-10-19.** These record decisions already taken in step 1.2: review round 1, QA verify and the devops
@@ -43,10 +43,11 @@ in place.
     about 5 cm of coordinate rounding.
 11. **Measured results** (§3.5, §3.10, §5). The largest fixture has a min of 187 ms. A 100k-point adversarial zigzag
     takes 2.8–3.5 s end to end, mostly in gpxpy.
-12. **Open: Cloud Run `--concurrency`.** This is not decided here (Follow-ups). The tech lead has asked the manager to
-    lower it from 80 to 8. *Item 20 adds the arithmetic.*
+12. **Cloud Run `--concurrency` (decided by the manager 2026-10-20: 8; item 53).** This was not decided here
+    (Follow-ups). The tech lead asked the manager to lower it from 80 to 8. *Item 20 adds the arithmetic; item 53
+    records the decision.*
 
-**2026-10-19, third round (accepted by tech lead 2026-10-19; Cloud Run concurrency pending the manager).** Review round 2 failed the hostile-input finding a second time. The manager
+**2026-10-19, third round (accepted by tech lead 2026-10-19; Cloud Run concurrency decided by the manager 2026-10-20, item 53).** Review round 2 failed the hostile-input finding a second time. The manager
 chose option A: replace gpxpy with our own streaming parser on stdlib expat (`docs/steps/1.2.md`, 60c6cdc). This
 deviates from the roadmap's "Parse with gpxpy". The sections it touches are rewritten in place. Where an earlier item
 above is superseded, the body says so.
@@ -304,6 +305,27 @@ shape. There is no code change and no test change. The sections this item touche
     - **Testing:** H11(d) is a §3.13 measurement in the image, outside CI like the rest of H11 (How it is
       tested). The cap admits these shapes by design, so no test changes.
 
+**2026-10-20, manager decision: Cloud Run `--concurrency` (proposed).** The manager decided Manager decisions 6 on
+2026-10-20. Only status wording changes in the sections this item touches (item 12, the third-round heading,
+Context "Runtime", §3.10, Manager decisions 6, Follow-ups). The reasoning and the earlier log items stay as history.
+
+53. **Cloud Run `--concurrency=8`, decided** (manager, 2026-10-20: "go with 8, if we need to scale up, we'll
+    revisit in the future"; §3.10, Manager decisions 6). This closes the open item 12 and the recommendation in
+    items 20, 25, 34 and 52.
+    - **What it rests on** (§3.10, unchanged): with the measured P = 64.5 MiB and B = 55 MiB, 8 needs 310.5 MiB
+      pessimistic and 250.5 MiB steady of 512, and is safe for any P ≤ 266 MiB. The queue behind the one parse slot
+      is 21 s at S = 2.6 s and 28 s at the 3.5 s bar, against the 300 s timeout. `MAX_CONCURRENT_PARSES` stays 1.
+    - **Revisit trigger: scaling up.** Any change to `--concurrency` first re-runs the §3.10 arithmetic, both the
+      memory budget and the queue (C × S < 300 s), with the P, B and S current at the time. At today's figures
+      C_max is **34 steady / 18 pessimistic**. Going above 12 also needs the concurrent-load measurement first
+      (Follow-ups). The change is an ADR amendment, not a flag flip.
+    - **Enforcement (devops):** `--concurrency=8` is set in `.github/workflows/deploy-api.yml`, and a post-deploy
+      check reads the deployed revision's concurrency and fails the workflow unless it is 8.
+    - **Consequences:** above 8 simultaneous requests on the single instance, Cloud Run may answer 429 itself (the
+      1.10 UX follow-up stands). Raising throughput later costs a re-derivation and a measurement, which is the
+      point.
+    - **Testing:** the post-deploy check is the test, on every deploy. No app code or test changes.
+
 ## Context
 Step 1.2 adds `POST /v1/routes/parse`. It turns an uploaded GPX file into a typed `RouteSummary`, rejects bad input
 with a typed `ErrorResponse`, never returns 500, and parses the largest fixture in < 2 s. A CI benchmark guards
@@ -324,7 +346,7 @@ against regressions. The forces at play:
 - **Existing error shape:** `RequestIdMiddleware` turns unhandled exceptions into
   `500 {"detail": "Internal Server Error"}`, and `tests/test_errors.py` asserts exactly that body. FastAPI's own
   422 is `{"detail": [...]}`, and Starlette's 404/405 is `{"detail": "Not Found"}`. Neither is `ErrorResponse`.
-- **Runtime:** Cloud Run with 512 MiB of memory, 1 vCPU, concurrency 80 (8 recommended; Manager decisions 6) and
+- **Runtime:** Cloud Run with 512 MiB of memory, 1 vCPU, concurrency 80 by default, set to 8 by manager decision (2026-10-20; item 53, Manager decisions 6) and
   max 1 instance (ADR 0002/0003). The
   filesystem is in memory, and Cloud Run caps HTTP/1 requests at 32 MiB. Starlette spools uploads to a
   `SpooledTemporaryFile` (1 MiB in memory, then "disk", which is RAM here) and has **no total file-size limit**.
@@ -913,7 +935,7 @@ none of them reads an unbounded body.
 
     | C | the most S may be (300 s / C) | C × S at the bar, S = 3.5 s | C × S measured, S = 2.6 s (H11(d), `hike-api:qa-r4`, quiet rounds; item 52) | C × S before the URI cap (H4, U = 1 MiB, S = 119 s) | C × S under the 1,024-character cap (round-4 file, S = 17.1 s) |
     | --- | --- | --- | --- | --- | --- |
-    | **8** (recommended) | 37.5 s | **28 s** | **21 s** ✓ | 952 s ✗: the 3rd request in the queue already passes 300 s | 137 s: inside, but about 5× the bar's 28 s |
+    | **8** (decided, item 53) | 37.5 s | **28 s** | **21 s** ✓ | 952 s ✗: the 3rd request in the queue already passes 300 s | 137 s: inside, but about 5× the bar's 28 s |
     | 18 (pessimistic C_max, below) | 16.7 s | 63 s | 47 s ✓ | ✗ | 308 s ✗ |
     | 80 (today) | 3.75 s | 280 s, just inside, with nothing left for uploads | 208 s ✓: inside, with about 92 s left for uploads | ✗ | 1,368 s ✗ |
 
@@ -923,7 +945,7 @@ none of them reads an unbounded body.
     (18.5 s at 8, 41.7 s at 18, 185 s at 80).*
 
     - **The bar: S ≤ 3.5 s wall time in the image, one number for every hostile row** (§3.13). It is the bar H10
-      already had. At the recommended 8 the queue drains in 28 s, under a tenth of the timeout. That leaves room
+      already had. At the decided 8 (item 53) the queue drains in 28 s, under a tenth of the timeout. That leaves room
       for upload transfer and for the event loop sharing the one vCPU. It is also the largest round bar that keeps
       even today's 80 inside 300 s, though with no room for uploads there. That is one more reason for 8.
     - **It replaces the flat "≤ 2 s" estimate.** H7's 10 MiB floods of `<trk/>` and `<a/>` take 2.0–2.5 s in the
@@ -954,10 +976,10 @@ none of them reads an unbounded body.
         under the same URI ran 17.1 s.
     - **Bars are judged on a quiet host**, as the benchmark job's are. A loaded-host figure is recorded, not
       judged.
-    - **The queue at the recommended 8: 21 s measured** (8 × 2.6 s), and 28 s at the bar. At 18 it is 47 s.
+    - **The queue at the decided 8: 21 s measured** (8 × 2.6 s), and 28 s at the bar. At 18 it is 47 s.
       At today's 80 it is 208 s measured, so 80 now holds on time too, but only with S measured and not at the
-      bar (280 s, with nothing left for uploads). **8 stays the recommendation** (Manager decisions 6), for latency
-      and for memory headroom: the last request in a full queue waits about 21 s at 8 against about 208 s at 80,
+      bar (280 s, with nothing left for uploads). **8 is decided** (manager, 2026-10-20; Manager decisions 6,
+      item 53). It was recommended for latency and for memory headroom: the last request in a full queue waits about 21 s at 8 against about 208 s at 80,
       and 80 does not fit 512 MiB for any P (the waiting-uploads table below), while 8 fits for any P ≤ 266 MiB.
   - **Why 1 (round-3 amendment: re-derived from the tracker bound).** It is a memory budget and a CPU fact.
     - **The per-parse bound P** is the worst RSS high-water of one parse above the idle process. The
@@ -1016,7 +1038,7 @@ none of them reads an unbounded body.
     | **8** | **186 + P = 250.5 MiB** ✓; safe iff P ≤ 326 MiB | **246 + P = 310.5 MiB** ✓; safe iff P ≤ 266 MiB |
     | C_max | ⌊(396 − P) / 10⌋ + 1 = ⌊33.15⌋ + 1 = **34** | ⌊(406 − P) / 20⌋ + 1 = ⌊17.08⌋ + 1 = **18** |
 
-    - **Recommendation unchanged: `--concurrency=8`, with the close.** It is safe for any P ≤ 266 MiB, about 4× the
+    - **Decided: `--concurrency=8`, with the close** (manager, 2026-10-20; item 53). It is safe for any P ≤ 266 MiB, about 4× the
       measured 64.5. That headroom covers what a fresh-subprocess measurement can't show (allocator drift in a
       long-lived process) and 1.3's elevation-lookup client. 8 is also Cloud Run's documented starting point.
       Going up to the pessimistic C_max of 18 is safe by arithmetic if platform 429s show up in practice, and its
@@ -2397,8 +2419,8 @@ tests red-first in `tests/routes/`. Backend adds unit tests for internals it int
 4. *(Amendment, done.)* `too_many_points` above 100,000 raw points was approved on 2026-10-19.
 5. *(Amendment, for the tech lead to confirm.)* Declaring `anyio` explicitly in `pyproject` adds no new package to
    the lock (§4).
-6. *(Open; re-derived for the tracker bound in the round-3 amendment.)* **Lower Cloud Run `--concurrency` from 80
-   to 8.** The upload is closed after `read()` (built).
+6. *(Done 2026-10-20: the manager chose 8, item 53; re-derived for the tracker bound in the round-3 amendment.)*
+   **Lower Cloud Run `--concurrency` from 80 to 8.** The upload is closed after `read()` (built).
    - With the measured B = 55 MiB (item 42), 8 needs 246 + P MiB in the pessimistic case and 186 + P MiB in
      steady state, so it is safe for any per-parse P ≤ 266 MiB. QA measured P = 64.5 MiB: 310.5 and 250.5 MiB.
      80 cannot fit for any P (≥ 906 MiB).
@@ -2407,15 +2429,16 @@ tests red-first in `tests/routes/`. Backend adds unit tests for internals it int
    - Time: at 8, the queue behind the one parse slot drains in ≤ 8 × 3.5 = 28 s against the 300 s timeout. At 80
      it would take 280 s, with no room left for uploads (§3.10). **Measured S = 2.6 s** (item 52; H11(d) in
      `hike-api:qa-r4`, the max over quiet rounds): 8 × S = 21 s, 18 × S = 47 s and 80 × S = 208 s, all inside
-     300 s. So 80 now holds on time too, but only at the measured S, not at the bar. **8 stays the
-     recommendation**, for latency (the last request in a full queue waits about 21 s, not about 208 s) and for
+     300 s. So 80 now holds on time too, but only at the measured S, not at the bar. **8 was the
+     recommendation, and the manager chose it**, for latency (the last request in a full queue waits about 21 s, not about 208 s) and for
      memory headroom (80 does not fit 512 MiB for any P). *Withdrawn:* the earlier "S = 2.6 s (5.5 s loaded):
      44 s at 8, 208 s at 80". It came from H4, which was not the slowest admitted row; the value 2.6 s returns
      only because H11(d) measured the same. *Superseded (item 52):* S = 2.32 s from H11(a), with 18.5 s at 8 and
      185 s at 80. Under the old 1,024-character cap an admitted file took 17.1 s, which is 137 s at 8 and
      1,368 s at 80.
    - Cost: above 8 simultaneous requests on the single instance, Cloud Run may answer 429 itself.
-   - Recommended: **8**. See Follow-ups for the not-lowered outcome. The element-count cap is **not** a decision
+   - Decided: **8** (manager, 2026-10-20: "go with 8, if we need to scale up, we'll revisit in the future";
+     item 53). The not-lowered outcome in Follow-ups is not taken. The element-count cap is **not** a decision
      (rejected, §3.10).
 7. *(Done 2026-10-19, third amendment.)* **Option A: replace gpxpy with our own expat reader**, a roadmap deviation
    recorded in the brief. No new dependency results, and one is removed.
@@ -2452,14 +2475,14 @@ every fixture. 23 points did (§3.4).
 
   `summarise_gpx` then stays as a thin pure composition of 1 and 3, so the benchmark target doesn't move. This
   belongs to 1.3's ADR, not to this amendment.
-- **Open: memory held by waiting requests (Cloud Run `--concurrency`).** The arithmetic is in §3.10, and the
-  decision is the manager's (Manager decisions 6). The two outcomes:
-  - **Lowered in 1.2.** Devops sets `--concurrency=8` in `deploy-api.yml`, and the brief records it. The worst-case
+- **Decided: memory held by waiting requests (Cloud Run `--concurrency`).** The arithmetic is in §3.10. The
+  manager chose 8 on 2026-10-20 (Manager decisions 6, item 53). The two outcomes that were open:
+  - **Lowered in 1.2 (chosen).** Devops sets `--concurrency=8` in `deploy-api.yml`, and the brief records it. The worst-case
     queue drops to ≤ 28 s at the 3.5 s bar (21 s at the measured S = 2.6 s), and the worst case is 310.5 of 512 MiB (pessimistic, measured P,
     §3.10).
   - **Optional evidence:** a load smoke against the image under `--memory=512m` with C hostile 10 MiB uploads in
     flight would turn the (C − 1) × R term into a measurement. It is required before going above 12.
-  - **Not lowered in 1.2.** It becomes a hardening follow-up before public launch: lower the concurrency, or add
+  - **Not lowered in 1.2 (not taken).** It would have become a hardening follow-up before public launch: lower the concurrency, or add
     the rate limiting ADR 0003 already flags before Phase 3. Until then, 1.2's memory bound covers parses only, and
     a flood of large uploads can still OOM the instance. Cloud Run restarts it, and the client sees 5xx from the
     platform.

@@ -61,8 +61,8 @@ AMPLIFICATION = errors.codes[errors.XML_ERROR_AMPLIFICATION_LIMIT_BREACH]
 
 # The longest URI the namespace cap admits (ASCII, 256 characters; ADR 0004 round 4).
 # Four MiB of distinct prefixed attributes: about 400k of them, ~200 MiB of expanded
-# names without the tracker. One MiB is only just past the 32 MiB activation (measured:
-# 0.5 MiB is accepted), so 4 MiB leaves a margin. Refused in ~0.3 s, peak ~32 MiB.
+# names without the tracker. The shape is refused from 0.56 MiB on both expat 2.8.5 and
+# 2.9.0 (bisected), so 4 MiB is ~7x past it. Refused in ~0.3 s, peak ~32 MiB.
 URI_AT_THE_CAP = 256
 ROUND3_SHAPE = prefixed_attribute_burst(4 * MIB, URI_AT_THE_CAP)
 VALID = gpx_bytes([out_and_back()])
@@ -206,8 +206,8 @@ def test_the_threshold_value_is_applied_not_left_at_expats_64_mib_default() -> N
 
 def test_a_factor_above_the_documents_amplification_lets_it_through() -> None:
     """The negative of the 4x test above: the same document, the same threshold, and a
-    factor above its ~40x ratio is accepted, so it is the factor that decides."""
-    parser = _new_parser(alloc_threshold_bytes=1 * MIB, alloc_max_amplification=100.0)
+    factor far above its ~50x ratio is accepted, so it is the factor that decides."""
+    parser = _new_parser(alloc_threshold_bytes=1 * MIB, alloc_max_amplification=1000.0)
     feed(parser, SMALL_AMPLIFYING)
 
 
@@ -323,11 +323,13 @@ def test_the_xmlns_binding_shape_is_refused_too() -> None:
 
 # The URI must be long, or the burst does not amplify and the tracker rightly accepts it
 # (a 5-character URI made these tests pass vacuously); the cap admits 256 at most.
-# Measured on the wpt burst: with a 256-character URI 1 MiB is already refused and
-# 0.5 MiB is not; with a 5-character URI 2 MiB is accepted and 4 MiB is refused (the
-# attribute names alone amplify by then). 2 MiB is the size that separates the two.
+# Measured by bisection on expat 2.8.5 and 2.9.0 (wpt burst): with a 256-character URI
+# the burst is refused from 0.56 MiB on both; with a 5-character URI it is refused from
+# 2.20 MiB on 2.8.5 but already from 1.74 MiB on 2.9.0 (the attribute names alone
+# amplify by then). 1 MiB sits ~1.8x above the first and ~1.7x below the second, so it
+# separates the two on both versions.
 ROOT_P = b'<gpx xmlns:p="urn:' + b"u" * (URI_AT_THE_CAP - 4) + b'">'
-WPT_BURST = wpt_with_prefixed_burst(2 * MIB)
+WPT_BURST = wpt_with_prefixed_burst(1 * MIB)
 
 
 def test_the_burst_alone_is_refused_at_the_defaults() -> None:

@@ -6,11 +6,12 @@ missing. Nothing is rejected.
 """
 
 import tracemalloc
+from collections.abc import Callable
 
 import pytest
 
 from app.routes.params import MAX_CAPTURED_TEXT_CHARS
-from app.routes.parse import parse_gpx
+from app.routes.parse import _CHUNK_BYTES, parse_gpx
 from app.routes.summary import summarise_gpx
 from tests.routes.gpx_builders import gpx_bytes, out_and_back
 
@@ -35,15 +36,19 @@ def test_the_cap_is_65536_characters() -> None:
 # --- names ---
 
 
-def name_in(where: str, text: str) -> bytes:
+def name_body(where: str, text: str) -> str:
     if where == "metadata":
-        return gpx(f"<metadata><name>{text}</name></metadata><trk>{TRK_BODY}</trk>")
+        return f"<metadata><name>{text}</name></metadata><trk>{TRK_BODY}</trk>"
     if where == "trk":
-        return gpx(f"<trk><name>{text}</name>{TRK_BODY}</trk>")
-    return gpx(
+        return f"<trk><name>{text}</name>{TRK_BODY}</trk>"
+    return (
         f"<rte><name>{text}</name>"
         '<rtept lat="1" lon="1"/><rtept lat="2" lon="2"/></rte>'
     )
+
+
+def name_in(where: str, text: str) -> bytes:
+    return gpx(name_body(where, text))
 
 
 def read_name(where: str, text: str) -> str | None:
@@ -205,3 +210,67 @@ def test_a_10_mib_text_node_costs_no_more_memory_than_a_1_kib_one(where: str) ->
     small, huge = doc(1024), doc(10 * 1024 * 1024)
     parse_gpx(small)  # warm up imports and caches
     assert peak_of(huge) - peak_of(small) <= 2 * 1024 * 1024
+
+
+# --- more character data in a later callback once the capture is exactly full ---
+
+# parse_gpx feeds expat 64 KiB at a time and pyexpat flushes its text buffer at the
+# end of each feed, so character data arrives in a separate callback whenever it
+# crosses a feed boundary. Padding with whitespace puts the start of the text exactly
+# on a boundary: the first callback is then exactly the cap and `extra` arrives in a
+# second one, which is the reader's "no room left" branch. (A CDATA section, a
+# reference, a comment or a PI inside one feed is merged into the same callback by
+# buffer_text, so on their own they would not do.)
+LATER_CALLBACK = {
+    "plain": "more",
+    "cdata": "<![CDATA[more]]>",
+    "entity": "&amp;",
+    "char-ref": "&#65;",
+    "comment": "<!--c-->more",
+    "pi": "<?p x?>more",
+}
+
+
+def starts_on_a_feed_boundary(build: Callable[[str], bytes], text: str) -> bytes:
+    """build(pad) with `pad` spaces so that `text` begins at byte _CHUNK_BYTES."""
+    probe = build("")
+    pad = _CHUNK_BYTES - probe.index(text[:20].encode())
+    assert pad >= 0
+    doc = build(" " * pad)
+    assert doc.index(text[:20].encode()) == _CHUNK_BYTES
+    return doc
+
+
+@pytest.mark.parametrize("where", ["metadata", "trk", "rte"])
+@pytest.mark.parametrize("extra", LATER_CALLBACK.values(), ids=LATER_CALLBACK.keys())
+def test_a_name_exactly_full_then_more_text_in_a_later_callback_keeps_the_first_cap(
+    where: str, extra: str
+) -> None:
+    def build(pad: str) -> bytes:
+        return gpx(pad + name_body(where, "x" * CAP + extra))
+
+    doc = starts_on_a_feed_boundary(build, "x" * CAP)
+    raw = parse_gpx(doc)
+    name = raw.metadata_name if where == "metadata" else raw.track_name
+    assert name == "x" * CAP
+
+
+@pytest.mark.parametrize("extra", LATER_CALLBACK.values(), ids=LATER_CALLBACK.keys())
+def test_an_ele_exactly_full_then_more_text_in_a_later_callback_counts_as_missing(
+    extra: str,
+) -> None:
+    text = "0" * (CAP - 4) + "12.5"
+
+    def build(pad: str) -> bytes:
+        return gpx(
+            pad
+            + '<trk><trkseg><trkpt lat="1" lon="1">'
+            + f"<ele>{text}{extra}</ele></trkpt></trkseg></trk>"
+        )
+
+    doc = starts_on_a_feed_boundary(build, text)
+    assert parse_gpx(doc).points[0].elev_m is None
+
+
+def test_an_ele_exactly_full_with_nothing_after_it_is_still_kept() -> None:
+    assert parse_gpx(point_with_ele("0" * (CAP - 4) + "12.5")).points[0].elev_m == 12.5

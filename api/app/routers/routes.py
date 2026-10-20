@@ -23,7 +23,12 @@ async def parse_route(
     file: Annotated[UploadFile, File(description="GPX 1.0/1.1 file, at most 10 MB")],
     limiter: Annotated[anyio.CapacityLimiter, Depends(get_parse_limiter)],
 ) -> RouteSummary:
-    data = await file.read(MAX_UPLOAD_BYTES + 1)
+    try:
+        data = await file.read(MAX_UPLOAD_BYTES + 1)
+    finally:
+        # Free the spool now, so a request waiting for the limiter holds one copy
+        # of the upload, not two (ADR 0004 3.10).
+        await file.close()
     if len(data) > MAX_UPLOAD_BYTES:
         raise too_large()
     try:

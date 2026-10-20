@@ -10,18 +10,17 @@ MAX_SUMMARY_POINTS: Final = 500
 EARTH_RADIUS_M: Final = 6_371_008.8
 MAX_NAME_LENGTH: Final = 200
 UNTITLED_ROUTE_NAME: Final = "Untitled route"
-# An <ele> outside this range (inclusive) is treated as missing (ADR 0004 3.1 step 7).
+# An <ele> outside this range (inclusive) is treated as missing (ADR 0004 3.1 step 8).
 MIN_PLAUSIBLE_ELEV_M: Final = -1000.0
 MAX_PLAUSIBLE_ELEV_M: Final = 10000.0
-MAX_RAW_POINTS: Final = (
-    100_000  # ADR 0004 3.12: more <trkpt>/<rtept> tags -> too_many_points
-)
+# ADR 0004 3.12: the 100,001st point start tag the pass reads -> too_many_points
+MAX_RAW_POINTS: Final = 100_000
 PRETHIN_MAX_POINTS: Final = 2_000  # ADR 0004 3.5
 RDP_TIE_TOLERANCE_M: Final = 1e-6  # ADR 0004 3.5 split rule
-MAX_CONCURRENT_PARSES: Final = 1  # ADR 0004 3.10; one 10 MiB parse peaks ~300 MiB
-MAX_XML_DEPTH: Final = (
-    64  # ADR 0004 amendment (round 3): deeper element nesting -> invalid_gpx
-)
+# ADR 0004 3.10, 3.13: one parse at a time; the worst single parse is ~250 MiB
+MAX_CONCURRENT_PARSES: Final = 1
+# ADR 0004 3.11: an element at depth 65 (the root is depth 1) -> invalid_gpx
+MAX_XML_DEPTH: Final = 64
 
 
 @dataclass(frozen=True, slots=True)

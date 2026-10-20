@@ -38,6 +38,7 @@ _RTEPT: Final = 5
 _ELE: Final = 6
 # Expat copies a large single Parse() buffer; feeding slices keeps its memory constant.
 _CHUNK_BYTES: Final = 64 * 1024
+_MIN_EXPAT_VERSION: Final = (2, 7, 2)
 _NESTED_POINT: Final = 7  # a point tag inside a point: counted for the cap, never read
 # ADR 0004 3.1 step 5: the message for an expat resource refusal (tests assert it)
 TOO_COMPLEX_MESSAGE: Final = "The file is too complex to parse."
@@ -56,19 +57,50 @@ def require_alloc_tracker(
     expat_version: tuple[int, int, int] = version_info,
 ) -> None:
     """Raise RuntimeError unless the expat allocation tracker exists (ADR 0004 3.11)."""
-    raise NotImplementedError
+    missing = [
+        name
+        for name in (
+            "SetAllocTrackerActivationThreshold",
+            "SetAllocTrackerMaximumAmplification",
+        )
+        if not hasattr(parser_type, name)
+    ]
+    if missing:
+        raise RuntimeError(
+            "The expat allocation tracker is missing: the parser lacks "
+            + " and ".join(missing)
+            + "; it needs libexpat 2.7.2 and CPython 3.12.13 or later."
+        )
+    if expat_version < _MIN_EXPAT_VERSION:
+        found = ".".join(map(str, expat_version))
+        raise RuntimeError(
+            f"The expat allocation tracker needs libexpat 2.7.2+, found {found}."
+        )
+
+
+# no tracker, no app: this runs when app.routes.parse (and so app.main) is imported
+require_alloc_tracker()
 
 
 def _new_parser(
     *, alloc_threshold_bytes: int, alloc_max_amplification: float
 ) -> XMLParserType:
     """The only ParserCreate call in app/ (ADR 0004 3.11)."""
-    raise NotImplementedError
+    parser = ParserCreate(encoding="UTF-8", namespace_separator="|", intern=None)
+    parser.ordered_attributes = True
+    parser.buffer_text = True
+    parser.SetAllocTrackerActivationThreshold(alloc_threshold_bytes)
+    parser.SetAllocTrackerMaximumAmplification(alloc_max_amplification)
+    return parser
 
 
 def _invalid_gpx_from(exc: ExpatError) -> InvalidGpx:
     """Map an ExpatError to InvalidGpx; resource codes get TOO_COMPLEX_MESSAGE."""
-    raise NotImplementedError
+    if exc.code in _RESOURCE_ERROR_CODES:
+        return InvalidGpx(TOO_COMPLEX_MESSAGE)
+    return InvalidGpx(
+        f"The file is not well-formed XML (line {exc.lineno}, column {exc.offset})."
+    )
 
 
 class _Node:
@@ -148,6 +180,8 @@ class _GpxReader:
         self._stack: list[_Node] = []
         self._capturing = False
         self._chunks: list[str] = []
+        self._text_len = 0
+        self._overflow = False
         self._meta_seen = False
         self._meta_name: str | None = None
         self._trk_name: str | None = None
@@ -233,10 +267,21 @@ class _GpxReader:
     def _begin_capture(self) -> None:
         self._capturing = True
         self._chunks = []
+        self._text_len = 0
+        self._overflow = False
         self._parser.CharacterDataHandler = self.on_text
 
     def on_text(self, data: str) -> None:
-        self._chunks.append(data)
+        if self._overflow:
+            return  # never swap the handler from inside it; just keep nothing
+        room = self._max_text_chars - self._text_len
+        if len(data) > room:
+            self._chunks.append(data[:room])
+            self._text_len = self._max_text_chars
+            self._overflow = True
+        else:
+            self._chunks.append(data)
+            self._text_len += len(data)
 
     def _count_point(self) -> None:
         self._total += 1
@@ -281,21 +326,23 @@ class _GpxReader:
         self._depth -= 1
         if self._skip:
             self._skip -= 1
-            if not self._skip and self._capturing:
+            if not self._skip and self._capturing and not self._overflow:
                 self._parser.CharacterDataHandler = self.on_text
             return
         kind = self._stack.pop().kind
         if self._capturing:
             self._capturing = False
             self._parser.CharacterDataHandler = None
-            self._finish_capture(kind, "".join(self._chunks))
+            overflow = self._overflow
+            self._overflow = False
+            self._finish_capture(kind, "".join(self._chunks), overflow)
             self._chunks = []
         elif kind in (_TRKPT, _RTEPT):
             self._end_point(kind)
 
-    def _finish_capture(self, kind: int, text: str) -> None:
+    def _finish_capture(self, kind: int, text: str, overflow: bool) -> None:
         if kind == _ELE:
-            ele = _parse_float(text)
+            ele = None if overflow else _parse_float(text)
             if ele is not None and MIN_PLAUSIBLE_ELEV_M <= ele <= MAX_PLAUSIBLE_ELEV_M:
                 self._ele = ele
         elif kind == _META_NAME:
@@ -356,9 +403,10 @@ def parse_gpx(
     if b"\x00" in data:
         # XML 1.0 forbids U+0000, and every UTF-16/UTF-32 document contains it.
         raise InvalidGpx("The file must be UTF-8 encoded.")
-    parser = ParserCreate(encoding="UTF-8", namespace_separator="|", intern=None)
-    parser.ordered_attributes = True
-    parser.buffer_text = True
+    parser = _new_parser(
+        alloc_threshold_bytes=alloc_threshold_bytes,
+        alloc_max_amplification=alloc_max_amplification,
+    )
     reader = _GpxReader(parser, max_points=max_points)
     try:
         view = memoryview(data)
@@ -366,9 +414,7 @@ def parse_gpx(
             parser.Parse(view[start : start + _CHUNK_BYTES], False)
         parser.Parse(b"", True)
     except ExpatError as exc:
-        raise InvalidGpx(
-            f"The file is not well-formed XML (line {exc.lineno}, column {exc.offset})."
-        ) from exc
+        raise _invalid_gpx_from(exc) from exc
     finally:
         reader.detach()
     return reader.result()

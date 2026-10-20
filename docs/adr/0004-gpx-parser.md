@@ -1,6 +1,6 @@
 # 0004 — GPX parser: module boundary, RouteSummary/ErrorResponse contract, algorithms, upload limits, benchmark
 
-Status: accepted; third-round amendment **proposed** · Date: 2026-10-19 · Amended: 2026-10-19 (three rounds) · Step: 1.2
+Status: accepted; post-build corrections accepted (tech lead, 2026-10-20) · Date: 2026-10-19 · Amended: 2026-10-19 (three rounds), 2026-10-20 (post-build corrections) · Step: 1.2
 
 ## Amendments
 **2026-10-19.** These record decisions already taken in step 1.2: review round 1, QA verify and the devops
@@ -63,12 +63,34 @@ above is superseded, the body says so.
     rejected first. Inside the pass, errors are reported in document order.
 17. **Resource bounds as numbers** (§3.13). About 180 B per kept point (≈ 17 MiB at 100k). Expat's own tables grow
     with distinct names and with the largest single element. The estimated worst single parse is ≈ 250 MiB; QA
-    measures it.
+    measures it. *Measured in item 24: 183.7 MiB.*
 18. **`MAX_CONCURRENT_PARSES` stays 1**, re-derived (§3.10).
 19. **The upload is closed right after `read()`** (§3.10). A waiting request then holds ≈ 10 MiB, not 20.
 20. **Cloud Run `--concurrency=8` recommended to the manager**, with the arithmetic (§3.10; Manager decisions 6).
+    *Item 25 re-derives it from measurements.*
 21. **`parse_gpx(data, *, max_points=MAX_RAW_POINTS)`.** The new keyword lets tests hit the cap cheaply. Positional
     calls are unchanged.
+
+**2026-10-20, post-build corrections.** These match the ADR to the reader as built (f78910a, 899f132) and as QA
+verified it (5070469, 935d37d), with the tech lead's decisions (`docs/steps/1.2.md`, 2026-10-20). The sections they
+touch are corrected in place.
+
+22. **Chunked feed** (§3.1 step 4, §3.13). I was wrong that pyexpat does not copy the input: one `Parse(data, True)`
+    made the `tracemalloc` peak grow with the input (1.06 MB at 1 MiB, 3.16 MB at 4 MiB). The reader feeds 64 KiB
+    `memoryview` slices with `Parse(slice, False)`, then `Parse(b"", True)`, and the peak is flat at ≈ 270 KB. It is
+    still one pass with one parser.
+23. **Nested point tags** (§3.1 table, §3.12). A point start tag inside a point of the same kind counts toward the
+    100k cap but is never read. This errs toward rejection. QA pins both "a bare `<trkpt>` counts" and "a nested
+    point is not a point".
+24. **Measured bounds** (§3.13). Every row is within its bound except distinct element names: 160.35 MiB against
+    160 (my estimate was ≈ 100). Tech-lead decision: re-base that bound to **192 MiB**, with no new cap. The
+    measured table replaces the estimates.
+25. **Concurrency from measured numbers** (§3.10). The max safe `--concurrency` is **12** under the pessimistic
+    assumption (22 in steady state). **8 stays the recommendation**, with ≥ 88 MiB to spare beyond the margin.
+26. **Malformed `Content-Length` under uvicorn** (§2, §3.10). uvicorn answers these itself, with a plain-text 400,
+    before the app runs. The `ErrorResponse` and `X-Request-ID` guarantee holds for requests that reach the app.
+27. **Stale items closed.** gpxpy is gone from the code and the lock. The production image's expat is 2.8.5
+    (verified by the tech lead), so the Docker-expat follow-up is done.
 
 ## Context
 Step 1.2 adds `POST /v1/routes/parse`. It turns an uploaded GPX file into a typed `RouteSummary`, rejects bad input
@@ -181,7 +203,7 @@ the missing one**.
 | 422 | `too_many_points` | more than `MAX_RAW_POINTS` (100,000) track and route points together; the pass stops at the 100,001st (§3.12) |
 | 422 | `too_few_points` | fewer than 2 points after merging and de-duplication (this includes waypoint-only files) |
 | 422 | `validation_error` | FastAPI `RequestValidationError`, e.g. the `file` field is missing, or `file` is a text field |
-| 400 | `bad_request` | Starlette multipart errors (FastAPI turns form-parsing failures into `HTTPException(400)`); a `Content-Length` made of non-ASCII digits (§3.10) |
+| 400 | `bad_request` | Starlette multipart errors (FastAPI turns form-parsing failures into `HTTPException(400)`); a `Content-Length` made of non-ASCII digits, when the server passes it through (uvicorn answers it itself, §3.10) |
 | 404 / 405 | `not_found` / `method_not_allowed` | Starlette routing; the `Allow` header is kept |
 | other 4xx | `http_error` | any other `HTTPException` |
 | 500 | `internal_error` | `RequestIdMiddleware`'s catch-all (a bug; the fuzz test exists so this never happens) |
@@ -190,7 +212,9 @@ the missing one**.
 responds when nothing has started. Its body becomes
 `{"code": "internal_error", "message": "Internal Server Error", "detail": null}`, built from `ErrorResponse`.
 `test_errors.py`'s body assertion changes to match (QA). The test that the secret detail never leaks stays as it
-is. Every error response, the 500 included, still carries `X-Request-ID`.
+is. Every error response the app produces, the 500 included, is an `ErrorResponse` and carries `X-Request-ID`. This
+guarantee covers requests that reach the app. It does not cover responses made before the app runs (uvicorn's
+plain-text 400 for a malformed `Content-Length`, §3.10) or by the platform (Cloud Run's 429 and 504).
 
 **Handlers (`install_error_handlers`, called in `create_app`):**
 - `StarletteHTTPException` → `ErrorResponse`. For an `ApiError` the code comes from `exc.code`; for any other
@@ -227,9 +251,15 @@ input bytes go through these steps, in order:
    - `intern=None` turns off pyexpat's per-name dictionary, which would grow with every distinct name (§3.13).
    - `ordered_attributes` gives a flat `[name, value, …]` list. It is cheaper than a dict, and expat already rejects
      duplicate attributes.
-4. **One pass:** `parser.Parse(data, True)`. pyexpat feeds expat ≤ 1 MiB slices of the caller's buffer and does not
-   copy the input. The handlers in the table below raise `InvalidGpx` or `TooManyPoints`, which stops the parse at
-   once. The exception propagates out of `Parse`.
+4. **One pass, fed in slices** (corrected 2026-10-20). Over `view = memoryview(data)`, call
+   `parser.Parse(view[i : i + 64 KiB], False)` for each slice, then `parser.Parse(b"", True)`.
+   - A single `Parse(data, True)` measurably copies the input: the `tracemalloc` peak grew with it (1.06 MB at
+     1 MiB, 3.16 MB at 4 MiB). With 64 KiB slices it is flat at ≈ 270 KB. My earlier "pyexpat does not copy" was
+     wrong. `memoryview` slices copy nothing on our side.
+   - It is still one pass with one parser. Expat keeps its state across slices, so a token split between slices
+     parses as if contiguous. Line and column numbers in errors are unchanged.
+   - The handlers in the table below raise `InvalidGpx` or `TooManyPoints`, which stops the parse at once. The
+     exception propagates out of the current `Parse` call, and no later slice is fed.
    - **`XmlDeclHandler`, declared encoding.** It keeps today's rule. The name is accepted if it is UTF-8
      (case-insensitive) or a Python codec that maps all 256 byte values to 256 characters: `codecs.lookup` succeeds,
      and `len(bytes(range(256)).decode(name, "replace")) == 256`. That is exactly the check pyexpat's unknown-encoding
@@ -271,6 +301,7 @@ elements in N, at these paths, are read. Depth starts at 1 for the root.
 | `gpx/metadata/name` (1.1), `gpx/name` (1.0) | `metadata_name` = the text of the first one met, raw |
 | `gpx/trk/name`, `gpx/rte/name` | the first non-blank (`str.strip()`) per kind; `track_name` is the chosen kind's |
 | `gpx/trk/trkseg/trkpt`, `gpx/rte/rtept` | a point. It is counted at its start tag (§3.12); `lat`/`lon` come from its attributes |
+| `…/trkpt/trkpt…`, `…/rtept/rtept…` (a point start tag inside a point of the same kind, at any depth of such nesting) | **not a point, but counted** toward the cap (§3.12). Nothing is read from it or its subtree (corrected 2026-10-20) |
 | `…/trkpt/ele`, `…/rtept/ele` | the text of the point's **first** `<ele>`; later ones are ignored |
 | anything else, with its whole subtree: `wpt`, `time`, `extensions`, unknown or foreign-namespace elements | skipped. The subtree only moves a skip counter: no strings kept, no text handler |
 
@@ -441,8 +472,8 @@ elevations.
   **O(n) + O(2000²)**, and n is capped at 100k by §3.12.
   - For scale, raw RDP on an adversarial zigzag (QA) took 1.6 s at 2k points, 6.3 s at 4k and 27 s at 8k, so
     2,000² is the ceiling.
-  - **Measured with thinning (gpxpy era):** a 100k-point adversarial zigzag took 2.8–3.5 s end to end, mostly in
-    gpxpy, and the largest fixture had a min of 187 ms (§5). QA re-measures both on the own reader (§3.13).
+  - **Measured with thinning:** a 100k-point adversarial zigzag takes 0.75–0.87 s end to end on the own reader
+    (2.8–3.5 s with gpxpy), and the largest fixture has a min of 89 ms (187 ms with gpxpy) (§3.13, §5).
 
 **3.6 High point.** The first index of the maximum raw elevation, which keeps it deterministic on plateaus. It is
 in `points` because simplify forces it, so `max(p.elev_m for p in points) == max_elev_m` holds.
@@ -473,6 +504,11 @@ none of them reads an unbounded body.
     `int()`: no 64-bit length is longer, and a header of thousands of digits would otherwise hit Python's int/str
     conversion limit and become a 500. Non-ASCII digits (e.g. `²`, which `str.isdigit()` accepts and `int()`
     rejects) ⇒ 400 `bad_request`. Any other non-numeric value is left to layer 2.
+  - **Under uvicorn (post-build, 2026-10-20).** uvicorn itself rejects a `Content-Length` of more than 19 digits,
+    of non-ASCII digits, `abc` or `-5`, with a plain-text 400, before the ASGI app runs. Those responses have no
+    `X-Request-ID` and no `ErrorResponse` body. The hardening above therefore applies only behind servers that pass
+    such headers through, and under `TestClient`, where QA's tests exercise it. It stays, because it is cheap and
+    keeps the app correct whatever server fronts it. The §2 guarantee holds for requests that reach the app.
 - **Layer 2: streaming cap.** The wrapper hands FastAPI a `BodyLimitRequest`, whose `stream()` (the public method
   Starlette's form parser consumes) counts bytes and raises the same `ApiError` once the body passes that limit.
   This covers chunked bodies and lying headers. The multipart spool is therefore bounded at about 10 MiB + 64 KiB.
@@ -505,43 +541,60 @@ none of them reads an unbounded body.
     If the total time exceeds Cloud Run's request timeout (the default 300 s; `deploy-api.yml` doesn't set
     `--timeout`), Cloud Run's front end returns 504. That 504 does not come from the app, so it doesn't break
     "0 × 500".
-  - **Worst case:** at Cloud Run's concurrency of 80, with every request a 100k-point zigzag at about 3.5 s,
-    the last request waits about 80 × 3.5 ≈ 280 s, just under the 300 s timeout. Real files take about 0.2 s. At
-    the recommended concurrency of 8 the worst case is about 28 s.
-  - **Why 1 (kept for the own reader, third amendment).** It is still a memory budget. The estimated worst single
-    parse is P_max ≈ 250 MiB: one element carrying about a million distinct attributes (§3.13). Real files take
-    5–45 MiB.
-    - Two worst-case parses (≈ 500 MiB) do not fit beside the process. One does.
+  - **Worst case (measured 2026-10-20):** the slowest hostile shape takes 1.8 s (distinct element names, §3.13). At
+    Cloud Run's concurrency of 80 with every request that shape, the last request waits about 79 × 1.8 ≈ 142 s
+    of parse time, inside the 300 s timeout. At the recommended 8 it waits about 13 s. Real files take about
+    0.1 s. Upload transfer time comes on top.
+  - **Why 1 (kept for the own reader; re-checked against measurements 2026-10-20).** It is still a memory budget.
+    The measured worst single parse is one start tag of distinct attributes: 232 MiB RSS including the
+    interpreter, so P ≈ 192 MiB above the 40.5 MiB idle process (§3.13). Real files take ≤ 25 MiB.
+    - Two worst-case parses (≈ 384 MiB) plus the idle process and the margin would leave room for at most 2 more
+      admitted uploads. One parse leaves room for 11 to 21 (table below).
     - A second slot would buy no throughput. The instance has 1 vCPU, and the parse holds the GIL, because pyexpat
       calls back into Python for every element.
     - One slot bounds memory **without an element-count or attribute-count cap**, either of which would be a new
       product limit (Options considered).
-    - The cost: a small file can wait behind a large one, for about 3 s per hostile parse ahead of it.
-    - Revisit only if QA measures P_max ≤ 120 MiB **and** the instance gets a second vCPU.
+    - The cost: a small file can wait behind a large one, for at most about 1.8 s per hostile parse ahead of it.
+    - Revisit only if a re-measured P is ≤ 120 MiB **and** the instance gets a second vCPU.
   - The limiter is acquired *after* the upload is read and size-checked, so a slow uploader never holds the slot.
-  - **Close the upload right after `read()`** (third amendment). The handler calls `await file.close()` in a
+  - **Close the upload right after `read()`** (third amendment; built in 899f132). The handler calls `await file.close()` in a
     `finally` around the read, before the size check and before it waits for the limiter.
     - Until then, a request waiting for the slot holds both Starlette's spool (≤ 10 MiB + 64 KiB, in a
       `SpooledTemporaryFile` that moves to Cloud Run's in-memory disk after 1 MiB) **and** the `bytes` it read
       (≤ 10 MiB).
     - Closing deletes the spool, so a waiting request holds R ≈ 10 MiB instead of 20. Starlette's own close after
       the response then does nothing.
-  - **Waiting uploads vs Cloud Run `--concurrency` (Manager decisions 6).** The parse limiter bounds parse memory
-    only. Every admitted request holds its upload. The budget must satisfy:
-    512 MiB ≥ B + margin + P_max + C × R (+ 10 MiB with the close, for the moment of one read, when the spool and the
-    bytes are both alive; without the close, R already counts both).
-    - B ≈ 90 MiB is the idle process. This is an estimate, to be measured.
-    - The margin is 10 %, ≈ 51 MiB, because freed pymalloc arenas are not always returned to the OS.
+  - **Waiting uploads vs Cloud Run `--concurrency` (Manager decisions 6; re-derived from QA's measurements,
+    2026-10-20).** The parse limiter bounds parse memory only. Every admitted request holds its upload.
+    - **What one request holds.** While uploading: Starlette's spool, ≤ 10 MiB + 64 KiB. Between `read()` and the
+      close: the spool and the `bytes`, ≤ 20 MiB, for the length of one in-memory copy. From the close until its
+      own parse finishes: the `bytes` only, R ≈ 10 MiB. The parsing request's `bytes` is already inside P, because
+      QA's subprocess RSS included the input.
+    - **Budget:** 512 MiB ≥ B + margin + P + (C − 1) × R + T.
+      - B = 40.5 MiB, the measured idle RSS of the container.
+      - The margin is 10 %, ≈ 51 MiB, because freed pymalloc arenas are not always returned to the OS.
+      - P ≈ 192 MiB, the worst single parse above idle (232 − 40.5).
+      - Steady column: R = 10 MiB, plus T = 10 MiB for one request caught between read and close. Pessimistic
+        column: R = 20 MiB for *every* waiting request (all mid-read at once), and T = 0.
 
-    | `--concurrency` C | R = 20 MiB (no close) | R = 10 MiB (close) |
+    | `--concurrency` C | steady (R = 10, T = 10) | pessimistic (R = 20) |
     | --- | --- | --- |
-    | 80 (today) | 1 991 MiB ✗ | 1 201 MiB ✗ |
-    | 16 | 711 MiB ✗ | 561 MiB ✗ |
-    | 8 | 551 MiB ✗ | **481 MiB ✓** (31 MiB spare) |
-    | 4 | 471 MiB ✓ | 441 MiB ✓ |
+    | 80 (today) | 1 084 MiB ✗ | 1 864 MiB ✗ |
+    | 22 | 504 MiB ✓ (8 spare) | 704 MiB ✗ |
+    | 16 | 444 MiB ✓ (68 spare) | 584 MiB ✗ |
+    | 12 | 404 MiB ✓ (108 spare) | 504 MiB ✓ (8 spare) |
+    | **8** | **364 MiB ✓ (148 spare)** | **424 MiB ✓ (88 spare)** |
 
-    - **Recommendation: `--concurrency=8` plus the close.** 8 is also Cloud Run's documented starting point for
-      concurrency. If QA's measured P_max exceeds 300 MiB, the answer is 4, or the escalation in §3.13.
+    "Spare" is on top of the 51 MiB margin.
+    - **Max safe `--concurrency`: 12** on the pessimistic column (22 on the steady one).
+    - **Recommendation confirmed: `--concurrency=8`, with the close.** It keeps ≥ 88 MiB beyond the margin even in
+      the pessimistic case. That headroom covers what a fresh-subprocess measurement can't show (allocator drift in a
+      long-lived process) and 1.3's elevation-lookup client. 8 is also Cloud Run's documented starting point, and
+      the worst-case wait is about 13 s. Going up to 12 is safe if platform 429s show up in practice. Going above 12
+      needs a concurrent-load measurement first (Follow-ups).
+    - QA's container check (worst-case shapes POSTed to the image under `--memory=512m`: no OOM, no restart)
+      confirms the single-parse term. Unless that run also held C uploads in flight, the (C − 1) × R term is
+      arithmetic only.
     - Above C simultaneous requests, Cloud Run (max 1 instance) can answer **429 "no available instance"** itself.
       Like the 504 above, it comes from the platform, not the app. Clients treat it as a generic, retryable error
       (Follow-ups, UX).
@@ -551,8 +604,8 @@ amendment).
 - **Python docs, expat vulnerabilities:**
   - external entities are safe;
   - billion laughs and quadratic blowup are safe with expat ≥ 2.4.1;
-  - large tokens are safe with expat ≥ 2.6.0. A test asserts `pyexpat.EXPAT_VERSION ≥ 2.6.0`; see the follow-ups
-    for the Docker image.
+  - large tokens are safe with expat ≥ 2.6.0. A test asserts `pyexpat.EXPAT_VERSION ≥ 2.6.0`. The production image
+    has expat 2.8.5 (verified by the tech lead, 2026-10-20).
 - **Handlers in the one pass (§3.1 step 4):**
   - `StartDoctypeDeclHandler` and `EntityDeclHandler` → `invalid_gpx` "DTDs are not allowed". A DOCTYPE can only
     come before the root, so this fires before any element is read. No `ExternalEntityRefHandler` is set, and
@@ -596,61 +649,72 @@ amendment).
 - **Both kinds together, as before.** The cap bounds what the pass stores. Rte points come first in schema order,
   and they are stored until the trk count reaches 2. A file with 60k points of each kind is therefore still
   rejected.
-- **Exact now, not an over-count.** These are not counted, because they are not points:
+- **Exact, with one deliberate over-count.** These are not counted, because they are not points:
   - tags inside comments, CDATA or processing instructions;
   - `trkpt` elements inside `<extensions>`, `<wpt>` or a foreign namespace;
   - points directly under `<trk>` without a `<trkseg>`.
 
   A prefixed point in N is counted, and parsed.
+- **Nested point tags (corrected 2026-10-20).** A `trkpt` start tag inside a `trkpt` (or `rtept` inside `rtept`),
+  at any nesting, is **counted but never read**. It stores nothing and does not change `point_count_original`.
+  - Why: a file of bare, unclosed `<trkpt>` start tags nests each one inside the previous. Counting them keeps such
+    a file hitting the cap, while reading them would turn malformed nesting into points. QA pins both rules ("a bare
+    `<trkpt>` counts", "a nested point is not a point").
+  - It errs toward rejection: only an already-odd file can be refused earlier. A chain of unclosed tags hits the
+    depth limit (§3.11) after about 60 levels and gets `invalid_gpx`. The count matters for nested tags that are
+    closed, such as many `<trkpt/>` inside one `<trkpt>`.
 - **Why the byte scan is retired.** It existed because gpxpy built the whole tree before any count was known.
   - The pass now stops itself, so a second scan would only add cost and a second definition of "point".
   - Expat's events see the points whatever the bytes look like, so the scan's ASCII/UTF-16 caveat no longer
     matters to the cap. The NUL rule stays for the UTF-8-only contract.
 - **Testability.** `parse_gpx(data, *, max_points=MAX_RAW_POINTS)`, so tests can use a cap of 3.
 
-**3.13 Resource bounds of the parse** (third amendment). All numbers here are estimates. QA's measurements (How it
-is tested) replace them, and a measurement above its bound is an escalation, not a tweak.
-- **Time is O(bytes).**
-  - The NUL scan is a C `memchr`. Expat tokenises and validates UTF-8 in C.
-  - The Python cost is one start call and one end call per element, ≈ 1 µs together; a skipped element costs
-    nothing else. A point costs ≈ 5 µs more (attributes, `float`, `<ele>` capture, `RawPoint`).
-  - So 10 MiB of `<a/>` (≈ 2.6M elements) ≈ 3 s, a 100k-point file ≈ 0.5 s to parse, and the largest fixture well
-    under its gpxpy-era 187 ms.
-- **Memory kept is O(points kept).**
-  - Per point: one `RawPoint` (slots dataclass, ≈ 64 B with its GC header), two or three floats (32 B each) and a
-    list slot. That is **≈ 170–180 B per point, ≈ 17 MiB at 100,000**.
-  - The rest of the pipeline adds ≈ 25 MiB at 100k: the cumulative distance and a resampled profile of at most
-    100k samples.
-  - A real-shaped 100k-point file therefore peaks at ≈ 45 MiB. gpxpy measured 127 MiB.
-- **Nothing is kept per skipped element in Python.** There are no objects, no strings and no text callbacks.
-  pyexpat's per-event name string and attribute list are freed straight away.
-- **What still grows with the input.** These live inside expat, which allocates through `PyObject_Malloc`, so
-  `tracemalloc` sees them:
-  - **Name tables.** Expat keeps one entry per *distinct* element name, attribute name and namespace prefix for the
-    parser's life, ≈ 80 B each. 10 MiB of distinct short names is ≈ 100 MiB. `intern=None` keeps pyexpat from
-    adding a second table of the same size.
-  - **The largest single element.** Expat's attribute array, plus pyexpat's list for it, cost ≈ 150–200 B per
-    attribute. One 10 MiB start tag of ≈ 1.3M distinct attributes is ≈ 200–250 MiB. **This is the worst case:
-    P_max ≈ 250 MiB**, and it is freed when the parse ends.
-  - **Expat's input buffer:** ≈ 1–2 MiB, or about twice the largest single token.
-- **Escalation if a bound fails.** The options are:
+**3.13 Resource bounds of the parse** (third amendment; measured 2026-10-20). QA measured every row in a fresh
+subprocess, on Windows and in the Linux `hike-api` image (QA verify, 5070469/935d37d). The measurements replace my
+estimates. A measurement above its bound is an escalation, not a tweak.
+- **Input feed.** 64 KiB `memoryview` slices with `Parse(slice, False)`, then `Parse(b"", True)` (§3.1 step 4). A
+  single `Parse(data, True)` made expat hold a copy that grew with the input (peak 1.06 MB at 1 MiB, 3.16 MB at
+  4 MiB). With slices the feed's peak is flat at ≈ 270 KB. A token spread over many slices, such as the 10 MiB
+  start tag below, stays linear (0.7 s), which matches expat ≥ 2.6.0's reparse deferral.
+- **Time is O(bytes).** The NUL scan is a C `memchr`, and expat tokenises and validates UTF-8 in C. Python runs one
+  start call and one end call per element; a skipped element costs nothing else, and a point costs a few µs more.
+  Measured: the slowest hostile shape takes 1.8 s (distinct names), a real-shaped 100k-point file 1.1–1.35 s end to
+  end, and the largest fixture 89 ms.
+- **Memory kept is O(points kept):** ≈ 170–180 B per point (`RawPoint`, its floats, a list slot). A real-shaped
+  100k-point file peaks at 25 MiB end to end (estimate 45; gpxpy 127).
+- **Nothing is kept per skipped element in Python.** The four skipped-element shapes peak at 0.2 MiB.
+- **What grows with the input lives inside expat**, which allocates through `PyObject_Malloc`, so `tracemalloc`
+  sees it. There are two such costs, and both are freed when the parse ends:
+  - **Name tables:** one entry per *distinct* element name, attribute name and prefix, kept for the parser's life.
+    `intern=None` keeps pyexpat from adding a second table. Measured: 160.35 MiB on 10 MiB of distinct names.
+  - **The largest single element:** expat's attribute array plus pyexpat's list for it. **This is the worst case:**
+    one start tag of distinct attributes peaks at 183.7 MiB, with 232 MiB RSS including the interpreter (P ≈ 192 MiB
+    above idle, §3.10).
+- **Distinct-names bound re-based to 192 MiB (tech lead, 2026-10-20).** It measured 160.35 MiB against a bound of
+  160 (my estimate was ≈ 100). That is 0.2 % over, and it is not the worst row: attributes are, at 232 MiB RSS
+  against 203. One parse at a time keeps either inside the instance, so no cap is added.
+- **Escalation if a bound fails** (unchanged). The options are:
   1. a byte-level cap on start-tag size (a new product limit, so a manager decision);
   2. a lower `--concurrency` (§3.10);
   3. expat ≥ 2.7.2's allocation tracker (Follow-ups).
 
-| Shape (10 MiB unless noted) | gpxpy (measured) | Own reader (estimate) | QA bound (`tracemalloc` peak / wall) |
+| Shape (10 MiB unless noted) | gpxpy (measured) | QA bound (`tracemalloc` peak / wall) | Own reader, measured (peak / wall / RSS high-water, Linux image) |
 | --- | --- | --- | --- |
-| `<trk/>` repeated | 649 MiB RSS | < 5 MiB | ≤ 32 MiB / ≤ 5 s |
-| `<wpt lat="0" lon="0"/>` repeated | 394 MiB RSS | < 5 MiB | ≤ 32 MiB / ≤ 5 s |
-| `<trkseg/>` in one `<trk>` | 296 MiB (363 RSS) | < 5 MiB | ≤ 32 MiB / ≤ 5 s |
-| `<a/>` in one `<trk>` | 238 MiB | < 5 MiB | ≤ 32 MiB / ≤ 5 s |
-| `<a>` × depth (and the round-2 140 KB `<extensions>` file) | process killed | stops at depth 65 | ≤ 1 MiB / ≤ 0.1 s, `invalid_gpx` |
-| distinct element names (`<a0/>`, `<a1/>`, … in base 36) | — | ≈ 100 MiB | ≤ 160 MiB / ≤ 5 s |
-| one `<gpx>` start tag of distinct attributes | — | ≈ 250 MiB | ≤ 300 MiB / ≤ 5 s |
-| xmlns shapes: the round-2 quadratic file at 200 KB and at 10 MiB; one element with 10 MiB of distinct `xmlns:pN` declarations; 10 MiB of siblings each re-declaring `xmlns="urn:x"` | 6.5 s at 200 KB | linear | ≤ 160 MiB / ≤ 5 s |
-| real-shaped 100k points (`ele` + `time`, ≈ 10 MB) | 127 MiB | ≈ 45 MiB | ≤ 64 MiB / ≤ 2 s |
-| 100k-point zigzag, end to end | 2.8–3.5 s | faster | ≤ 3.5 s |
-| 100,001 points, then 9 MiB of anything | — | stops at the 100,001st | `too_many_points`; ≤ 64 MiB |
+| `<trk/>` repeated | 649 MiB RSS | ≤ 32 MiB / ≤ 5 s | 0.2 MiB / within bound / 45 MiB |
+| `<wpt lat="0" lon="0"/>` repeated | 394 MiB RSS | ≤ 32 MiB / ≤ 5 s | 0.2 MiB / within bound / 45 MiB |
+| `<trkseg/>` in one `<trk>` | 296 MiB (363 RSS) | ≤ 32 MiB / ≤ 5 s | 0.2 MiB / within bound / 45 MiB |
+| `<a/>` in one `<trk>` | 238 MiB | ≤ 32 MiB / ≤ 5 s | 0.2 MiB / within bound / 45 MiB |
+| `<a>` × depth (and the round-2 140 KB `<extensions>` file) | process killed | ≤ 1 MiB / ≤ 0.1 s, `invalid_gpx` | `invalid_gpx` in ≈ 0 s |
+| distinct element names (`<a0/>`, `<a1/>`, … in base 36) | — | **≤ 192 MiB** (was 160) / ≤ 5 s | 160.35 MiB / 1.8 s / 203 MiB |
+| one `<gpx>` start tag of distinct attributes | — | ≤ 300 MiB / ≤ 5 s | 183.7 MiB / 0.7 s / **232 MiB (worst RSS)** |
+| xmlns shapes: the round-2 quadratic file at 200 KB and at 10 MiB; one element with 10 MiB of distinct `xmlns:pN` declarations; 10 MiB of siblings each re-declaring `xmlns="urn:x"` | 6.5 s at 200 KB | ≤ 160 MiB / ≤ 5 s | distinct `xmlns:pN`: 113 MiB / 0.5 s / 161 MiB; the others within bound |
+| real-shaped 100k points (`ele` + `time`, ≈ 10 MB) | 127 MiB | ≤ 64 MiB / ≤ 2 s | 25 MiB / 1.1–1.35 s / 73 MiB |
+| 100k-point zigzag, end to end | 2.8–3.5 s | ≤ 3.5 s | 22 MiB / 0.75–0.87 s |
+| 100,001 points, then 9 MiB of anything | — | `too_many_points`; ≤ 64 MiB | `too_many_points`, within bound |
+
+Also measured: the app container's idle RSS is 40.5 MiB (B in §3.10). The worst-case shapes POSTed to the container
+run with `--memory=512m` caused no OOM and no restart. The largest fixture takes 89 ms (benchmark min), 92 ms through
+`TestClient` and 90 ms by curl.
 
 ### 4. Dependencies
 | Package | Where | Why | License | Maintenance | Types (mypy strict) | Approval |
@@ -667,8 +731,8 @@ is tested) replace them, and a measurement above its bound is an escalation, not
 | lxml | — | rejected (§3.11): a native dependency outside the stack | | | | — |
 
 `pyproject` changes:
-- `dependencies` holds `python-multipart` and `anyio`. **`gpxpy` is removed** (`uv remove gpxpy`). It has no
-  dependencies of its own, so only its entry leaves `uv.lock`.
+- `dependencies` holds `python-multipart` and `anyio`. **`gpxpy` is removed** (done in f78910a). It had no
+  dependencies of its own, so only its entry left `uv.lock`.
 - `dev` holds `hypothesis` and `pytest-benchmark`.
 - `addopts` gets `--benchmark-disable`. Benchmark tests then run once, as plain tests, inside `api-test` under
   coverage, and only the benchmark job times them.
@@ -730,8 +794,8 @@ is tested) replace them, and a measurement above its bound is an escalation, not
      head/base for humans.
   7. Permissions: `contents: read` only.
 - **Proven red in CI** on the throwaway PR #28: run 39288735236 failed at 1.43× head/base.
-- **Measured (amendment):** the largest fixture had a min of 187 ms with gpxpy, about a tenth of the 2.0 s ceiling.
-  QA records the own reader's number. This step's PR has no base benchmark, so only the absolute check runs.
+- **Measured:** the largest fixture has a min of 89 ms on the own reader (187 ms with gpxpy), under a twentieth of
+  the 2.0 s ceiling. This step's PR has no base benchmark, so only the absolute check runs.
 - **On push to `main`:** run the head only and append to the history with the action's `external-data-json-path`,
   persisted with `actions/cache`.
   - Key `benchmark-${{ github.sha }}` with restore-keys `benchmark-`; cache keys are immutable, so each run saves
@@ -818,6 +882,7 @@ class RawTrack:
 # app/routes/xml_guard.py — DELETED (third amendment): check_gpx_prolog and exceeds_point_cap are folded into the pass
 
 # app/routes/parse.py — our GPX reader on stdlib xml.parsers.expat (§3.1, §3.11, §3.12); no third-party parser
+_CHUNK_BYTES: Final = 64 * 1024               # §3.1 step 4: memoryview slices, Parse(slice, False), then Parse(b"", True)
 def parse_gpx(data: bytes, *, max_points: int = MAX_RAW_POINTS) -> RawTrack: ...
     # raises InvalidGpx or TooManyPoints only; steps and precedence per §3.1
 def drop_consecutive_duplicates(points: Sequence[RawPoint]) -> tuple[RawPoint, ...]: ...   # unchanged
@@ -1043,8 +1108,15 @@ Imports point one way: `routers → routes → models`. `app/routes/*` never imp
 - **Dict attributes (pyexpat's default)** (third amendment) — rejected for `ordered_attributes`. A flat list is
   cheaper per attribute, and we read only `lat`/`lon`.
 - **A start-tag-size or attribute-count cap** (third amendment) — not adopted. It would be a new product limit, and
-  one parse at a time keeps the estimated worst case (≈ 250 MiB, §3.13) inside the instance. It is the first
-  escalation option if QA's measurement exceeds 300 MiB.
+  one parse at a time keeps the measured worst case (183.7 MiB peak, 232 MiB RSS, §3.13) inside the instance. It
+  is the first escalation option if a later measurement exceeds 300 MiB.
+- **One `Parse(data, True)` over the whole input** (post-build) — rejected: expat held a copy that grew with the
+  input (§3.1 step 4). 64 KiB slices keep it flat for the cost of a short loop.
+- **Ignoring point tags nested inside a point** (post-build) — rejected: a file of bare, unclosed `<trkpt>` tags
+  would then escape the point cap. **Reading them as points** is rejected too: that would turn malformed nesting
+  into data (§3.12).
+- **A distinct-name cap after the 160 MiB bound was missed** (post-build) — rejected by the tech lead. The overshoot
+  was 0.2 %, the row is not the worst, and one parse at a time already bounds it. The bound is re-based to 192 MiB.
 - **Parsing straight from the `UploadFile` spool, without `bytes`** (third amendment) — deferred. It would save
   another 10 MiB per waiting request, but it breaks the pure `bytes →` seam that the tests, the fuzz test and the
   benchmark use (Follow-ups).
@@ -1067,9 +1139,9 @@ Imports point one way: `routers → routes → models`. `app/routes/*` never imp
   which breaks `TestClient`'s per-request loops (§3.10).
 - **Rejecting with 503 when the slot is busy** (amendment) — rejected: it adds a new error state for clients and
   UX, while waiting fits inside Cloud Run's timeout.
-- **`MAX_CONCURRENT_PARSES = 2`** (second amendment; re-checked in the third) — rejected. The estimated worst
-  single parse on the own reader is ≈ 250 MiB (§3.13), so two don't fit, and on 1 vCPU, under the GIL, a second
-  slot adds no throughput.
+- **`MAX_CONCURRENT_PARSES = 2`** (second amendment; re-checked in the third and against measurements) — rejected.
+  The measured worst single parse is ≈ 192 MiB above idle (§3.13). Two would leave room for only 2 waiting uploads,
+  and on 1 vCPU, under the GIL, a second slot adds no throughput.
 - **An element-count cap** (second amendment) — still rejected as not needed: the own reader keeps nothing per
   skipped element (§3.13), and the cap would be a new product limit.
 - **Accepting UTF-16 now that the cap no longer scans bytes** (third amendment) — rejected: the contract is UTF-8
@@ -1078,8 +1150,8 @@ Imports point one way: `routers → routes → models`. `app/routes/*` never imp
 - **Size check via a dependency, app-wide middleware, or reading the raw `Request`** — rejected: §3.10.
 - **Reading the whole body and then checking its length** — rejected: unbounded memory on an in-memory filesystem.
 - **defusedxml** — rejected: §3.11.
-- **Trusting expat versions alone** — rejected: the Docker image's expat comes from Debian, not from us, and the
-  DTD and depth handlers are cheap.
+- **Trusting expat versions alone** — rejected: the Docker image's expat comes from Debian, not from us (2.8.5
+  today), and the DTD and depth handlers are cheap.
 - **`code: str` in `ErrorResponse`** — rejected: a typed union gives exhaustiveness checks in TypeScript. Forward
   compatibility comes from the "unknown code ⇒ generic error" client rule.
 - **FastAPI's default `{"detail": …}` errors** — rejected: three shapes for clients to parse, and no stable codes.
@@ -1151,11 +1223,15 @@ Imports point one way: `routers → routes → models`. `app/routes/*` never imp
     - At most 100k points are stored, depth is ≤ 64, time is O(bytes), statistics and thinning are O(n), and RDP
       is O(2000²).
     - Memory is O(points) in Python. Expat's name tables and its largest-element arrays are bounded by bytes, not
-      by points: ≈ 250 MiB estimated worst (§3.13). Running one parse at a time keeps that inside the instance.
-    - Element and attribute counts are not capped. If the measurement disproves the estimate, capping them is the
+      by points: 183.7 MiB measured worst, 232 MiB RSS (§3.13). Running one parse at a time keeps that inside the
+      instance.
+    - Element and attribute counts are not capped. If a later measurement exceeds a bound, capping them is the
       escalation.
     - Waiting uploads are bounded only by Cloud Run's `--concurrency` (§3.10). At today's 80, a flood of 10 MB
-      uploads can still OOM the instance.
+      uploads can still OOM the instance; at 8 it cannot, by the measured arithmetic.
+  - **Malformed `Content-Length` never reaches the app under uvicorn** (post-build). The client gets uvicorn's
+    plain-text 400 with no `X-Request-ID`, so it must classify that error by status, as with the platform's 429
+    and 504.
 
 ## How it is tested
 All tests run with no network (`--disable-socket`). QA writes the acceptance, property, endpoint, fuzz and benchmark
@@ -1250,12 +1326,17 @@ tests red-first in `tests/routes/`. Backend adds unit tests for internals it int
     - exactly `max_points` points → parses; one more → `TooManyPoints`; trk and rte points count together
       (50,001 + 50,000 at the real cap);
     - `<trkpt>`, `<trkpt/>`, attributes on a new line or after a tab, and prefixed points in N all count;
+    - **nested point tags** (post-build): a bare, unclosed `<trkpt>` sequence counts toward the cap, and a point
+      nested inside a point is counted but not read (no `RawPoint`, its `lat`/`lon`/`<ele>` ignored);
     - **abort:** 100,001 points followed by a malformed tail, or by `\xff` → `TooManyPoints` (proof that the pass
       stopped); `\xff` *before* the 100,001st point → `InvalidGpx` (document order);
     - **precedence:** DOCTYPE, unsupported declared encoding or a wrong root, each before 100,001 points →
       `InvalidGpx`; 100,001 points plus a NUL anywhere → `InvalidGpx`.
   - **Retention does not scale with skipped elements** (CI, cheap): for each of `<trk/>`, `<wpt …/>`,
-    `<trkseg/>` and `<a/>`, the `tracemalloc` peak of `parse_gpx` on 4 MiB is within 1 MiB of the peak on 1 MiB.
+    `<trkseg/>` and `<a/>`, the `tracemalloc` peak of `parse_gpx` on 1 MiB is within 128 KiB of the peak on
+    256 KiB (shrunk from 1 MiB vs 4 MiB in 5070469, 70 s → 2 s; it still fails on a retaining reader). It also
+    catches a whole-buffer `Parse` copy (§3.1 step 4). Tokens split across 64 KiB slices are
+    covered by every fixture larger than 64 KiB and by the 10 MiB single-start-tag measurement.
   - **`ParseParams`:** invalid values raise, including `prethin_max_points < 2·max_points`.
 - **Fixture acceptance (parametrised with `tests.fixtures.loader`):**
   - **Distance:** within 2 % on every `valid_fixtures()`.
@@ -1312,7 +1393,8 @@ tests red-first in `tests/routes/`. Backend adds unit tests for internals it int
     - 413 for a chunked/streamed body with no `Content-Length` (generator body);
     - a valid GPX padded to exactly `MAX_UPLOAD_BYTES` → 200, and `MAX_UPLOAD_BYTES + 1` → 413;
     - malformed `Content-Length`, sent byte-exactly: 20 digits and thousands of digits → 413, `²` → 400
-      `bad_request`, never 500;
+      `bad_request`, never 500. This is the app layer under `TestClient`; under uvicorn these never reach the app
+      (§3.10);
   - 404/405 have the `ErrorResponse` shape, and 405 keeps `Allow`;
   - `X-Request-ID` is present on errors;
   - the updated `test_errors.py` asserts the `internal_error` body.
@@ -1356,11 +1438,11 @@ tests red-first in `tests/routes/`. Backend adds unit tests for internals it int
 4. *(Amendment, done.)* `too_many_points` above 100,000 raw points was approved on 2026-10-19.
 5. *(Amendment, for the tech lead to confirm.)* Declaring `anyio` explicitly in `pyproject` adds no new package to
    the lock (§4).
-6. *(Open; the third amendment adds the numbers.)* **Lower Cloud Run `--concurrency` from 80 to 8.** The upload
-   is closed after `read()` either way.
-   - With the close, 8 fits 512 MiB with ≈ 31 MiB to spare against the estimated hostile worst case. 80 cannot fit
-     at all (≈ 1.2 GiB).
-   - 4 fits even without the close (§3.10 table).
+6. *(Open; numbers re-derived from QA's measurements on 2026-10-20.)* **Lower Cloud Run `--concurrency` from 80 to
+   8.** The upload is closed after `read()` (built).
+   - With measured numbers, 8 needs ≈ 364 MiB in steady state and ≈ 424 MiB in the pessimistic case, leaving
+     ≥ 88 MiB beyond the 51 MiB margin. 80 cannot fit (≈ 1.1 GiB).
+   - The max safe value is 12 (pessimistic) or 22 (steady); see the §3.10 table.
    - Cost: above 8 simultaneous requests on the single instance, Cloud Run may answer 429 itself.
    - Recommended: **8**. See Follow-ups for the not-lowered outcome. The element-count cap is **not** a decision
      (rejected, §3.10).
@@ -1375,9 +1457,7 @@ every fixture. 23 points did (§3.4).
 ## Follow-ups (out of scope for this ADR)
 - **CORS:** `create_app` allows only `GET, OPTIONS`. The 1.10 web upload needs `POST` in `allow_methods`; add it
   with 1.10, or in 1.2 if the tech lead prefers, since the checkpoint's deployed timing uses curl and needs no CORS.
-- **Docker image expat:** `python:3.12-slim` builds against Debian's system expat. Devops could add a build-time
-  `python -c "import pyexpat; print(pyexpat.EXPAT_VERSION)"` check. The DTD handler makes this defence-in-depth
-  only. Expat is now the whole parser, so it matters more than it did.
+- ~~**Docker image expat**~~ — done (2026-10-20): the production image has expat 2.8.5, verified by the tech lead.
 - **1.3: give the elevation lookup a seam.** Split `summarise_gpx` into three stages:
   1. `parse_gpx(data) → RawTrack`, which is pure;
   2. at the I/O edge (router or service), detect when elevation is missing **or implausible** (§3.1 step 8) and
@@ -1390,8 +1470,9 @@ every fixture. 23 points did (§3.4).
 - **Open: memory held by waiting requests (Cloud Run `--concurrency`).** The arithmetic is in §3.10, and the
   decision is the manager's (Manager decisions 6). The two outcomes:
   - **Lowered in 1.2.** Devops sets `--concurrency=8` in `deploy-api.yml`, and the brief records it. The worst-case
-    wait drops to about 28 s. With the close after `read()`, the estimated worst case is 481 of 512 MiB. QA's
-    measured B and P_max replace the estimates. If they leave less than about 20 MiB spare, the answer is 4.
+    wait drops to about 13 s, and the measured worst case is ≈ 424 of 512 MiB (pessimistic, §3.10).
+  - **Optional evidence:** a load smoke against the image under `--memory=512m` with C hostile 10 MiB uploads in
+    flight would turn the (C − 1) × R term into a measurement. It is required before going above 12.
   - **Not lowered in 1.2.** It becomes a hardening follow-up before public launch: lower the concurrency, or add
     the rate limiting ADR 0003 already flags before Phase 3. Until then, 1.2's memory bound covers parses only, and
     a flood of large uploads can still OOM the instance. Cloud Run restarts it, and the client sees 5xx from the
@@ -1399,9 +1480,9 @@ every fixture. 23 points did (§3.4).
 - **429 from the platform (1.10 UX):** at a lowered concurrency, Cloud Run can answer 429 "no available instance"
   with no `ErrorResponse` body. The web client should treat it as a generic "busy, try again" error, by status.
 - **expat ≥ 2.7.2 allocation tracker:** expat 2.7.2 (CVE-2025-59375) can cap its own allocations relative to the
-  input. Its default (64 MiB activation, ×100) is too loose to matter at 10 MiB. Once the image's expat is ≥ 2.7.2
-  and CPython exposes `SetAllocTrackerMaximumAmplification` on our 3.12 build, setting it tighter would bound
-  §3.13's expat tables directly. It is version-dependent, so not now.
+  input. Its default (64 MiB activation, ×100) is too loose to matter at 10 MiB. The image's expat (2.8.5) already
+  qualifies. Once CPython exposes `SetAllocTrackerMaximumAmplification` on our 3.12 build, setting it tighter would
+  bound §3.13's expat tables directly. That depends on the CPython build, so not now.
 - **Parse from the upload spool:** streaming the `UploadFile` into expat would drop the 10 MiB `bytes` per waiting
   request. It needs a `summarise_gpx` variant over a binary reader, and a re-think of the NUL scan. Revisit only if
   upload memory, not parse memory, becomes the limit.
@@ -1424,7 +1505,9 @@ every fixture. 23 points did (§3.4).
   - CPython 3.12 `Modules/pyexpat.c`, read for exact behaviour:
     - expat allocates through `PyObject_Malloc`/`PyObject_Realloc`/`PyObject_Free` (`ExpatMemoryHandler`), so
       `tracemalloc` sees it;
-    - `Parse` takes any buffer without copying and feeds expat in `MAX_CHUNK_SIZE` (1 MiB) slices;
+    - `Parse` takes any buffer and feeds expat in `MAX_CHUNK_SIZE` (1 MiB) slices. *Corrected 2026-10-20:* I read
+      this as "no copy", but measured, a single whole-buffer `Parse` holds memory that grows with the input (§3.1
+      step 4), so the reader feeds its own 64 KiB slices;
     - an exception in a handler calls `XML_StopParser` and propagates;
     - setting `CharacterDataHandler` flushes the text buffer first;
     - `intern=None` disables name interning;
@@ -1457,7 +1540,7 @@ every fixture. 23 points did (§3.4).
   and the instance keeps running. https://docs.cloud.google.com/run/docs/configuring/request-timeout
 - anyio `to_thread.run_sync(..., limiter=)`, `CapacityLimiter`, `abandon_on_cancel`:
   https://anyio.readthedocs.io/en/stable/threads.html
-- gpxpy `py.typed` and `package_data={"gpxpy": ["py.typed"]}`: https://github.com/tkrajina/gpxpy/tree/master/gpxpy ,
+- (Historical; gpxpy was removed in f78910a.) gpxpy `py.typed` and `package_data={"gpxpy": ["py.typed"]}`: https://github.com/tkrajina/gpxpy/tree/master/gpxpy ,
   https://github.com/tkrajina/gpxpy/blob/master/setup.py ; PyPI 1.6.2 (Apache-2.0): https://pypi.org/project/gpxpy/
 - Python XML vulnerabilities table and expat footnotes (2.4.1 billion laughs/quadratic, 2.6.0 large tokens; etree
   external entities → `ParseError`): https://docs.python.org/3.12/library/xml.html

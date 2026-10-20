@@ -126,7 +126,9 @@ async def test_a_request_waiting_for_the_parse_slot_has_already_closed_its_uploa
     spy: Spy,
     make_client: Callable[[FastAPI], httpx.AsyncClient],
 ) -> None:
-    client = make_client(create_app(settings))
+    app = create_app(settings)
+    client = make_client(app)
+    limiter: anyio.CapacityLimiter = app.state.parse_limiter
     statuses: list[int] = []
 
     async def post(filename: str) -> None:
@@ -145,7 +147,9 @@ async def test_a_request_waiting_for_the_parse_slot_has_already_closed_its_uploa
             with anyio.fail_after(10):
                 while len(spy.uploads) < 2:
                     await anyio.sleep(0.01)
-            await anyio.sleep(0.3)  # the waiter has read its file and now waits
+            with anyio.fail_after(10):  # the waiter is queued on the parse slot
+                while limiter.statistics().tasks_waiting < 1:
+                    await anyio.sleep(0.01)
             while_waiting = (spy.calls, list(statuses), spy.all_closed())
             spy.release.set()
     finally:

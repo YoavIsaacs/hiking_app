@@ -337,7 +337,7 @@ XMLNS_SHAPES = {
 
 
 @pytest.mark.parametrize("shape", list(XMLNS_SHAPES))
-def test_xmlns_shapes_parse_in_linear_time(shape: str) -> None:
+def test_xmlns_shapes_parse_to_two_points_under_the_time_ceiling(shape: str) -> None:
     out = child_json(run_child(PARSE_CHILD, XMLNS_SHAPES[shape], timeout_s=60))
     assert out["outcome"] == "2 points"
     assert isinstance(out["seconds"], float) and out["seconds"] < 3.0, out

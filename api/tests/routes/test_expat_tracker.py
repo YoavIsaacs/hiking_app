@@ -5,7 +5,7 @@
 * ``_new_parser`` sets both tracker values (3.1 step 3), proved by behaviour;
 * a tracker refusal is HTTP 422 ``invalid_gpx`` "The file is too complex to parse."
   while a malformed file keeps its message (3.1 step 5);
-* the 1 MiB round-3 shape through ``parse_gpx`` and through the real router;
+* the 4 MiB round-3 shape through ``parse_gpx`` and through the real router;
 * legitimate files are unaffected.
 """
 
@@ -59,9 +59,12 @@ SET_AMPLIFICATION = "SetAllocTrackerMaximumAmplification"
 NO_MEMORY = errors.codes[errors.XML_ERROR_NO_MEMORY]
 AMPLIFICATION = errors.codes[errors.XML_ERROR_AMPLIFICATION_LIMIT_BREACH]
 
-# ~1 MiB with a 1 KiB URI: about 100k distinct attributes, ~100 MiB of expanded names
-# without the tracker (ADR "How it is tested").
-ROUND3_1MIB = prefixed_attribute_burst(1 * MIB, 1 * KIB)
+# The longest URI the namespace cap admits (ASCII, 256 characters; ADR 0004 round 4).
+# Four MiB of distinct prefixed attributes: about 400k of them, ~200 MiB of expanded
+# names without the tracker. One MiB is only just past the 32 MiB activation (measured:
+# 0.5 MiB is accepted), so 4 MiB leaves a margin. Refused in ~0.3 s, peak ~32 MiB.
+URI_AT_THE_CAP = 256
+ROUND3_SHAPE = prefixed_attribute_burst(4 * MIB, URI_AT_THE_CAP)
 VALID = gpx_bytes([out_and_back()])
 
 
@@ -173,9 +176,11 @@ def test_the_import_guard_is_a_raise_not_an_assert_so_python_dash_o_keeps_it() -
 
 # --- _new_parser sets both values (behaviourally) ---
 
-# 64 KiB of the round-3 shape: ~9 MB tracked, ratio ~137x; 1 MiB: ~100 MB, > 64 MiB
-SMALL_AMPLIFYING = prefixed_attribute_burst(64 * KIB, 1 * KIB)
-LARGE_AMPLIFYING = ROUND3_1MIB
+# 64 KiB of the round-3 shape at a 256-character URI: ~3 MB tracked, ratio ~40x (below
+# expat's own 100x default, which the 256-character cap makes unreachable);
+# 4 MiB: ~200 MB, > 64 MiB
+SMALL_AMPLIFYING = prefixed_attribute_burst(64 * KIB, URI_AT_THE_CAP)
+LARGE_AMPLIFYING = ROUND3_SHAPE
 
 
 def feed(parser: expat.XMLParserType, data: bytes) -> None:
@@ -199,16 +204,16 @@ def test_the_threshold_value_is_applied_not_left_at_expats_64_mib_default() -> N
         feed(parser, SMALL_AMPLIFYING)
 
 
-def test_the_amplification_value_is_applied_not_left_at_expats_100x_default() -> None:
-    """The document amplifies ~137x, so expat's default factor (100x) would refuse it
-    past a 1 MiB threshold; a huge factor must let it through."""
-    parser = _new_parser(alloc_threshold_bytes=1 * MIB, alloc_max_amplification=1e6)
+def test_a_factor_above_the_documents_amplification_lets_it_through() -> None:
+    """The negative of the 4x test above: the same document, the same threshold, and a
+    factor above its ~40x ratio is accepted, so it is the factor that decides."""
+    parser = _new_parser(alloc_threshold_bytes=1 * MIB, alloc_max_amplification=100.0)
     feed(parser, SMALL_AMPLIFYING)
 
 
-def test_a_huge_threshold_and_factor_1_let_a_100_mib_document_through() -> None:
+def test_a_huge_threshold_and_factor_1_let_a_200_mib_document_through() -> None:
     """The threshold is not applied to the wrong setter: past expat's own 64 MiB
-    default, a 1 GiB threshold must still allow everything."""
+    default (this document tracks ~200 MiB), a 1 GiB threshold must allow everything."""
     parser = _new_parser(alloc_threshold_bytes=1024 * MIB, alloc_max_amplification=1.0)
     feed(parser, LARGE_AMPLIFYING)
 
@@ -278,7 +283,7 @@ def test_a_mismatched_tag_through_parse_gpx_keeps_the_well_formed_message() -> N
 
 def test_the_round_3_shape_is_refused_with_the_too_complex_message() -> None:
     with pytest.raises(InvalidGpx) as excinfo:
-        parse_gpx(ROUND3_1MIB)
+        parse_gpx(ROUND3_SHAPE)
     assert excinfo.value.message == TOO_COMPLEX_MESSAGE
 
 
@@ -288,7 +293,7 @@ def test_expat_reports_a_tracker_refusal_as_no_memory_not_amplification_breach()
     """Pins the code observed on expat 2.8.5 / CPython 3.12.15: XML_ERROR_NO_MEMORY
     (code 1, 'out of memory'). The breach code is only a defensive mapping."""
     with pytest.raises(InvalidGpx) as excinfo:
-        parse_gpx(ROUND3_1MIB)
+        parse_gpx(ROUND3_SHAPE)
     cause = excinfo.value.__cause__
     assert isinstance(cause, ExpatError)
     assert cause.code == NO_MEMORY
@@ -300,7 +305,7 @@ def test_the_round_3_shape_is_refused_quickly_and_within_the_memory_bound() -> N
     tracemalloc.start()
     try:
         with pytest.raises(InvalidGpx):
-            parse_gpx(ROUND3_1MIB)
+            parse_gpx(ROUND3_SHAPE)
         peak = tracemalloc.get_traced_memory()[1]
     finally:
         tracemalloc.stop()
@@ -317,9 +322,12 @@ def test_the_xmlns_binding_shape_is_refused_too() -> None:
 # --- precedence is document order (ADR 3.1 step 5) ---
 
 # The URI must be long, or the burst does not amplify and the tracker rightly accepts it
-# (a 5-character URI made these tests pass vacuously).
-ROOT_P = b'<gpx xmlns:p="urn:' + b"u" * (1 * KIB - 4) + b'">'
-WPT_BURST = wpt_with_prefixed_burst(512 * KIB)
+# (a 5-character URI made these tests pass vacuously); the cap admits 256 at most.
+# Measured on the wpt burst: with a 256-character URI 1 MiB is already refused and
+# 0.5 MiB is not; with a 5-character URI 2 MiB is accepted and 4 MiB is refused (the
+# attribute names alone amplify by then). 2 MiB is the size that separates the two.
+ROOT_P = b'<gpx xmlns:p="urn:' + b"u" * (URI_AT_THE_CAP - 4) + b'">'
+WPT_BURST = wpt_with_prefixed_burst(2 * MIB)
 
 
 def test_the_burst_alone_is_refused_at_the_defaults() -> None:
@@ -367,7 +375,7 @@ def test_the_round_3_shape_posted_is_422_invalid_gpx_too_complex(
     client: TestClient,
 ) -> None:
     response = client.post(
-        URL, files={"file": ("hostile.gpx", ROUND3_1MIB, "application/gpx+xml")}
+        URL, files={"file": ("hostile.gpx", ROUND3_SHAPE, "application/gpx+xml")}
     )
     body = assert_error(response, 422, "invalid_gpx")
     assert body == {
@@ -390,7 +398,7 @@ def test_a_malformed_file_posted_keeps_the_well_formed_message(
 
 def test_a_refusal_is_never_a_500_or_a_413(client: TestClient) -> None:
     response = client.post(
-        URL, files={"file": ("hostile.gpx", ROUND3_1MIB, "application/gpx+xml")}
+        URL, files={"file": ("hostile.gpx", ROUND3_SHAPE, "application/gpx+xml")}
     )
     assert response.status_code not in (413, 500)
 
@@ -481,7 +489,7 @@ def test_a_real_shaped_100k_point_file_posted_is_200(
 
 def test_summarise_gpx_raises_invalid_gpx_with_the_too_complex_message() -> None:
     with pytest.raises(InvalidGpx) as excinfo:
-        summarise_gpx(ROUND3_1MIB, "hostile.gpx")
+        summarise_gpx(ROUND3_SHAPE, "hostile.gpx")
     assert excinfo.value.message == TOO_COMPLEX_MESSAGE
 
 
@@ -548,6 +556,9 @@ def test_the_fuzz_burst_fragment_is_refused_on_its_own() -> None:
     with pytest.raises(InvalidGpx) as excinfo:
         parse_gpx(b"<gpx>" + BURST_FRAGMENT + b"</gpx>")
     assert excinfo.value.message == TOO_COMPLEX_MESSAGE
+    # the tracker, not the namespace URI cap (which has no ExpatError cause)
+    assert isinstance(excinfo.value.__cause__, ExpatError)
+    assert excinfo.value.__cause__.code == NO_MEMORY
 
 
 def test_the_fuzz_module_inserts_the_burst_fragment() -> None:

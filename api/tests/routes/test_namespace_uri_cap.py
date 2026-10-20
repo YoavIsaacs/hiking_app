@@ -1,12 +1,13 @@
-"""The namespace URI cap (ADR 0004 amendment, item 37; 3.1 step 4 and step 5).
+"""The namespace URI cap (ADR 0004 amendment, items 37 and 45-51; 3.1 steps 4 and 5).
 
-Any declared namespace URI longer than 1,024 decoded characters is refused with 422
-``invalid_gpx`` "The file is too complex to parse.", for default and prefixed
-declarations, on the root and on any other element. ``xmlns=""`` is accepted. Precedence
-is document order.
+A declared namespace URI must be ASCII and at most 256 decoded characters; anything
+else is refused with 422 ``invalid_gpx`` "The file is too complex to parse.", for
+default and prefixed declarations, on the root and on any other element. ``xmlns=""``
+is accepted. The check runs on the decoded URI (``&#xE9;`` is refused, 256 x ``&#x75;``
+is accepted, ``urn:%C3%A9`` is ASCII and accepted). Precedence is document order.
 
 Written against the public surface only (``parse_gpx``, ``summarise_gpx``, HTTP), with
-the literal 1,024: the constant itself is pinned at verify time.
+the literal 256: the constant itself is pinned in test_namespace_uri_cap_pins.py.
 """
 
 import re
@@ -31,7 +32,7 @@ from tests.routes.hostile_shapes import (
 from tests.routes.http_helpers import URL, assert_error
 
 Builder = Callable[[str], bytes]
-LIMIT = 1024
+LIMIT = 256
 TOO_COMPLEX = "The file is too complex to parse."
 NOT_WELL_FORMED = "The file is not well-formed XML"
 FOUR_BYTE = "\U00010000"
@@ -93,12 +94,12 @@ def refusal(data: bytes) -> InvalidGpx:
 
 
 @place
-def test_a_uri_of_exactly_1024_characters_is_accepted(build: Builder) -> None:
+def test_a_uri_of_exactly_256_characters_is_accepted(build: Builder) -> None:
     assert len(parse_gpx(build(uri(LIMIT))).points) == 2
 
 
 @place
-def test_a_uri_of_1025_characters_is_refused_as_too_complex(build: Builder) -> None:
+def test_a_uri_of_257_characters_is_refused_as_too_complex(build: Builder) -> None:
     assert refusal(build(uri(LIMIT + 1))).message == TOO_COMPLEX
 
 
@@ -127,34 +128,92 @@ def test_the_refusal_applies_through_summarise_gpx_too() -> None:
     assert excinfo.value.message == TOO_COMPLEX
 
 
-# --- characters, not bytes ---
+# --- ASCII only, counted in decoded characters (ADR 0004 items 45-51) ---
 
 
 @place
-def test_1024_four_byte_characters_are_accepted(build: Builder) -> None:
-    assert len(parse_gpx(build(FOUR_BYTE * LIMIT)).points) == 2
+def test_one_four_byte_character_is_refused(build: Builder) -> None:
+    assert refusal(build(FOUR_BYTE)).message == TOO_COMPLEX
 
 
 @place
-def test_1025_four_byte_characters_are_refused(build: Builder) -> None:
-    assert refusal(build(FOUR_BYTE * (LIMIT + 1))).message == TOO_COMPLEX
+def test_256_four_byte_characters_are_refused_though_not_over_the_length_cap(
+    build: Builder,
+) -> None:
+    assert refusal(build(FOUR_BYTE * LIMIT)).message == TOO_COMPLEX
 
 
 @place
-def test_300_four_byte_characters_about_1_2_kb_are_accepted(build: Builder) -> None:
-    data = build(FOUR_BYTE * 300)
-    assert len(FOUR_BYTE.encode()) * 300 == 1200
-    assert len(parse_gpx(data).points) == 2
+def test_1024_four_byte_characters_are_refused(build: Builder) -> None:
+    """Accepted before round 4 (the old cap counted characters)."""
+    assert refusal(build(FOUR_BYTE * 1024)).message == TOO_COMPLEX
 
 
-def test_character_references_count_once_each() -> None:
-    def doc(n: int) -> bytes:
-        refs = "&#x75;" * n
-        pts = f"<trk><trkseg>{PT1}{PT2}</trkseg></trk>"
-        return encode(f'<gpx xmlns:x="{refs}">{pts}</gpx>')
+@place
+def test_a_literal_e_acute_is_refused(build: Builder) -> None:
+    assert refusal(build("urn:é")).message == TOO_COMPLEX
 
-    assert len(parse_gpx(doc(LIMIT)).points) == 2  # 6,144 source bytes
-    assert refusal(doc(LIMIT + 1)).message == TOO_COMPLEX
+
+@place
+def test_255_ascii_characters_and_then_an_e_acute_are_refused(build: Builder) -> None:
+    data = build(uri(LIMIT - 1) + "é")  # 256 characters, one of them non-ASCII
+    assert refusal(data).message == TOO_COMPLEX
+
+
+@place
+def test_a_character_reference_to_e_acute_is_refused_after_decoding(
+    build: Builder,
+) -> None:
+    assert refusal(build("urn:&#xE9;")).message == TOO_COMPLEX
+
+
+@place
+def test_a_non_ascii_refusal_is_the_handler_not_an_expat_failure(
+    build: Builder,
+) -> None:
+    exc = refusal(build("urn:é"))
+    assert exc.__cause__ is None
+
+
+@place
+def test_256_character_references_are_accepted(build: Builder) -> None:
+    assert len(parse_gpx(build("&#x75;" * LIMIT)).points) == 2  # 1,536 source bytes
+
+
+@place
+def test_257_character_references_are_refused(build: Builder) -> None:
+    assert refusal(build("&#x75;" * (LIMIT + 1))).message == TOO_COMPLEX
+
+
+@place
+def test_a_percent_encoded_non_ascii_uri_is_ascii_and_accepted(
+    build: Builder,
+) -> None:
+    assert len(parse_gpx(build("urn:%C3%A9")).points) == 2
+
+
+@place
+def test_a_non_ascii_uri_posted_is_422_too_complex_and_never_a_500(
+    client: TestClient,
+    build: Builder,
+) -> None:
+    response = client.post(
+        URL, files={"file": ("e.gpx", build("urn:é"), "application/gpx+xml")}
+    )
+    body = assert_error(response, 422, "invalid_gpx")
+    assert body == {"code": "invalid_gpx", "message": TOO_COMPLEX, "detail": None}
+
+
+def test_a_non_ascii_declaration_inside_a_skipped_subtree_is_refused() -> None:
+    wpt = '<wpt lat="0" lon="0"><extensions xmlns:q="urn:é"/></wpt>'
+    data = encode(f"<gpx>{wpt}<trk><trkseg>{PT1}{PT2}</trkseg></trk></gpx>")
+    assert refusal(data).message == TOO_COMPLEX
+
+
+def test_a_non_ascii_uri_is_refused_through_summarise_gpx_too() -> None:
+    with pytest.raises(InvalidGpx) as excinfo:
+        summarise_gpx(default_on_root("urn:é"), "f.gpx")
+    assert excinfo.value.message == TOO_COMPLEX
 
 
 # --- undeclaration ---
@@ -167,7 +226,7 @@ def test_xmlns_empty_on_a_child_is_accepted() -> None:
     parse_gpx(data)  # not refused; those points are outside the root namespace
 
 
-def test_xmlns_empty_on_a_child_of_a_long_default_namespace_root_is_accepted() -> None:
+def test_xmlns_empty_on_a_child_of_a_max_length_default_root_is_accepted() -> None:
     pts = f"<trk><trkseg>{PT1}{PT2}</trkseg></trk>"
     data = encode(f'<gpx xmlns="{uri(LIMIT)}">{pts}<extensions xmlns=""/></gpx>')
     assert len(parse_gpx(data).points) == 2
@@ -177,7 +236,7 @@ def test_xmlns_empty_on_a_child_of_a_long_default_namespace_root_is_accepted() -
 
 
 @place
-def test_a_1025_character_uri_posted_is_422_too_complex_and_never_a_500(
+def test_a_257_character_uri_posted_is_422_too_complex_and_never_a_500(
     client: TestClient,
     build: Builder,
 ) -> None:
@@ -189,7 +248,7 @@ def test_a_1025_character_uri_posted_is_422_too_complex_and_never_a_500(
 
 
 @place
-def test_a_1024_character_uri_posted_is_accepted(
+def test_a_256_character_uri_posted_is_accepted(
     client: TestClient,
     build: Builder,
 ) -> None:
@@ -289,6 +348,43 @@ def h4_document(size: int, uri_chars: int) -> bytes:
 def test_the_10_mib_h4_shape_at_a_64_kib_uri_is_refused_in_under_a_second() -> None:
     data = h4_document(10 * MIB, 64 * KIB)
     assert 10 * MIB - 64 <= len(data) <= 10 * MIB
+    out = last_json_line(run_python(textwrap.dedent(H4_CHILD), data, timeout_s=120))
+    assert out["outcome"] == "invalid_gpx", out
+    assert out["message"] == TOO_COMPLEX, out
+    assert out["has_cause"] is False, out  # the handler, not the tracker
+    seconds = out["seconds"]
+    assert isinstance(seconds, float) and seconds < 1.0, out
+
+
+# --- the round-4 shape: a non-ASCII or long default namespace, then many children ---
+# Before the ASCII cap, 1,024 x U+10000 was admitted and every <a/> then cost expat a
+# four-byte-per-character URI comparison: the 10 MiB file returned 200 after 17-25 s.
+
+ROUND4_VALID_TAIL = f"<trk><trkseg>{PT1}{PT2}</trkseg></trk></gpx>"
+
+
+def round4_document(size: int, declared: str) -> bytes:
+    head = f'<gpx xmlns="{declared}">'
+    fixed = len((head + ROUND4_VALID_TAIL).encode())  # bytes: U+10000 is four of them
+    filler = "<a/>" * ((size - fixed) // 4)
+    return encode(head + filler + ROUND4_VALID_TAIL)
+
+
+ROUND4_CASES = {
+    "10 MiB, 1024 x U+10000": (10 * MIB, FOUR_BYTE * 1024),
+    "1 MiB, 1 x U+10000": (1 * MIB, FOUR_BYTE),
+    "1 MiB, 257 ASCII characters": (1 * MIB, uri(LIMIT + 1)),
+}
+
+
+@pytest.mark.parametrize(
+    ("size", "declared"), list(ROUND4_CASES.values()), ids=list(ROUND4_CASES)
+)
+def test_the_round_4_shape_is_refused_by_the_handler_in_under_a_second(
+    size: int, declared: str
+) -> None:
+    data = round4_document(size, declared)
+    assert size - 64 <= len(data) <= size
     out = last_json_line(run_python(textwrap.dedent(H4_CHILD), data, timeout_s=120))
     assert out["outcome"] == "invalid_gpx", out
     assert out["message"] == TOO_COMPLEX, out

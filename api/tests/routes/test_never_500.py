@@ -20,7 +20,7 @@ from app.routes.errors import RouteParseError
 from app.routes.summary import summarise_gpx
 from tests.fixtures.loader import GPX_DIR
 from tests.routes.gpx_builders import gpx_bytes, straight_line
-from tests.routes.hostile_shapes import KIB, burst
+from tests.routes.hostile_shapes import MIB, burst
 from tests.routes.http_helpers import URL
 
 SEED_FILES = [
@@ -30,12 +30,14 @@ SEED_FILES = [
 ]
 
 # the round-3 shape (ADR 0004 "Through HTTP"): self-contained, so it is hostile wherever
-# it lands; tests/routes/test_expat_tracker.py proves it is refused on its own
+# it lands; tests/routes/test_expat_tracker.py proves it is refused on its own, by the
+# allocation tracker. The URI is the longest the namespace cap admits (256 ASCII
+# characters), so the burst needs 4 MiB to amplify past the tracker's 32 MiB.
 BURST_FRAGMENT = (
     b'<z xmlns:p="urn:'
-    + b"u" * (1 * KIB - 4)
+    + b"u" * (256 - 4)
     + b'"'
-    + burst(' p:%s=""', 384 * KIB).encode()
+    + burst(' p:%s=""', 4 * MIB).encode()
     + b"/>"
 )
 

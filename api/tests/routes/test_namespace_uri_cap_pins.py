@@ -1,4 +1,5 @@
-"""Pins for the namespace URI cap that the red tests could not state (ADR 0004 item 37).
+"""Pins for the namespace URI cap that the red tests could not state (ADR 0004 items
+37 and 45-51).
 
 The constant itself, the reader's default coming from it, the reader letting go of
 the parser's namespace handler, and two cases that only the built code can answer.
@@ -27,8 +28,9 @@ def new_reader(**kwargs: int) -> tuple[XMLParserType, _GpxReader]:
     return parser, _GpxReader(parser, max_points=100, **kwargs)
 
 
-def test_the_cap_constant_is_1024() -> None:
-    assert MAX_NAMESPACE_URI_CHARS == 1024
+def test_the_cap_constant_is_256() -> None:
+    value: int = MAX_NAMESPACE_URI_CHARS  # widened: the constant is a Final literal
+    assert value == 256
 
 
 def test_the_reader_default_comes_from_the_constant() -> None:
@@ -45,16 +47,35 @@ def test_a_reader_built_with_the_default_refuses_one_character_over_the_constant
 ):
     parser, reader = new_reader()
     try:
-        parser.Parse(f'<gpx xmlns:x="{long_uri(1024)}"/>'.encode(), True)
+        parser.Parse(f'<gpx xmlns:x="{long_uri(256)}"/>'.encode(), True)
     finally:
         reader.detach()
     parser, reader = new_reader()
     try:
         with pytest.raises(InvalidGpx) as excinfo:
-            parser.Parse(f'<gpx xmlns:x="{long_uri(1025)}"/>'.encode(), True)
+            parser.Parse(f'<gpx xmlns:x="{long_uri(257)}"/>'.encode(), True)
     finally:
         reader.detach()
     assert excinfo.value.message == TOO_COMPLEX
+
+
+def test_a_reader_built_with_the_default_refuses_a_short_non_ascii_uri() -> None:
+    parser, reader = new_reader()
+    try:
+        with pytest.raises(InvalidGpx) as excinfo:
+            parser.Parse('<gpx xmlns:x="urn:é"/>'.encode(), True)
+    finally:
+        reader.detach()
+    assert excinfo.value.message == TOO_COMPLEX
+    assert excinfo.value.__cause__ is None
+
+
+def test_a_reader_built_with_the_default_accepts_xmlns_empty() -> None:
+    parser, reader = new_reader()
+    try:
+        parser.Parse(b'<gpx xmlns="urn:x"><a xmlns=""/></gpx>', True)
+    finally:
+        reader.detach()
 
 
 def test_a_reader_honours_an_explicit_limit() -> None:
@@ -119,7 +140,7 @@ def test_parse_gpx_lets_go_of_the_namespace_handler_after_a_cap_refusal(
     captured_parsers: list[XMLParserType],
 ) -> None:
     with pytest.raises(InvalidGpx):
-        parse_gpx(f'<gpx xmlns="{long_uri(1025)}"/>'.encode())
+        parse_gpx(f'<gpx xmlns="{long_uri(257)}"/>'.encode())
     assert len(captured_parsers) == 1
     assert captured_parsers[0].StartNamespaceDeclHandler is None
 
@@ -155,7 +176,7 @@ def test_guard_depth_64_with_a_short_declaration_parses() -> None:
 
 def test_a_long_uri_at_depth_65_gives_too_complex_not_nested_too_deeply() -> None:
     with pytest.raises(InvalidGpx) as excinfo:
-        parse_gpx(nested_to_65(f'xmlns:x="{long_uri(1025)}"'))
+        parse_gpx(nested_to_65(f'xmlns:x="{long_uri(257)}"'))
     assert excinfo.value.message == TOO_COMPLEX
 
 

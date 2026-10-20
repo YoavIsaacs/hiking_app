@@ -15,7 +15,7 @@ import httpx
 import pytest
 from fastapi import FastAPI
 
-import app.routers.routes as routes_module
+import app.services.route_parse as route_parse_module
 from app.config import Settings
 from app.main import create_app
 from app.models.route import RouteSummary
@@ -63,7 +63,8 @@ class Gate:
 @pytest.fixture
 def gate(monkeypatch: pytest.MonkeyPatch) -> Gate:
     gate = Gate()
-    monkeypatch.setattr(routes_module, "summarise_gpx", gate)
+    # the router delegates to summarise_upload, which runs summarise_gpx in the worker
+    monkeypatch.setattr(route_parse_module, "summarise_gpx", gate)
     return gate
 
 

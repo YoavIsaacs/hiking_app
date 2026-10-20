@@ -63,7 +63,8 @@ def test_points_are_capped_at_500_in_the_schema(spec: Schema) -> None:
 def test_every_route_summary_field_is_required(spec: Schema) -> None:
     schema = spec["components"]["schemas"]["RouteSummary"]
     assert set(schema["required"]) == set(schema["properties"])
-    assert len(schema["properties"]) == 15
+    assert len(schema["properties"]) == 16
+    assert list(schema["properties"])[-1] == "warnings"  # the last field (ADR 0005 6)
 
 
 @pytest.mark.parametrize(
@@ -106,3 +107,35 @@ def test_the_parse_limiter_dependency_is_not_an_openapi_parameter(spec: Schema) 
     body = spec["components"]["schemas"][ref.rsplit("/", 1)[-1]]
     assert set(body["properties"]) == {"file"}
     assert "CapacityLimiter" not in str(spec)
+
+
+def test_warnings_is_a_required_array_of_api_warning(spec: Schema) -> None:
+    schemas = spec["components"]["schemas"]
+    prop = schemas["RouteSummary"]["properties"]["warnings"]
+    assert prop["type"] == "array"
+    assert prop["items"] == {"$ref": "#/components/schemas/ApiWarning"}
+    assert "warnings" in schemas["RouteSummary"]["required"]
+    assert "default" not in prop
+
+
+def test_api_warning_schema_is_code_severity_message_and_nothing_else(
+    spec: Schema,
+) -> None:
+    schema = spec["components"]["schemas"]["ApiWarning"]
+    assert set(schema["properties"]) == {"code", "severity", "message"}
+    assert set(schema["required"]) == {"code", "severity", "message"}
+    assert schema["additionalProperties"] is False
+    code = schema["properties"]["code"]  # a one-value Literal is emitted as `const`
+    assert code.get("enum", [code.get("const")]) == ["elevation_unavailable"]
+    assert schema["properties"]["severity"]["enum"] == ["info", "warn", "danger"]
+    assert schema["properties"]["message"]["minLength"] == 1
+
+
+def test_the_elevation_dependency_is_not_an_openapi_parameter(spec: Schema) -> None:
+    """``elevation`` comes from ``Depends(get_elevation_lookup)``, like the limiter."""
+    operation = spec["paths"]["/v1/routes/parse"]["post"]
+    assert operation.get("parameters", []) == []
+    ref = operation["requestBody"]["content"]["multipart/form-data"]["schema"]["$ref"]
+    body = spec["components"]["schemas"][ref.rsplit("/", 1)[-1]]
+    assert set(body["properties"]) == {"file"}
+    assert "ElevationLookup" not in str(spec) and "elevation_lookup" not in str(spec)

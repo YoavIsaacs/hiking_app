@@ -412,9 +412,10 @@ FIXTURES = fixture_params(valid_fixtures())
 
 @pytest.mark.parametrize(("path", "expected"), FIXTURES)
 def test_every_valid_fixture_still_returns_200_at_the_default_tracker_values(
-    path: Path, expected: object, client: TestClient
+    path: Path, expected: object, lifespan_client: TestClient
 ) -> None:
-    response = client.post(
+    # lifespan_client: the no-elevation fixture is backfilled (offline, respx)
+    response = lifespan_client.post(
         URL, files={"file": (path.name, path.read_bytes(), "application/gpx+xml")}
     )
     assert response.status_code == 200, response.text

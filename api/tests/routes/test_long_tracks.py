@@ -15,7 +15,11 @@ from tests.routes.strategies import LongShape, Track, long_track, long_tracks
 def check(track: Track, summary: RouteSummary) -> None:
     flat = track.flat
     assert summary.point_count_original == len(flat)
-    assert len(summary.points) == 500
+    # no usable elevation is simplified to 400 points, not 500 (ADR 0005 section 5)
+    expected = 500 if summary.has_elevation else 400
+    assert summary.elevation_source == ("file" if summary.has_elevation else "none")
+    assert summary.warnings == []
+    assert len(summary.points) == expected
     first, last = summary.points[0], summary.points[-1]
     assert (first.lat, first.lon) == (flat[0].lat, flat[0].lon)
     assert (last.lat, last.lon) == (flat[-1].lat, flat[-1].lon)
@@ -25,7 +29,7 @@ def check(track: Track, summary: RouteSummary) -> None:
     assert last.dist_m == summary.distance_m
     dists = [p.dist_m for p in summary.points]
     assert dists == sorted(dists)
-    assert len(set((p.lat, p.lon) for p in summary.points)) == 500  # distinct points
+    assert len(set((p.lat, p.lon) for p in summary.points)) == expected  # distinct
     if track.elevation == "none":
         assert summary.high_point is None
         return
@@ -47,7 +51,7 @@ def check(track: Track, summary: RouteSummary) -> None:
     suppress_health_check=[HealthCheck.too_slow, HealthCheck.data_too_large],
 )
 @given(long_tracks())
-def test_long_tracks_give_exactly_500_points_keeping_start_end_and_high_point(
+def test_long_tracks_give_exactly_500_points_or_400_without_elevation_keeping_the_ends(
     track: Track,
 ) -> None:
     check(track, summarise_gpx(track.gpx(), "t.gpx"))

@@ -249,10 +249,10 @@ def test_a_257_character_uri_posted_is_422_too_complex_and_never_a_500(
 
 @place
 def test_a_256_character_uri_posted_is_accepted(
-    client: TestClient,
+    lifespan_client: TestClient,  # these files carry no <ele>: they are backfilled
     build: Builder,
 ) -> None:
-    response = client.post(
+    response = lifespan_client.post(
         URL, files={"file": ("ok.gpx", build(uri(LIMIT)), "application/gpx+xml")}
     )
     assert response.status_code == 200, response.text

@@ -167,6 +167,8 @@ def test_no_elevation_fixture_reports_null_not_zero(
     result = summarise(path)
     assert result.has_elevation is False
     assert result.elevation_source == "none"
+    assert result.warnings == []
+    assert len(result.points) == 400  # ADR 0005 section 5: not 500
     assert result.gain_m is None
     assert result.loss_m is None
     assert result.min_elev_m is None

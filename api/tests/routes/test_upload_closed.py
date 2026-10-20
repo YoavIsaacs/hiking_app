@@ -17,6 +17,7 @@ from fastapi.testclient import TestClient
 from starlette.datastructures import UploadFile
 
 import app.routers.routes as routes_module
+import app.services.route_parse as route_parse_module
 from app.body_limit import too_large
 from app.config import Settings
 from app.errors import ApiError
@@ -67,7 +68,8 @@ def spy(monkeypatch: pytest.MonkeyPatch) -> Spy:
         return too_large()
 
     monkeypatch.setattr(UploadFile, "read", recording_read)
-    monkeypatch.setattr(routes_module, "summarise_gpx", spy.summarise)
+    # the router delegates to summarise_upload, which runs summarise_gpx in the worker
+    monkeypatch.setattr(route_parse_module, "summarise_gpx", spy.summarise)
     monkeypatch.setattr(routes_module, "too_large", recording_too_large)
     return spy
 

@@ -14,9 +14,11 @@ from hypothesis import strategies as st
 from app.config import Settings
 from app.main import create_app
 from app.models.route import RouteSummary
+from app.models.warnings import ELEVATION_UNAVAILABLE
 from app.routes.params import MAX_PLAUSIBLE_ELEV_M, MIN_PLAUSIBLE_ELEV_M
 from app.routes.parse import parse_gpx
 from app.routes.summary import summarise_gpx
+from tests.elevation_support import ElevationApi, status_handler
 from tests.routes.http_helpers import URL
 
 KEPT = [
@@ -91,6 +93,7 @@ def test_one_implausible_point_nulls_the_whole_profile(
     summary = summarise_gpx(doc(elevations), "f.gpx")
     assert summary.has_elevation is False
     assert summary.elevation_source == "none"
+    assert summary.warnings == []  # the pure layer never attempts a lookup
     assert summary.gain_m is None and summary.loss_m is None
     assert summary.min_elev_m is None and summary.max_elev_m is None
     assert summary.high_point is None
@@ -141,15 +144,35 @@ def tolerant_client(settings: Settings) -> TestClient:
 
 
 @pytest.mark.parametrize("text", DROPPED)
-def test_implausible_elevation_over_http_is_200_with_a_null_profile(
-    tolerant_client: TestClient, text: str
+def test_implausible_elevation_over_http_is_backfilled_from_the_lookup(
+    lifespan_client: TestClient, elevation_api: ElevationApi, text: str
 ) -> None:
-    response = tolerant_client.post(
+    response = lifespan_client.post(
+        URL, files={"file": ("f.gpx", doc(["100", text, "150"]), "application/gpx+xml")}
+    )
+    assert response.status_code == 200, response.text
+    summary = RouteSummary.model_validate(response.json())  # finite numbers only
+    assert summary.has_elevation is True
+    assert summary.elevation_source == "lookup"
+    assert summary.warnings == []
+    assert all(p.elev_m is not None for p in summary.points)
+    assert elevation_api.call_count == 1  # 3 points, 1 batch
+    assert [p.elev_m for p in summary.points] != [100.0, None, 150.0]
+
+
+@pytest.mark.parametrize("text", DROPPED)
+def test_implausible_elevation_with_the_lookup_down_is_a_null_profile_and_a_warning(
+    lifespan_client: TestClient, elevation_api: ElevationApi, text: str
+) -> None:
+    elevation_api.serve(status_handler(503))
+    response = lifespan_client.post(
         URL, files={"file": ("f.gpx", doc(["100", text, "150"]), "application/gpx+xml")}
     )
     assert response.status_code == 200, response.text
     summary = RouteSummary.model_validate(response.json())  # finite numbers only
     assert summary.has_elevation is False
+    assert summary.elevation_source == "none"
+    assert summary.warnings == [ELEVATION_UNAVAILABLE]
     assert all(p.elev_m is None for p in summary.points)
     body = response.json()
     assert body["gain_m"] is None and body["high_point"] is None

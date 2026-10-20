@@ -1,6 +1,6 @@
 # 0004 — GPX parser: module boundary, RouteSummary/ErrorResponse contract, algorithms, upload limits, benchmark
 
-Status: accepted; post-build corrections accepted (tech lead, 2026-10-20); round-3 amendment (items 28–36) accepted (tech lead, 2026-10-20); round-3 measured values and the namespace URI cap (items 37–44) accepted (tech lead, 2026-10-20) · Date: 2026-10-19 · Amended: 2026-10-19 (three rounds), 2026-10-20 (post-build corrections; round-3 decision; round-3 measured values and URI cap; URI cap measured on the capped build, S final) · Step: 1.2
+Status: accepted; post-build corrections accepted (tech lead, 2026-10-20); round-3 amendment (items 28–36) accepted (tech lead, 2026-10-20); round-3 measured values and the namespace URI cap (items 37–44) accepted (tech lead, 2026-10-20); **round-4 amendment (items 45–51) proposed** (architect, 2026-10-20) · Date: 2026-10-19 · Amended: 2026-10-19 (three rounds), 2026-10-20 (post-build corrections; round-3 decision; round-3 measured values and URI cap; URI cap measured on the capped build; round 4: URI cap tightened to ASCII ≤ 256, S pending re-measurement) · Step: 1.2
 
 ## Amendments
 **2026-10-19.** These record decisions already taken in step 1.2: review round 1, QA verify and the devops
@@ -149,6 +149,8 @@ these items touch are rewritten in place.
       Natively the tech lead measured 0.79 s at 1 KiB, 1.71 s at 4 KiB and 19 s at 64 KiB.
     - The longest URI in the corpus and in `docs/maps/` is 53 characters, and Garmin's extension URIs are about
       55. The cap refuses no plausible GPX.
+    - *Item 45 supersedes the value and the character count: a declared URI must now be ASCII and at most 256
+      characters. The 1,024-character cap admitted a 17.1 s file.*
 38. **Tracker values final: 32 MiB / 4×** (§3.1 step 3, §3.13). Measured: worst P 64.5 MiB (bar 120); worst RSS
     99.2 MiB in the child and 119.6 MiB over HTTP on the capped build (120.1 before it; bar 160); no OOM kill and
     no restart in any run. Legitimate
@@ -162,11 +164,11 @@ these items touch are rewritten in place.
     behind one parse slot against Cloud Run's 300 s request timeout. At C = 8 the queue drains in 8 × 3.5 = 28 s.
     H7's `<trk/>` and `<a/>` floods take 2.0–2.5 s: that is Python's per-element handler overhead, and it is inside
     the bar. The earlier "≤ 2 s" was an estimate, not a gate.
-    - **Measured S = 2.6 s** (tech-lead decision on QA's re-measure): H4 at U = 1,024 four-byte characters,
-      2.24–2.64 s on a quiet host. With about 45 % ambient host load it reached 5.5 s; that figure is recorded
-      beside S. Bars are judged on a quiet host, like the benchmark job.
-    - At `--concurrency=8` the queue holds even on the loaded figure (8 × 5.5 = 44 s ≪ 300 s). At today's 80 it
-      holds only on the quiet one (80 × 2.6 = 208 s). This strengthens the `--concurrency=8` recommendation.
+    - *Superseded by item 47:* the tech lead set S = 2.6 s from H4 at U = 1,024 four-byte characters
+      (2.24–2.64 s on a quiet host, up to 5.5 s with about 45 % ambient host load), taking H4 for the worst
+      admitted row. It was not. A repeated-name flood under the same URI was admitted and took 17.1 s in the image.
+      **S is pending re-measurement ⟨QA⟩**, and so are the queue figures derived from it (8 × 5.5 = 44 s,
+      80 × 2.6 = 208 s). Bars are still judged on a quiet host, like the benchmark job.
 42. **§3.10 from measured numbers.** B is 55 MiB, the idle uvicorn process in this image, not 40.5. With
     P = 64.5 MiB: K_max = 5 in both columns at C = 8, and C_max at K = 1 is 34 (steady) and 18 (pessimistic).
     `--concurrency=8` is safe for any P ≤ 266 MiB. `MAX_CONCURRENT_PARSES` stays 1.
@@ -180,11 +182,75 @@ these items touch are rewritten in place.
 
     Measured (QA, `hike-api:qa-r3`, ee059c3): every row within its bars on a quiet host; the figures are in §3.13.
     H3's expected outcome is corrected to "200 or 422".
+    - *Item 48: the rows were not worst-case. None of them repeats one name under a long URI. The largest admitted
+      URI is now 256 ASCII characters, and the whole table is re-run in a rebuilt image.*
 44. **Tests for the cap** (How it is tested): 1,024 accepted and 1,025 refused, default and prefixed, counted in
     characters; precedence in document order; the H4 shape at U = 64 KiB refused in < 1 s.
     - *Correction:* pyexpat clears its handlers itself after a callback raises (§3.1 step 4, "How the exception
       leaves `Parse`", step 1). So `detach()` after a refusal is belt-and-braces, and the after-return test is the
       one that proves `detach`.
+    - *Item 49 moves the boundary to 256 / 257 and adds the ASCII cases. "1,024 × U+10000 accepted" becomes
+      refused.*
+
+**2026-10-20, round-4 amendment (proposed).** Review round 4 found one blocking problem in this round's own URI cap
+(`docs/steps/1.2.md`, 2026-10-20, "Review round 4 …"). The 1,024-character cap does not meet the 3.5 s bar. Two
+facts combine. First, each element's cost grows with the *decoded* URI, and pyexpat holds that as UCS-4 when the URI
+has a character above U+FFFF. Second, the allocation tracker never stops *repeated* names. So the worst admitted file
+was never H4: H4 uses distinct names, and the tracker refuses it. The worst was `<gpx xmlns="1,024 × U+10000">` plus
+9.9 MiB of `<a/>`, which returned 200 in 17.1 s in the image. The tech lead decided the fix. This is not an
+escalation: the round-3 finding (memory) is resolved, and this is the cap's first failure. The sections these
+items touch are rewritten in place.
+
+45. **Namespace URI cap: ASCII and at most `MAX_NAMESPACE_URI_CHARS = 256`** (§2, §3.1 step 4, §3.11; tech-lead
+    decision). The handler is still `on_namespace_decl`. A declared URI, default or prefixed, on any element, is
+    refused with `InvalidGpx(TOO_COMPLEX_MESSAGE)` unless `uri.isascii()` and `len(uri) <= 256`. An ASCII string
+    of at most 256 characters is at most 256 bytes. `xmlns=""` (uri `None`) is still accepted. There is no new
+    error code and no OpenAPI change. This supersedes item 37's value of 1,024 and its rule of counting decoded
+    characters of any script.
+46. **Why: repeated names, measured** (§3.11, §3.13).
+    - Every start and end event of a namespaced element carries `uri|local`, and pyexpat decodes it into a new
+      `str` for each event. The cost of each event grows with the URI's decoded size. A URI with one character
+      above U+FFFF makes every such `str` UCS-4, 4 bytes per character. A URI with any non-ASCII character also
+      leaves CPython's ASCII fast path.
+    - The tracker bounds what accumulates: distinct names and the largest element. One name repeated 2.6M times
+      accumulates nothing, so the tracker never refuses it.
+    - Natively, 10 MiB of `<a/>` (tech lead): control with no namespace 1.64 s; ASCII 256 characters 2.42 s; ASCII
+      1,024 characters 4.5 s; 64 four-byte characters 4.6 s; 1,024 four-byte characters 25.4 s. In the image, the
+      last shape took 17.1 s and returned 200.
+    - So the bar needs both a length limit and an ASCII rule. 1,024 ASCII characters is already over the bar
+      natively, and so are 64 non-ASCII characters (256 bytes). 256 ASCII characters is 0.78 s over the control and
+      inside the bar.
+    - Real namespace URIs are ASCII: RFC 3986 builds a URI from "a very limited set" of characters, and Namespaces
+      in XML 1.0 requires a URI reference. The longest one we have seen is 53 characters, so 256 leaves about 5×
+      headroom.
+47. **Correction: "worst admitted row" and S** (§3.10, §3.13, Manager decisions 6). H4 at U = 1,024 four-byte
+    characters was not the worst admitted row, so S = 2.6 s rested on the wrong worst case. **S is pending
+    re-measurement ⟨QA⟩**: it is the slowest admitted row of the re-run §3.13 table, measured in a rebuilt image.
+    The queue formula (C × S < 300 s, so S < 300 s / C) and the 3.5 s bar stay. Every figure computed from
+    S = 2.6 s or 5.5 s is marked pending.
+48. **New §3.13 rows: repeated names at the largest admitted URI** (§3.13).
+    - **H11:** each of three shapes, 10 MiB, at U = 256 ASCII characters: a default-namespace `<a/>` flood; a
+      prefixed `<p:a/>` flood; and repeated `<a p:a="" … p:h=""/>`, which puts prefixed attributes on skipped
+      elements. Each has a bar of ≤ 3.5 s on a quiet host.
+    - **H12:** the same shapes at U = 257 ASCII characters and at U = 1 non-ASCII character, plus the 17.1 s
+      round-4 file. All are refused at the declaration.
+    - **The method's lesson:** the worst-case search covers repeated names as well as distinct ones, because the
+      tracker bounds only distinct names. Any axis that grows the cost of each event (URI length, URI encoding)
+      is measured both ways.
+    - The whole table is re-run in an image rebuilt from the round-4 build. `hike-api:qa-r3` predates the URI cap,
+      and the post-cap figures so far were taken by mounting HEAD code into it.
+49. **Tests for the tightened cap** (How it is tested).
+    - The boundary moves: 256 is accepted and 257 refused.
+    - New ASCII cases: one non-ASCII character is refused, whether written literally or as a character reference.
+    - A regression test with a time ceiling: the 17.1 s round-4 file is refused in < 1 s.
+    - Existing tests with a 1,024-character URI that expect anything other than the cap's refusal move to
+      256-character ASCII URIs and are re-sized where the tracker must still refuse them.
+    - The pin becomes `MAX_NAMESPACE_URI_CHARS == 256`.
+50. **Options re-weighed** (Options considered). These are now rejected, each because a measurement puts it over
+    the bar: a 1,024-byte cap, a 256-character cap of any script, and a 256-byte cap of any script. Item 37's
+    "a lower URI cap (for example 256) — not chosen" is reversed.
+51. **Consequences.** A document that declares a non-ASCII namespace name (an IRI) or a URI longer than 256
+    characters is refused. No known exporter does either. Loosening the rule is an amendment that re-measures H11.
 
 ## Context
 Step 1.2 adds `POST /v1/routes/parse`. It turns an uploaded GPX file into a typed `RouteSummary`, rejects bad input
@@ -293,7 +359,7 @@ the missing one**.
 | Status | `code` | Raised by |
 | --- | --- | --- |
 | 413 | `file_too_large` | the `Content-Length` pre-check, the streaming body cap, or the file-length check (§3.10) |
-| 422 | `invalid_gpx` | empty file, unsupported declared XML encoding, a NUL byte or not UTF-8, not well-formed (unbound prefix included), DTD/entity present, root not `<gpx>`, nested deeper than 64 elements, **too complex to parse: expat's allocation tracker refused it, or a namespace URI is longer than 1,024 characters** (one message for both, "The file is too complex to parse.", §3.1 steps 4–5, round-3 amendment and item 37), a chosen-source point with missing, unparseable, non-finite or out-of-range coordinates (§3.1) |
+| 422 | `invalid_gpx` | empty file, unsupported declared XML encoding, a NUL byte or not UTF-8, not well-formed (unbound prefix included), DTD/entity present, root not `<gpx>`, nested deeper than 64 elements, **too complex to parse: expat's allocation tracker refused it, or a declared namespace URI is not ASCII or is longer than 256 characters** (one message for both, "The file is too complex to parse.", §3.1 steps 4–5, round-3 amendment, items 37 and 45), a chosen-source point with missing, unparseable, non-finite or out-of-range coordinates (§3.1) |
 | 422 | `too_many_points` | more than `MAX_RAW_POINTS` (100,000) track and route points together; the pass stops at the 100,001st (§3.12) |
 | 422 | `too_few_points` | fewer than 2 points after merging and de-duplication (this includes waypoint-only files) |
 | 422 | `validation_error` | FastAPI `RequestValidationError`, e.g. the `file` field is missing, or `file` is a text field |
@@ -379,16 +445,26 @@ input bytes go through these steps, in order:
      `LookupError`) → `invalid_gpx` "unsupported XML encoding". Because the override means pyexpat never consults
      the declaration, the old `LookupError`/`ValueError` catch around the parse is **removed**. A `ValueError`
      escaping now is a bug (500), which the fuzz test hunts for.
-   - **`StartNamespaceDeclHandler`: namespace URI length** (item 37; the reason is in §3.11). `_GpxReader.__init__`
-     installs `parser.StartNamespaceDeclHandler = self.on_namespace_decl` with its other handlers, and `detach()`
-     sets it back to `None`. `_new_parser` is unchanged, because it configures the parser and the reader owns the
-     handlers.
-     - **The rule:** if `uri is not None and len(uri) > self._max_namespace_uri_chars` (default
-       `MAX_NAMESPACE_URI_CHARS` = 1,024), then `raise InvalidGpx(TOO_COMPLEX_MESSAGE)`. Exactly 1,024 is accepted.
-     - **Counted in characters of the decoded URI:** `len()` of the `str` that pyexpat passes. Expat has already
-       expanded character and entity references and normalised the attribute value, and pyexpat has decoded it
-       from UTF-8. So `&#x75;` counts as 1 character, and so does a 4-byte UTF-8 character. The longest admitted
-       URI is therefore 4 KiB of UTF-8.
+   - **`StartNamespaceDeclHandler`: the namespace URI must be ASCII and short** (items 37 and 45; the reason is
+     in §3.11). `_GpxReader.__init__` installs `parser.StartNamespaceDeclHandler = self.on_namespace_decl` with its
+     other handlers, and `detach()` sets it back to `None`. `_new_parser` is unchanged, because it configures the
+     parser and the reader owns the handlers.
+     - **The rule (item 45):** if `uri is not None and (not uri.isascii() or len(uri) >
+       self._max_namespace_uri_chars)` (default `MAX_NAMESPACE_URI_CHARS` = 256), then
+       `raise InvalidGpx(TOO_COMPLEX_MESSAGE)`. An ASCII URI of exactly 256 characters is accepted. A URI with any
+       non-ASCII character is refused at any length, including 1.
+     - **Checked on the decoded URI:** the `str` that pyexpat passes. Expat has already expanded character and
+       entity references and normalised the attribute value, and pyexpat has decoded it from UTF-8. This is the
+       form whose size each later event pays for (§3.11).
+       - `&#x75;` is 1 ASCII character, so 256 of them (1,536 bytes in the file) are accepted.
+       - `&#xE9;` is ASCII in the file but decodes to `é`, so it is refused.
+       - A percent-encoded `%C3%A9` is 6 ASCII characters, and is accepted under the length limit.
+     - **So characters equal bytes:** an admitted URI is at most 256 characters and at most 256 bytes, in the
+       file's UTF-8 and in expat's buffer alike, and pyexpat stores it as a 1-byte-per-character `str`. Item 37's
+       count of decoded characters of any script, under which 1,024 four-byte characters (4 KiB) were admitted, is
+       superseded.
+     - **Cost of the check:** in CPython `str.isascii()` reads a flag that the string already carries, and `len()`
+       is stored, so the handler does constant work per declaration.
      - **Both kinds of declaration:** default (`xmlns="…"`, which arrives with `prefix=None`) and prefixed
        (`xmlns:p="…"`). This applies on any element, including inside subtrees the reader skips, because expat
        binds every declaration whatever our handlers do with the element.
@@ -443,11 +519,12 @@ input bytes go through these steps, in order:
    - A real `MemoryError` (the process itself out of memory) is not caught. Under the tracker, one parse can't get
      there; if it ever did, the cgroup would kill the process before Python saw it.
    - **Precedence:** empty → NUL → the first problem the pass meets, in document order (declared encoding, DTD,
-     root, malformed or non-UTF-8 bytes, depth, a tracker refusal, an over-long namespace URI, the 100,001st point)
+     root, malformed or non-UTF-8 bytes, depth, a tracker refusal, a namespace URI that is non-ASCII or over 256
+     characters, the 100,001st point)
      → an invalid chosen-source coordinate (step 8). A tracker refusal stops the pass where expat's allocation
      failed. It can therefore win over a later malformation or over a later 100,001st point, and a malformation
      met first wins over it.
-     - **The URI cap** (item 37) is met at the declarations of its start tag, like the others in document order.
+     - **The URI cap** (items 37 and 45; both of its conditions) is met at the declarations of its start tag, like the others in document order.
        A declaration on an earlier element wins over a later 100,001st point, a later depth-65 element or a later
        malformation. A 100,001st point, a malformation or a DTD earlier in the document wins over it.
      - **On one start tag**, expat tokenises the whole tag before `storeAtts` runs. So a malformation inside the
@@ -494,7 +571,8 @@ elements in N, at these paths, are read. Depth starts at 1 for the root.
   - A `gpx` root in any other namespace is still accepted, as gpxpy accepted it. An allow-list would be a new
     rejection.
   - `xmlns` attributes never reach the start handler's attribute list, and nothing is registered globally. Since
-    item 37 each declaration reaches `on_namespace_decl`, which only checks the URI's length (§3.1 step 4).
+    item 37 each declaration reaches `on_namespace_decl`, which only checks that the URI is ASCII and at most 256
+    characters (item 45, §3.1 step 4).
   - **The rule, and how it differs from gpxpy (round-3 amendment).**
     - **Ours:** an element is read iff its namespace, as expat resolves it, is N, the root's namespace, and its
       path is in the table. Every other element is skipped with its subtree, and its points are not counted.
@@ -781,11 +859,14 @@ none of them reads an unbounded body.
     The last one then finishes after about C × S of parse time: (C − 1) × S waiting, plus its own parse. Its
     upload comes on top. So C × S must stay well under 300 s, which means S < 300 s / C:
 
-    | C | the most S may be (300 s / C) | C × S at the bar, S = 3.5 s | C × S measured, S = 2.6 s quiet / 5.5 s loaded host | C × S before the URI cap (H4, U = 1 MiB, S = 119 s) |
-    | --- | --- | --- | --- | --- |
-    | **8** (recommended) | 37.5 s | **28 s** | **21 s / 44 s** | 952 s ✗: the 3rd request in the queue already passes 300 s |
-    | 18 (pessimistic C_max, below) | 16.7 s | 63 s | 47 s / 99 s | ✗ |
-    | 80 (today) | 3.75 s | 280 s, just inside, with nothing left for uploads | 208 s / 440 s ✗ | ✗ |
+    | C | the most S may be (300 s / C) | C × S at the bar, S = 3.5 s | C × S measured: **pending ⟨QA⟩** (item 47) | C × S before the URI cap (H4, U = 1 MiB, S = 119 s) | C × S under the 1,024-character cap (round-4 file, S = 17.1 s) |
+    | --- | --- | --- | --- | --- | --- |
+    | **8** (recommended) | 37.5 s | **28 s** | 8 × S ⟨QA⟩ | 952 s ✗: the 3rd request in the queue already passes 300 s | 137 s: inside, but about 5× the bar's 28 s |
+    | 18 (pessimistic C_max, below) | 16.7 s | 63 s | 18 × S ⟨QA⟩ | ✗ | 308 s ✗ |
+    | 80 (today) | 3.75 s | 280 s, just inside, with nothing left for uploads | 80 × S ⟨QA⟩ | ✗ | 1,368 s ✗ |
+
+    *The column "S = 2.6 s quiet / 5.5 s loaded" (21 s / 44 s at 8; 208 s / 440 s at 80) is withdrawn (item 47).
+    It was computed from H4, which was not the slowest admitted row.*
 
     - **The bar: S ≤ 3.5 s wall time in the image, one number for every hostile row** (§3.13). It is the bar H10
       already had. At the recommended 8 the queue drains in 28 s, under a tenth of the timeout. That leaves room
@@ -796,19 +877,24 @@ none of them reads an unbounded body.
       floor of a reader on pyexpat, it is inside the bar, and lowering it would mean moving parsing to C, not
       adding a bound.
     - **The bar is why the URI cap exists** (§3.11). Before it, one 10 MiB file of prefixed elements under a
-      1 MiB URI parsed for 119 s, so at C = 8 the third request in the queue would get the platform's 504.
+      1 MiB URI parsed for 119 s, so at C = 8 the third request in the queue would get the platform's 504. Under
+      the 1,024-character cap a repeated-name flood still took 17.1 s in the image, about 5× the bar. That is why
+      the cap is now ASCII and ≤ 256 (item 45).
     - Legitimate files keep the checkpoint's < 2 s (the §3.13 L rows), and real files take about 0.1 s.
-    - **Measured S = 2.6 s** (tech-lead decision on QA's re-measure of the capped build, `hike-api:qa-r3`,
-      ee059c3). The slowest admitted row is H4 at U = 1,024 four-byte characters (4 KiB of UTF-8): 2.24–2.64 s
-      on a quiet host. Loaded-host figure, recorded beside it: up to 5.5 s with about 45 % ambient host load
-      (H7's control flood rose from 2.0 to 4.0 s in the same runs). S is inside the 3.5 s bar, so §3.13
-      escalation 4 does not apply.
+    - **S is pending re-measurement ⟨QA⟩** (item 47). S is the slowest admitted row of the re-run §3.13 table, in
+      an image rebuilt from the round-4 build, on a quiet host. The candidate is H11, the repeated-name flood at
+      256 ASCII characters, which took 2.42 s natively against a 1.64 s control. If S is over 3.5 s, §3.13
+      escalation 4 applies.
+      - *Withdrawn:* "Measured S = 2.6 s" (tech-lead decision on QA's re-measure, `hike-api:qa-r3`, ee059c3). It
+        took H4 at U = 1,024 four-byte characters (2.24–2.64 s quiet, up to 5.5 s loaded) for the slowest admitted
+        row. H4 uses distinct names, which the tracker refuses, so it never was the slowest. The round-4 file
+        under the same URI ran 17.1 s.
     - **Bars are judged on a quiet host**, as the benchmark job's are. A loaded-host figure is recorded, not
       judged.
-    - **The queue holds either way at the recommended 8:** 8 × 5.5 = 44 s, well under 300 s, even on the loaded
-      figure. At today's 80 it holds only on the quiet figure (80 × 2.6 = 208 s); on the loaded one,
-      80 × 5.5 = 440 s passes the timeout. This strengthens the `--concurrency=8` recommendation (Manager
-      decisions 6).
+    - **The queue at the recommended 8: pending ⟨QA⟩.** At the bar it drains in 8 × 3.5 = 28 s, and at today's 80
+      in 280 s, with nothing left for uploads. The measured figures, 8 × S and 80 × S on the quiet host and on any
+      loaded host, are filled in from the re-measured S. Already from the bar alone, 80 has no room, which is the
+      time case for the `--concurrency=8` recommendation (Manager decisions 6).
   - **Why 1 (round-3 amendment: re-derived from the tracker bound).** It is a memory budget and a CPU fact.
     - **The per-parse bound P** is the worst RSS high-water of one parse above the idle process. The
       post-build value, P ≈ 192 MiB, was under-measured: the round-3 shape needed more than the whole 512 MiB.
@@ -917,23 +1003,41 @@ amendment).
     fixture fails. With no root at all, expat itself raises "no element found".
   - **Depth cap.** `MAX_XML_DEPTH = 64`. The start of an element at depth 65 (the root is depth 1) →
     `invalid_gpx` "nested too deeply", so the pass stops there.
-  - **Namespace URI cap** (item 37). `MAX_NAMESPACE_URI_CHARS = 1024`. A `StartNamespaceDeclHandler` refuses any
-    declared URI longer than that, default or prefixed, with `invalid_gpx` `TOO_COMPLEX_MESSAGE`. The rule, the
-    character count, the undeclaration case and how the exception leaves `Parse` are in §3.1 step 4.
-- **Why a URI cap, when the tracker bounds memory** (item 37).
-  - **The cost is per element, and it grows with the URI.** With namespace processing, every start and end event
-    of an element in a namespace carries the name `uri|local`. Expat builds it, and pyexpat decodes it into a new
-    `str` for each of our two handlers. So 10 MiB of short prefixed elements under a URI of U characters costs
-    O(elements × U).
-  - **The tracker doesn't stop it.** Those strings are short-lived, and expat's tracked memory grows slowly, so the
-    tracker refuses such a file only after ≈ 262k elements. It bounds memory, not time.
-  - **Measured** (QA in the image, 10 MiB of H4 prefixed elements): 4.1 s at U = 64 KiB and 119 s at U = 1 MiB.
-    Natively (tech lead): 0.79 s at 1 KiB, 1.71 s at 4 KiB, 19 s at 64 KiB. One 119 s parse holds the one parse
-    slot, and the queue behind it runs into Cloud Run's 300 s timeout (§3.10).
-  - **Why 1,024.** The longest URI in the fixture corpus and in `docs/maps/` is 53 characters, and Garmin's
-    extension URIs are about 55, so 1,024 is about 19× the longest real one. At 1,024 characters the per-element
-    cost is about 1/64 of the 64 KiB case. The worst admitted case, 1,024 four-byte characters (4 KiB of UTF-8),
-    measured 1.71 s natively, inside the 3.5 s bar. QA re-measures it in the image (§3.13 H4).
+  - **Namespace URI cap** (items 37 and 45). A `StartNamespaceDeclHandler` refuses any declared URI, default or
+    prefixed, that is not ASCII or is longer than `MAX_NAMESPACE_URI_CHARS = 256` characters, with `invalid_gpx`
+    `TOO_COMPLEX_MESSAGE`. The rule, what is checked, the undeclaration case and how the exception leaves `Parse`
+    are in §3.1 step 4.
+- **Why a URI cap, when the tracker bounds memory** (item 37; rewritten for item 45).
+  - **The cost is per event, and it grows with the decoded URI.** With namespace processing, every start and end
+    event of an element in a namespace carries the name `uri|local`. So does every prefixed attribute name in the
+    start event's attribute list. Expat builds each name, and pyexpat decodes it into a new `str` for our
+    handler. So 10 MiB of short namespaced names under a URI costs O(names × the URI's decoded size).
+  - **The decoded size depends on the script, not only the length.** CPython stores a `str` at 1, 2 or 4 bytes
+    per character, by its widest character. A URI with one character above U+FFFF makes every `uri|local` built
+    from it 4 bytes per character. A URI with any non-ASCII character also leaves the ASCII fast path, both when
+    UTF-8 is decoded and when strings are compared and hashed.
+  - **The tracker doesn't stop it, and with repeated names it never does.** Those strings are short-lived, and the
+    tracker counts only what expat keeps. With *distinct* names (H4) expat's name table grows, and the tracker
+    refuses after ≈ 262k elements. With *one* name repeated (H11) nothing grows, and the tracker never refuses. It
+    bounds memory, not time.
+  - **Measured.**
+    - Distinct names (H4 prefixed elements, 10 MiB): in the image (QA), 4.1 s at U = 64 KiB and 119 s at
+      U = 1 MiB. Natively (tech lead), 0.79 s at 1 KiB, 1.71 s at 4 KiB and 19 s at 64 KiB.
+    - Repeated names (10 MiB of `<a/>` under a default namespace; review round 4, tech lead natively): no
+      namespace 1.64 s (control); 256 ASCII characters 2.42 s; 1,024 ASCII characters 4.5 s; 64 four-byte
+      characters 4.6 s; 1,024 four-byte characters 25.4 s. In the image the last took **17.1 s and returned 200**:
+      it was admitted by the 1,024-character cap.
+    - One such parse holds the one parse slot, and the queue behind it runs into Cloud Run's 300 s timeout
+      (§3.10).
+  - **Why ASCII.** 64 four-byte characters, only 256 bytes, already cost 4.6 s natively, over the bar. A length
+    limit alone can't keep non-ASCII URIs inside the bar unless it is very short. Real namespace URIs are ASCII:
+    RFC 3986 builds a URI from "a very limited set" of characters and percent-encodes everything else, and
+    Namespaces in XML 1.0 requires a declaration's value to be "a URI reference … or an empty string". The
+    namespace URIs in real GPX are ASCII (tech lead, round 4; the longest seen is 53 characters).
+  - **Why 256.** The longest URI in the fixture corpus and in `docs/maps/` is 53 characters, and Garmin's extension
+    URIs are about 55, so 256 is about 5× the longest real one. Measured natively, 256 ASCII characters cost
+    2.42 s on the repeated-name flood, 0.78 s over the control and inside the 3.5 s bar. 1,024 ASCII characters
+    cost 4.5 s, over it. QA re-measures 256 in the rebuilt image (§3.13 H11).
   - **Not a product limit.** Like the depth cap and the NUL rule, it bounds hostile input and refuses no real file.
     It is the tech lead's decision, not the manager's (Manager decisions 12).
 - **Why a depth cap, when expat is iterative.**
@@ -957,7 +1061,7 @@ amendment).
 - **What still grows with the input:** expat's own name tables and the attribute array of the largest element,
   plus pyexpat's Python objects for the element being reported. Since the round-3 amendment the tracker caps
   expat's part at max(32 MiB, 4 × bytes read); §3.13 bounds the rest. Time grows with the bytes and, per
-  namespaced element, with the URI, which item 37 caps at 1,024 characters.
+  namespaced name, with the decoded URI, which item 45 caps at 256 ASCII characters.
 - **defusedxml is rejected:** it is a new dependency that wraps the same expat with the same two forbids we set
   ourselves, and it bounds neither names nor attributes.
 - **lxml is rejected:** it is a native libxml2 dependency outside the stack. It brings more attack surface and
@@ -994,9 +1098,12 @@ amendment).
 - **Testability.** `parse_gpx(data, *, max_points=MAX_RAW_POINTS)`, so tests can use a cap of 3. The round-3
   amendment adds `alloc_threshold_bytes` and `alloc_max_amplification` the same way (§3.13 bisection).
 
-**3.13 Resource bounds of the parse** (third amendment; rewritten for the round-3 amendment; **measured and
-final, items 38–43**). The bound is the allocation tracker. QA re-measured the shapes with worst-case generators in
-`hike-api:qa-r3` (9b655cf), and every memory bar passed. The one time finding led to the URI cap (item 37). The
+**3.13 Resource bounds of the parse** (third amendment; rewritten for the round-3 amendment; **memory measured and
+final, items 38–43; time re-measured for round 4, items 47–48, pending ⟨QA⟩**). The bound is the allocation
+tracker. QA re-measured the shapes with worst-case generators in `hike-api:qa-r3` (9b655cf), and every memory bar
+passed. The one time finding led to the URI cap (item 37). Review round 4 then found that the generators covered
+distinct names only, and a repeated-name flood under the 1,024-character cap took 17.1 s. That led to item 45 and
+to rows H11–H12. The
 post-build measurements (QA verify, 5070469/935d37d) are kept at the end as history. Their generators were not
 worst-case: base-36 names with a fixed first letter, and no namespace URIs. A measurement above its bound is an
 escalation, not a tweak.
@@ -1004,10 +1111,12 @@ escalation, not a tweak.
   single `Parse(data, True)` made expat hold a copy that grew with the input (peak 1.06 MB at 1 MiB, 3.16 MB at
   4 MiB). With slices the feed's peak is flat at ≈ 270 KB. A token spread over many slices, such as the 10 MiB
   start tag below, stays linear (0.7 s), which matches expat ≥ 2.6.0's reparse deferral.
-- **Time is O(bytes), plus O(URI) per namespaced element** (corrected, item 37). The NUL scan is a C `memchr`, and
-  expat tokenises and validates UTF-8 in C. Python runs one start call and one end call per element; a skipped
-  element costs nothing else, and a point costs a few µs more. Each event of a namespaced element also carries
-  `uri|local`, so it costs O(URI length). The URI cap keeps that at ≤ 1,024 characters.
+- **Time is O(bytes), plus O(decoded URI) per namespaced name** (corrected, items 37 and 45). The NUL scan is a C
+  `memchr`, and expat tokenises and validates UTF-8 in C. Python runs one start call and one end call per element;
+  a skipped element costs nothing else, and a point costs a few µs more. Each event of a namespaced element, and
+  each prefixed attribute name in it, also carries `uri|local`. That costs O(the URI's decoded size), which is
+  4 bytes per character once the URI has a character above U+FFFF. The URI cap keeps it at ≤ 256 ASCII
+  characters, 1 byte each.
   - Measured post-build, before the tracker: distinct names 1.8 s, a real-shaped 100k-point file 1.1–1.35 s end
     to end, and the largest fixture 89 ms.
   - Measured under the tracker (QA, `hike-api:qa-r3`): the H7 floods take 2.0–2.5 s. That is Python's per-element
@@ -1015,6 +1124,8 @@ escalation, not a tweak.
   - *Corrected:* I wrote that under the tracker hostile shapes "get faster, not slower". That holds for memory-heavy
     shapes, which stop once expat passes 32 MiB. It is false for prefixed elements under a long URI, which allocate
     little and are refused only after ≈ 262k elements: 4.1 s at U = 64 KiB and 119 s at U = 1 MiB before the cap.
+    *Item 46:* it is false, too, for one name repeated under a URI, which the tracker never refuses: 25.4 s
+    natively and 17.1 s in the image at 1,024 four-byte characters, under the 1,024-character cap.
   - **The time bar is ≤ 3.5 s per hostile row**, derived from the queue in §3.10 (item 41).
 - **Memory kept is O(points kept):** ≈ 170–180 B per point (`RawPoint`, its floats, a list slot). A real-shaped
   100k-point file peaks at 25 MiB end to end (estimate 45; gpxpy 127).
@@ -1061,7 +1172,8 @@ escalation, not a tweak.
   bound above, and that row is re-measured with shortest-first names (H4).
 - **Escalation if a bound fails** (refreshed in the round-3 amendment; the tracker, formerly option 3, is now
   adopted). In the round-3 measurement no memory bound failed. The one time failure (H4) was handled under item 4,
-  by the URI cap.
+  by the URI cap. Review round 4's time failure (repeated names under a long or non-ASCII URI, 17.1 s) was handled
+  under item 4 too, by tightening the cap (item 45).
   1. **A legitimate file exceeds the 8 MiB margin, or is refused:** raise the threshold, not the factor, and
      re-measure every H row. If that breaks a hostile bound, escalate to the manager.
   2. **A hostile row exceeds P ≤ 120 MiB** (necessarily in pyexpat's objects or in the reader, since expat is
@@ -1070,9 +1182,10 @@ escalation, not a tweak.
      (§3.10).
   3. **Any 500, OOM kill or restart:** stop and report. That is a bug, not a bound.
   4. **A hostile row over the 3.5 s time bar** (item 41): find the input dimension the per-element cost grows
-     with, as the URI length did, and bound that dimension as a hostile-input rule that refuses no real file. If
-     the only cause is Python's per-element overhead, or the bound would refuse real files, escalate to the
-     manager.
+     with, as the URI length and then its encoding did, and bound that dimension as a hostile-input rule that
+     refuses no real file. If the only cause is Python's per-element overhead, or the bound would refuse real
+     files, escalate to the manager. Before declaring a bound sufficient, measure its largest admitted value with
+     repeated names as well as distinct ones (method, below).
 
 **Re-measurement method (round-3 amendment; QA, recorded in `PROGRESS.md`).** The shapes, generators, metric and
 bounds are fixed here, before anyone measures.
@@ -1081,11 +1194,20 @@ bounds are fixed here, before anyone measures.
     character is from `[A-Za-z_]` (53), the later ones from `[A-Za-z0-9_.-]` (65). Skip any name that starts with
     `xml` in any case: those are reserved, and `xmlns` would become a declaration. Separate with one space, and
     use empty values (`a=""`) unless the row says otherwise. Generate as many as fit in the row's size.
+  - **Names are also repeated** (item 48). The worst-case search covers both repeated and distinct names, because
+    the tracker bounds only what accumulates: distinct names and the largest element. A shape that repeats one
+    short name never reaches the tracker, so its cost is the number of events times the cost of each event. So
+    every axis that grows the cost of each event (URI length, URI encoding, the number of prefixed attributes per
+    element) is measured with one name repeated, where the tracker never refuses, as well as with distinct names,
+    where it does. Round 3's rows measured only distinct names, and missed the 17.1 s file.
   - **The namespace URI length U is an axis** for every prefixed row: U ∈ {1 B, 256 B, 4 KiB, 64 KiB, 1 MiB}.
     Report each U, and the worst as the row.
-    - Since item 37, every U above 1,024 characters is refused at its declaration. The largest admitted U is
-      1,024 characters, and it is measured twice: in ASCII (1 KiB), and in a 4-byte character such as U+10000
-      (4 KiB of UTF-8, the most bytes the cap admits).
+    - Since item 45, a U that is non-ASCII or longer than 256 characters is refused at its declaration. The
+      largest admitted U is 256 ASCII characters (256 B, already on the axis), and it is the U of every admitted
+      row's worst case. The refused side is measured at 257 ASCII characters and at 1 non-ASCII character
+      (U+10000).
+    - *Superseded (item 37):* the largest admitted U was 1,024 characters, measured in ASCII (1 KiB) and in
+      U+10000 (4 KiB of UTF-8). Both are now refused.
   - Every hostile row is 10 MiB (exactly `MAX_UPLOAD_BYTES`, padded inside the root) unless noted, and is a
     well-formed document up to the point where it is refused.
 - **The metric.**
@@ -1122,9 +1244,21 @@ bounds are fixed here, before anyone measures.
 - **Re-measured after the cap** (item 43): H4 at U = 1,024 characters (ASCII and 4-byte), H3's time, and H9 as
   redefined below. The cap can only stop a parse earlier, so the other rows' measurements still bound them. H3 is
   the exception: there the handler adds one Python call per admitted declaration.
+- **Re-measured for round 4** (items 47–48; pending ⟨QA⟩). The **whole table** is re-run, because "How it is
+  tested" requires that whenever the namespace URI cap changes. It runs in an image **rebuilt** from the round-4
+  build (for example `hike-api:qa-r4`), not in `hike-api:qa-r3`, which predates the URI cap. The post-cap
+  figures so far mounted HEAD code into it. Record the image's build commit with the figures.
+  - New rows H11 (admitted) and H12 (refused).
+  - H2, H3, H4 and H9 at the new boundary: 256 ASCII characters admitted, 257 and non-ASCII refused.
+  - H7's `<a/>` flood with no namespace, run in the same session as H11, as the control.
+  - **S** is the slowest admitted row of the whole run, hostile or legitimate, on a quiet host. Report the row it
+    comes from and any loaded-host figure beside it.
+
+  On the existing rows the memory figures and the tracker values are not expected to move, because the tighter
+  cap can only stop a parse earlier. H11 is new; repeated names keep expat's memory flat, so its risk is time.
 
 "Pass" marks a row that QA's verify reports as within its bars: every memory bar passed, and only H4 and H7 were
-flagged on time. The brief records figures only for the extremes and for those two rows. QA's per-row figures go
+flagged on time. "Pending ⟨QA⟩" marks a round-4 figure not yet measured. The brief records figures only for the extremes and for those two rows. QA's per-row figures go
 into `PROGRESS.md` with the checkpoint.
 The wall-time bar of every H row is now ≤ 3.5 s (item 41), replacing ≤ 2 s and, for H6, ≤ 1 s.
 **Bars are judged on a quiet host**, like the benchmark job (tech-lead decision). During part of QA's post-cap
@@ -1134,18 +1268,20 @@ rose from 2.0 to 4.0 s). Those runs are recorded beside the quiet ones, not judg
 | Row | Shape (10 MiB unless noted) | Bound (RSS high-water in the image / wall / outcome) | Measured |
 | --- | --- | --- | --- |
 | H1 | one `<gpx>` start tag of distinct **unprefixed** attributes, shortest-first | ≤ 160 MiB / ≤ 3.5 s / 422 | pass |
-| H2 | **the round-3 shape:** `<gpx xmlns:p="U">` plus distinct `p:`-prefixed attributes, shortest-first local names, × U | ≤ 160 MiB / ≤ 3.5 s / 422 `invalid_gpx` `TOO_COMPLEX_MESSAGE` | pass at every U (the tracker refuses it). Since item 37, U > 1,024 characters is refused at the declaration with the same message, `__cause__` `None` |
-| H3 | one element with distinct `xmlns:pN` declarations, shortest-first prefixes, × U; once with one shared URI and once with distinct URIs of length U | ≤ 160 MiB / ≤ 3.5 s / **200 or 422** (corrected): the cap admits U ≤ 1,024 characters and refuses U above that at the first declaration | memory: pass at every U; this row holds the table's worst figures, at U = 1 B with one shared URI (P 64.5 MiB, RSS 99.2 MiB in the child; 119.6 MiB over HTTP on the capped build). Outcomes: 422 `TOO_COMPLEX_MESSAGE` at U = 1 B (the tracker), 200 at 256 B and at 1,024 characters, 422 at the cap from 4 KiB up. Time with the namespace handler installed, over every run (loaded ones included): 0.21–0.40 s at U = 1 B (shared URI); at U = 1,024 characters 0.14–0.23 s in ASCII and 0.11–0.17 s in 4-byte characters, shared or distinct URIs: pass |
-| H4 | distinct element names as `<gpx>`'s children (`<a/>`, `<b/>`, …), shortest-first; once unprefixed, once `p:`-prefixed with `xmlns:p="U"` on the root, × U | ≤ 160 MiB / ≤ 3.5 s / 200, 422 | memory: pass. **Time before the cap: 4.1 s at U = 64 KiB and 119 s at U = 1 MiB ✗** (natively, tech lead: 0.79 s at 1 KiB, 1.71 s at 4 KiB, 19 s at 64 KiB). After the cap, U > 1,024 characters is refused at the root's declaration. At U = 1,024 characters, the worst admitted case (422 `TOO_COMPLEX_MESSAGE` from the tracker, P 38.0 MiB): 0.68–0.98 s in ASCII (0.82 s over HTTP) and **2.24–2.64 s in 4-byte characters on a quiet host: pass, and this is S = 2.6 s** (§3.10). Loaded-host figure, recorded: up to 5.5 s at about 45 % ambient load (3.1 s over HTTP). Above 1,024 characters the root's declaration is refused in ≤ 0.013 s (U = 4 KiB to 1 MiB) |
+| H2 | **the round-3 shape:** `<gpx xmlns:p="U">` plus distinct `p:`-prefixed attributes, shortest-first local names, × U | ≤ 160 MiB / ≤ 3.5 s / 422 `invalid_gpx` `TOO_COMPLEX_MESSAGE` | pass at every U (the tracker refuses it). Since item 37, U > 1,024 characters is refused at the declaration with the same message, `__cause__` `None`. **Item 45:** U > 256 or non-ASCII is refused at the declaration; at U = 256 ASCII the tracker must still refuse it: ⟨QA⟩ |
+| H3 | one element with distinct `xmlns:pN` declarations, shortest-first prefixes, × U; once with one shared URI and once with distinct URIs of length U | ≤ 160 MiB / ≤ 3.5 s / **200 or 422** (corrected): the cap admits ASCII U ≤ 256 characters (item 45; was ≤ 1,024 characters) and refuses anything else at the first declaration | **Round 4, pending ⟨QA⟩:** U = 256 ASCII is expected to stay 200; 1,024 characters and every non-ASCII U are now 422 at the first declaration. *Measured under item 37 (history):* memory: pass at every U; this row holds the table's worst figures, at U = 1 B with one shared URI (P 64.5 MiB, RSS 99.2 MiB in the child; 119.6 MiB over HTTP on the capped build). Outcomes: 422 `TOO_COMPLEX_MESSAGE` at U = 1 B (the tracker), 200 at 256 B and at 1,024 characters, 422 at the cap from 4 KiB up. Time with the namespace handler installed, over every run (loaded ones included): 0.21–0.40 s at U = 1 B (shared URI); at U = 1,024 characters 0.14–0.23 s in ASCII and 0.11–0.17 s in 4-byte characters, shared or distinct URIs: pass |
+| H4 | distinct element names as `<gpx>`'s children (`<a/>`, `<b/>`, …), shortest-first; once unprefixed, once `p:`-prefixed with `xmlns:p="U"` on the root, × U | ≤ 160 MiB / ≤ 3.5 s / 200, 422 | memory: pass. **Time before the cap: 4.1 s at U = 64 KiB and 119 s at U = 1 MiB ✗** (natively, tech lead: 0.79 s at 1 KiB, 1.71 s at 4 KiB, 19 s at 64 KiB). After the 1,024-character cap, U > 1,024 characters was refused at the root's declaration. At U = 1,024 characters (422 `TOO_COMPLEX_MESSAGE` from the tracker, P 38.0 MiB): 0.68–0.98 s in ASCII (0.82 s over HTTP) and 2.24–2.64 s in 4-byte characters on a quiet host (up to 5.5 s at about 45 % ambient load, 3.1 s over HTTP). *Corrected (item 47):* this was **not** the worst admitted case, and S = 2.6 s does not rest on it: distinct names are refused by the tracker, while repeated names (H11) are not. Above 1,024 characters the root's declaration was refused in ≤ 0.013 s (U = 4 KiB to 1 MiB). **Round 4, pending ⟨QA⟩:** U = 256 ASCII (now the largest admitted); U = 1,024 characters, ASCII or 4-byte, is now refused at the declaration |
 | H5 | nesting to the cap: 63 levels under the root, each start tag declaring distinct `xmlns:pN` with URIs of length U, sized to 10 MiB (the bindings stay alive while their elements are open); and 10 MiB of repeated 63-deep open/close cycles | ≤ 160 MiB / ≤ 3.5 s / 422 or 200; depth 65 still `invalid_gpx` "nested too deeply" | pass |
 | H6 | long text: 10 MiB inside the first `metadata/name`, `trk/name`, `rte/name`, the first `trkpt/ele`, and a skipped `<desc>`; each as plain text, as one CDATA section, and as `&amp;` repeated | ≤ 160 MiB / ≤ 3.5 s; `tracemalloc` peak ≤ 2 MiB above the same file with a 1 KiB text; name truncated to 65,536 characters, `ele` → `None` | pass |
 | H7 | skipped elements: the four post-build shapes (`<trk/>`, `<wpt lat="0" lon="0"/>`, `<trkseg/>`, `<a/>`) and one `trkpt`'s `<extensions>` holding distinct child names, shortest-first | ≤ 160 MiB / ≤ 3.5 s / 422 or `too_few_points` | memory: pass. Time: `<trk/>` and `<a/>` floods 2.0–2.5 s (Docker Desktop), over the old 2 s estimate and inside 3.5 s: pass. Re-run on the capped build: about 2.0 s on a quiet host (best runs: `<a/>` 1.96 s, `<trk/>` 2.12 s); up to 4.0 s at about 45 % ambient host load (recorded, not judged) |
 | H8 | one attribute value of ≈ 10 MiB (a single large token) on `<gpx>`, and on a `<trkpt>` | ≤ 160 MiB / ≤ 3.5 s / 422 | pass |
-| H9 | **Redefined (item 43): 100,001 points, then H4 (prefixed) at U = 1,024 characters, trimmed to 10 MiB total.** The literal "100,001 points, then 9 MiB of H4" form is 11.3 MiB: over HTTP it is a 413 `file_too_large` and never reaches the parser. The old U = 64 KiB on the root is now refused before the first point | ≤ 160 MiB / ≤ 3.5 s / `too_many_points` (the cap comes first in document order) | pass at U = 64 KiB, before the cap (that file was the 11.3 MiB form). At U = 1,024 characters, ASCII or 4-byte: pass, `too_many_points` in 0.44–0.86 s, P 22.8 MiB, RSS 57.6 MiB in the child; over HTTP 422 `too_many_points` in 1.1–1.37 s, peak RSS 78.5 MiB. The 11.3 MiB form: 413 over HTTP in ≤ 0.14 s; through the parse child alone, `too_many_points` in ≤ 0.63 s, P 24.0 MiB |
+| H9 | **Redefined (item 43): 100,001 points, then H4 (prefixed) at the largest admitted U, trimmed to 10 MiB total.** That U is 256 ASCII characters since item 45 (1,024 characters under item 37). The literal "100,001 points, then 9 MiB of H4" form is 11.3 MiB: over HTTP it is a 413 `file_too_large` and never reaches the parser. A U over the cap on the root is refused before the first point | ≤ 160 MiB / ≤ 3.5 s / `too_many_points` (the cap comes first in document order) | **Round 4, pending ⟨QA⟩:** at U = 256 ASCII. *History:* pass at U = 64 KiB, before the cap (that file was the 11.3 MiB form). At U = 1,024 characters, ASCII or 4-byte: pass, `too_many_points` in 0.44–0.86 s, P 22.8 MiB, RSS 57.6 MiB in the child; over HTTP 422 `too_many_points` in 1.1–1.37 s, peak RSS 78.5 MiB. The 11.3 MiB form: 413 over HTTP in ≤ 0.14 s; through the parse child alone, `too_many_points` in ≤ 0.63 s, P 24.0 MiB |
 | H10 | the 100k-point adversarial zigzag, end to end | ≤ 160 MiB / ≤ 3.5 s / 200 | pass |
+| H11 | **repeated names at the largest admitted URI** (item 48), U = 256 ASCII characters (`"urn:" + "u" × 252`), one name repeated to fill 10 MiB, in three shapes: **(a)** default namespace: `<gpx xmlns="U">` then `<a/>` × n (the round-4 file's shape; `a` is in N but not in the path table, so each is skipped); **(b)** prefixed elements: `<gpx xmlns:p="U">` then `<p:a/>` × n (skipped as foreign); **(c)** prefixed attributes on skipped elements: `<gpx xmlns:p="U">` then `<a p:a="" p:b="" p:c="" p:d="" p:e="" p:f="" p:g="" p:h=""/>` × n (8 prefixed attributes, each expanded to `U|x` on every element). Each shape ends with `<trk><trkseg>` holding two valid points in N, as the round-4 file did, so an admitted parse is a 200. Run H7's `<a/>` flood with no namespace in the same session as the control | ≤ 160 MiB / **≤ 3.5 s on a quiet host** / **200** (the tracker never refuses repeated names, so this is an admitted row and a candidate for S). Any 422 is recorded and explained; a 500 fails | **pending ⟨QA⟩**. Natively (tech lead, round 4): (a) at 256 ASCII 2.42 s against a 1.64 s control. Under the old cap, (a) at 1,024 ASCII 4.5 s, at 64 four-byte characters 4.6 s, at 1,024 four-byte characters 25.4 s natively and **17.1 s, 200, in the image** |
+| H12 | **the H11 shapes over the cap** (item 48): (a), (b) and (c) at U = 257 ASCII characters, and at U = one non-ASCII character (U+10000); plus **the round-4 file itself**, `<gpx xmlns="1,024 × U+10000">` then `<a/>` to 10 MiB | ≤ 160 MiB / ≤ 3.5 s on a quiet host / 422 `invalid_gpx` `TOO_COMPLEX_MESSAGE`, refused at the root's declaration, with `__cause__` `None` | **pending ⟨QA⟩**; expected in about the time of the NUL scan, like H4 above the old cap (≤ 0.013 s) |
 | L1 | every fixture | 200, output unchanged; M_legit ≤ 8 MiB; F_legit ≤ 2.0 | pass: 200, output byte-identical; M_legit ≤ 64 KiB; F_legit = 1.0 |
 | L2 | real-shaped 100k points (`ele` + `time`, ≈ 10 MB) | ≤ 160 MiB / ≤ 2 s / 200; M_legit ≤ 8 MiB; F_legit ≤ 2.0 | pass: M_legit ≤ 64 KiB; F_legit = 1.0 |
-| L3 | heavy but legitimate: a Garmin-style root (`xmlns`, `xmlns:xsi`, `xsi:schemaLocation`, `xmlns:gpxtpx`, `xmlns:gpxx`) and up to 100k points, each with `ele`, `time` and `gpxtpx:TrackPointExtension` (`hr`, `cad`, `atemp`), filled to just under 10 MiB | ≤ 160 MiB / ≤ 2 s / 200; M_legit ≤ 8 MiB; F_legit ≤ 2.0 | pass: M_legit ≤ 64 KiB; F_legit = 1.0. Its URIs are far under 1,024 characters, so the cap doesn't touch it |
+| L3 | heavy but legitimate: a Garmin-style root (`xmlns`, `xmlns:xsi`, `xsi:schemaLocation`, `xmlns:gpxtpx`, `xmlns:gpxx`) and up to 100k points, each with `ele`, `time` and `gpxtpx:TrackPointExtension` (`hr`, `cad`, `atemp`), filled to just under 10 MiB | ≤ 160 MiB / ≤ 2 s / 200; M_legit ≤ 8 MiB; F_legit ≤ 2.0 | pass: M_legit ≤ 64 KiB; F_legit = 1.0. Its URIs are ASCII and far under 256 characters, so the cap doesn't touch it (item 45) |
 | L4 | cap boundaries: a 65,536-character `metadata/name` and an `<ele>` of exactly 65,536 characters (`0…012.5`) | 200; the name is cut to 200 by `route_name`; the elevation is 12.5 | pass |
 
 Also recorded (QA, `hike-api:qa-r3`):
@@ -1153,10 +1289,11 @@ Also recorded (QA, `hike-api:qa-r3`):
 - P = 64.5 MiB;
 - K_max = 5 in both columns, and C_max = 34 (steady) and 18 (pessimistic) (§3.10);
 - worst RSS 99.2 MiB in the child and 119.6 MiB over HTTP on the capped build;
-- **S = 2.6 s** (tech-lead decision): H4 at U = 1,024 four-byte characters, 2.24–2.64 s on a quiet host, against
-  the bar of 3.5 s. Loaded-host figure, recorded beside it: up to 5.5 s at about 45 % ambient load. The queue
-  holds on either figure at `--concurrency=8` (8 × 5.5 = 44 s) and only on the quiet one at 80 (80 × 2.6 =
-  208 s) (§3.10).
+- **S: pending re-measurement ⟨QA⟩** (item 47), from the round-4 run in the rebuilt image, with the queue figures
+  8 × S and 80 × S (§3.10).
+  - *Withdrawn:* S = 2.6 s (tech-lead decision), taken from H4 at U = 1,024 four-byte characters (2.24–2.64 s on a
+    quiet host, up to 5.5 s at about 45 % ambient load), and the queue figures 44 s and 208 s derived from it. H4
+    was not the slowest admitted row; the round-4 file was admitted and took 17.1 s.
 
 **History: post-build measurements (QA verify, 5070469/935d37d; before the tracker; generators not worst-case).**
 Re-measured by the table above; nothing below is a current bound.
@@ -1307,8 +1444,9 @@ MAX_CONCURRENT_PARSES: Final = 1          # §3.10 (amended from 2; kept at 1, r
 EXPAT_ALLOC_ACTIVATION_BYTES: Final = 32 * 1024 * 1024   # §3.1 step 3, §3.13; final (item 38)
 EXPAT_ALLOC_MAX_AMPLIFICATION: Final = 4.0               # §3.1 step 3, §3.13; final (item 38)
 MAX_CAPTURED_TEXT_CHARS: Final = 64 * 1024               # §3.1 text capture: per <name>/<ele>; above → name cut, ele None
-MAX_NAMESPACE_URI_CHARS: Final = 1024                    # §3.1 step 4, §3.11 (item 37): a declared URI longer than this,
-                                                         # in decoded characters → invalid_gpx TOO_COMPLEX_MESSAGE
+MAX_NAMESPACE_URI_CHARS: Final = 256                     # §3.1 step 4, §3.11 (item 45; was 1024, item 37): a declared URI
+                                                         # that is not ASCII, or is longer than this → invalid_gpx
+                                                         # TOO_COMPLEX_MESSAGE. ASCII, so characters == bytes
 
 @dataclass(frozen=True, slots=True)
 class ParseParams:
@@ -1370,7 +1508,7 @@ def parse_gpx(data: bytes, *, max_points: int = MAX_RAW_POINTS,
     # raises InvalidGpx or TooManyPoints only (for default values); steps and precedence per §3.1.
     # Order: empty → NUL → parser = _new_parser(...) (outside the try) → feed slices inside
     # try/except ExpatError as exc: raise _invalid_gpx_from(exc) from exc  → finally reader.detach()
-    # Unchanged by item 37: a handler's InvalidGpx/TooManyPoints passes through the except clause untouched.
+    # Unchanged by items 37 and 45: a handler's InvalidGpx/TooManyPoints passes through the except clause untouched.
 def drop_consecutive_duplicates(points: Sequence[RawPoint]) -> tuple[RawPoint, ...]: ...   # unchanged
 
 # private to parse.py
@@ -1395,9 +1533,11 @@ class _GpxReader:
     def on_xml_decl(self, version: str | None, encoding: str | None, standalone: int) -> None: ...
         # §3.1 step 4: declared encoding must pass _encoding_supported, else InvalidGpx
     def on_namespace_decl(self, prefix: str | None, uri: str | None) -> None: ...
-        # §3.1 step 4 (item 37): uri is not None and len(uri) > max_namespace_uri_chars
+        # §3.1 step 4 (item 45, superseding item 37's length-only rule):
+        #   uri is not None and (not uri.isascii() or len(uri) > max_namespace_uri_chars)
         #   → raise InvalidGpx(TOO_COMPLEX_MESSAGE)   (directly; never an ExpatError, never _invalid_gpx_from)
-        # prefix None = default declaration; uri None = xmlns="" undeclaration (length 0, accepted)
+        # checked on the decoded str pyexpat passes (references already expanded): "&#xE9;" is refused
+        # prefix None = default declaration; uri None = xmlns="" undeclaration (accepted)
     def on_start(self, name: str, attrs: list[str]) -> None: ...
         # ordered_attributes: [k0, v0, k1, v1, ...]; depth cap, root check, §3.1 path table, point count / cap
     def on_end(self, name: str) -> None: ...         # closes captures (overflowed ele → None, name = its kept head),
@@ -1626,15 +1766,28 @@ Imports point one way: `routers → routes → models`. `app/routes/*` never imp
   the cost of a thinner margin over legitimate buffering (§3.13). *Item 38:* QA's legitimate peaks (≤ 64 KiB)
   would allow it, but P passes its bar with 55 MiB to spare, so the values stay final as they are.
 - **Relying on the tracker for the long-URI element flood** (item 37) — rejected: the tracker bounds memory, not
-  time. It refuses that shape only after ≈ 262k elements, which took 119 s at U = 1 MiB.
+  time. It refuses that shape only after ≈ 262k elements, which took 119 s at U = 1 MiB. With one name repeated it
+  never refuses at all (item 46).
 - **A per-parse wall-clock budget** (item 37) — rejected: a clock inside the pure core breaks the purity rule, and
   a worker thread can't be stopped from outside. The counter it would need is an element cap, a new product limit.
-- **Counting the URI cap in UTF-8 bytes** (item 37) — not chosen: the tech lead decided on characters, which is
-  `len()` of what the handler receives. The byte worst case it admits, 4 KiB, measured 1.71 s natively, inside
-  the 3.5 s bar.
-- **A lower URI cap (for example 256)** (item 37) — not chosen: 1,024 is already about 19× the longest real URI,
-  and its worst admitted case is inside the time bar. A lower cap would buy time no queue needs, for a thinner
-  margin over real exporters.
+- **Keeping item 37's 1,024 decoded characters of any script** (item 45) — rejected: it admitted the round-4
+  file, 1,024 × U+10000 plus a repeated `<a/>` flood, 17.1 s in the image and 25.4 s natively.
+- **A 1,024-byte cap, any script** (item 50) — rejected: 1,024 ASCII characters alone took 4.5 s natively on the
+  repeated-name flood, over the bar.
+- **A 256-character cap, any script** (item 50) — rejected: 64 four-byte characters took 4.6 s natively, so 256
+  of them would be far over the bar.
+- **A 256-byte cap, any script** (item 50) — rejected: 64 four-byte characters fit in 256 bytes and took 4.6 s
+  natively. A non-ASCII character's cost is set by the width CPython stores it at, not by its UTF-8 bytes.
+- **A cap lower than 256 (for example 128 or 64)** (item 45) — not chosen: 256 ASCII measured 2.42 s natively,
+  inside the bar, with about 5× headroom over the longest real URI (53). A lower cap would thin that margin for
+  time the queue doesn't need. If QA's image figure for H11 is over the bar, §3.13 escalation 4 reopens this.
+- **Allowing IRIs (non-ASCII namespace names) under a shorter cap** (item 45) — rejected: no GPX vocabulary we know
+  uses one, and every non-ASCII width needs its own measurement. ASCII-only is one simple rule.
+- **Counting repeated names (a per-name or per-element event counter)** (item 45) — rejected: it is an element
+  cap, a new product limit, and the cost it would bound comes from the URI, which the declaration already shows.
+- *Superseded (item 45):* "Counting the URI cap in UTF-8 bytes — not chosen" and "A lower URI cap (for example
+  256) — not chosen: 1,024 … is inside the time bar". Both rested on H4, the distinct-name shape that the tracker
+  refuses. The repeated-name shape put 1,024 characters over the bar.
 - **Installing the namespace handler in `_new_parser`** (item 37) — rejected: the reader owns every handler and
   `detach()` clears them all. A handler set in the factory would sit outside that pair, and it would change the
   tests that use `_new_parser` directly.
@@ -1763,9 +1916,13 @@ Imports point one way: `routers → routes → models`. `app/routes/*` never imp
       characters is missing;
     - the reader, and so the app, refuses to start on a Python without the allocation tracker (CPython < 3.12.13
       or expat < 2.7.2);
-    - a document that declares a namespace URI longer than 1,024 characters, anywhere and of either kind, gets
-      `invalid_gpx` "The file is too complex to parse." (item 37). No known exporter comes near it: the longest
-      real URI we have is 53 characters. If one ever does, raising the cap is an amendment that re-measures H4.
+    - a document that declares a namespace URI that is not ASCII, or is longer than 256 characters, anywhere and
+      of either kind, gets `invalid_gpx` "The file is too complex to parse." (items 37 and 45). No known exporter
+      comes near it: real namespace URIs are ASCII, and the longest we have is 53 characters.
+      - It does refuse a valid XML document that names its vocabulary with an IRI, a non-ASCII namespace name.
+        Namespaces in XML 1.0 asks for a URI reference, and no GPX vocabulary we know uses an IRI.
+      - Loosening either condition, the length or the ASCII rule, is an amendment that re-measures H11 and H4 at
+        the new largest admitted URI, with repeated names as well as distinct ones.
   - **UTF-8 only.** A GPX file declared in Latin-1 with non-ASCII bytes, or saved as UTF-16 (with or without a
     BOM), gets `invalid_gpx`. Supporting UTF-16 later means replacing the NUL rule with a UTF-16 decode. The cap no
     longer depends on it.
@@ -1793,9 +1950,11 @@ Imports point one way: `routers → routes → models`. `app/routes/*` never imp
       ≤ 40 MiB, whatever the shape (round-3 amendment). The whole parse is bounded at P ≈ 93 MiB analytically,
       and QA measured 64.5 MiB against the bar of 120 (item 38). The post-build "183.7 MiB worst" was not the
       worst: the round-3 shape exceeded 512 MiB before the tracker.
-    - Time is O(bytes) plus O(URI) per namespaced element, with the URI capped at 1,024 characters (item 37). Each
-      hostile row has a bar of ≤ 3.5 s, so the queue at `--concurrency=8` drains in ≤ 28 s (§3.10). Python's
-      per-element overhead (2.0–2.5 s for a 10 MiB flood) is a floor of this design.
+    - Time is O(bytes) plus O(decoded URI) per namespaced name, with the URI capped at 256 ASCII characters
+      (item 45). Each hostile row has a bar of ≤ 3.5 s, so the queue at `--concurrency=8` drains in ≤ 28 s at the
+      bar (§3.10); the measured S is pending ⟨QA⟩. Python's per-element overhead (2.0–2.5 s for a 10 MiB flood) is a
+      floor of this design, and the URI adds to it on every namespaced event, so the margin under the bar is
+      thinner than the memory margins: about 1 s natively at 256.
     - **The bound depends on the runtime.** It exists only on CPython ≥ 3.12.13 with expat ≥ 2.7.2. The import
       guard turns a regression in the base image into a failed deploy, not a silent OOM risk. The image's
       floating `python:3.12-slim` tag makes that guard the line of defence (Follow-ups).
@@ -1937,6 +2096,14 @@ tests red-first in `tests/routes/`. Backend adds unit tests for internals it int
       ≤ 48 MiB.
       - The URI is exactly 1,024 characters (`prefixed_attribute_burst(…, 1 * KIB)`), so the URI cap admits it and
         the tracker is still what refuses it. The same holds for every existing tracker test's 1 KiB URI.
+      - *Item 49:* the 256-character cap refuses a 1,024-character URI at the declaration, so this test and every
+        tracker test with a 1 KiB URI would pass for the wrong reason, or fail their `__cause__` assertion. They
+        move to a **256-character ASCII URI**. Expanded names then cost about a quarter as much per attribute:
+        1 MiB of burst gives roughly 30 MiB, under the 32 MiB threshold. So QA **re-sizes the burst** so the
+        tracker still refuses it with margin. About 4 MiB gives roughly 120 MiB without the tracker; QA picks the
+        size and confirms the refusal. The < 1 s and `tracemalloc` ≤ 48 MiB assertions stay, and are re-checked
+        at the new size. Tests that drive `_new_parser` directly, with no reader, have no namespace handler and are
+        unaffected.
       - *Corrected (item 40):* this test is **not** red without our values. On expat 2.8.5 its defaults
         (64 MiB / 100×) refuse the 1 MiB shape too; it parses only with the tracker set out of reach, as the 1 GiB
         threshold test shows. The tests that fail without our values are the `_new_parser` ones on the 64 KiB
@@ -1952,33 +2119,40 @@ tests red-first in `tests/routes/`. Backend adds unit tests for internals it int
     - **`_invalid_gpx_from`, table-driven on constructed `ExpatError`s:** `XML_ERROR_NO_MEMORY` and
       `XML_ERROR_AMPLIFICATION_LIMIT_BREACH` → `TOO_COMPLEX_MESSAGE`; `XML_ERROR_SYNTAX` with line 3, offset 7 →
       "The file is not well-formed XML (line 3, column 7).";
-    - **precedence (document order):** use the same 1 MiB burst of `p:` attributes on a later element (for example
+    - **precedence (document order):** use the same burst of `p:` attributes (re-sized for 256, as above) on a later element (for example
       a `<wpt>`, with `xmlns:p` on the root). After 100,001 points → `TooManyPoints`. Placed after a malformation →
       the well-formed message. Placed before a malformation → `TOO_COMPLEX_MESSAGE`;
     - **pins:** `EXPAT_ALLOC_ACTIVATION_BYTES == 32 * 1024 * 1024`, `EXPAT_ALLOC_MAX_AMPLIFICATION == 4.0`,
-      `MAX_CAPTURED_TEXT_CHARS == 65_536` and `MAX_NAMESPACE_URI_CHARS == 1024`, like the
+      `MAX_CAPTURED_TEXT_CHARS == 65_536` and `MAX_NAMESPACE_URI_CHARS == 256` (item 45; was 1024), like the
       `MAX_CONCURRENT_PARSES == 1` pin. Changing any of them is an amendment;
-    - **through HTTP:** the 1 MiB shape POSTed → 422 `{"code": "invalid_gpx", "message": "The file is too complex
+    - **through HTTP:** the wiring shape POSTed → 422 `{"code": "invalid_gpx", "message": "The file is too complex
       to parse.", "detail": null}` with `X-Request-ID`, and the fuzz test's inserted fragments gain a
       prefixed-attribute burst.
-  - **`parse_gpx`, namespace URI cap** (item 37; all CI-cheap, at the real 1,024; a URI of length n is built as
-    `"urn:" + "u" * (n − 4)` unless the case says otherwise):
+  - **`parse_gpx`, namespace URI cap** (items 37 and 49; all CI-cheap, at the real 256; a URI of length n is
+    built as `"urn:" + "u" * (n − 4)` unless the case says otherwise). Every 1,024 / 1,025 boundary of item 37
+    moves to 256 / 257:
     - **boundary, both kinds of declaration:**
-      - default: `<gpx xmlns="…1,024…">` with two points in that namespace → 2 points (they are in N, so they are
-        read); `…1,025…` → `InvalidGpx` with message `TOO_COMPLEX_MESSAGE`;
-      - prefixed: `<p:gpx xmlns:p="…1,024…">` with `p:`-prefixed points → 2 points; `…1,025…` → refused;
+      - default: `<gpx xmlns="…256…">` with two points in that namespace → 2 points (they are in N, so they are
+        read); `…257…` → `InvalidGpx` with message `TOO_COMPLEX_MESSAGE`;
+      - prefixed: `<p:gpx xmlns:p="…256…">` with `p:`-prefixed points → 2 points; `…257…` → refused;
       - on a non-root element, prefixed (`<trk xmlns:x="…">`) and default (`<extensions xmlns="…">` inside a
-        point): at 1,024 the file parses exactly as it does without the declaration, and at 1,025 it is refused;
-    - **how it is refused:** for every 1,025 case, `__cause__` is `None` (not an `ExpatError`), so it is the
-      handler and not the tracker;
-    - **characters, not bytes:** 1,024 × U+10000 (4,096 UTF-8 bytes) is accepted and 1,025 × U+10000 is refused; a
-      URI of 1,025 characters written as `&#x75;` references (6,150 bytes) is refused, and 1,024 of them accepted;
+        point): at 256 the file parses exactly as it does without the declaration, and at 257 it is refused;
+    - **how it is refused:** for every refused case below, `__cause__` is `None` (not an `ExpatError`), so it is
+      the handler and not the tracker;
+    - **ASCII only (item 45), each on a default and on a prefixed declaration:**
+      - a URI of one non-ASCII character is refused, both `é` (U+00E9) and U+10000;
+      - `"urn:" + "u" * 251 + "é"` (256 characters, 257 bytes) is refused, so the ASCII condition is tested apart
+        from the length one;
+      - `&#xE9;` (ASCII in the file, `é` once decoded) is refused, which shows the check runs on the decoded URI;
+      - 256 `&#x75;` references (1,536 bytes, 256 ASCII characters once decoded) are accepted, and 257 refused;
+      - a percent-encoded `"urn:%C3%A9"` is accepted;
+      - item 37's "1,024 × U+10000 is accepted" is reversed: it is now refused;
     - **undeclaration:** `<trkseg xmlns="">` under a default-namespace root is not refused (namespace case 3
       behaves as before); `xmlns:p=""` → the not-well-formed message (expat's `XML_ERROR_UNDECLARING_PREFIX`);
-    - **anywhere:** a 1,025-character declaration on an element inside a skipped `<extensions>` or `<wpt>` subtree
-      is refused;
+    - **anywhere:** a 257-character declaration, and a one-character non-ASCII one, on an element inside a skipped
+      `<extensions>` or `<wpt>` subtree are refused;
     - **precedence (document order, §3.1 step 5):**
-      - on `<kml xmlns="…1,025…">` → `TOO_COMPLEX_MESSAGE`, not "not GPX";
+      - on `<kml xmlns="…257…">` → `TOO_COMPLEX_MESSAGE`, not "not GPX";
       - on the element at depth 65 → `TOO_COMPLEX_MESSAGE`, not "nested too deeply";
       - on the 100,001st `<trkpt>` (at `max_points=3`: the 4th) → `TOO_COMPLEX_MESSAGE`; on an element after it
         → `TooManyPoints`;
@@ -1987,13 +2161,25 @@ tests red-first in `tests/routes/`. Backend adds unit tests for internals it int
       U = 64 KiB → `TOO_COMPLEX_MESSAGE` with `__cause__` `None`, and `parse_gpx` returns in < 1 s (the input is
       built before the timer starts). Without the cap the same input took 4.1 s in the image, so the test is red
       without it. Through HTTP: the same 422 body as above, with `X-Request-ID`;
+    - **the round-4 file, fast (item 49; the regression test with a time ceiling):** `<gpx xmlns="…">` with
+      1,024 × U+10000, then `<a/>` repeated to 10 MiB, then two valid points in N → `InvalidGpx` with
+      `TOO_COMPLEX_MESSAGE` and `__cause__` `None`, and `parse_gpx` returns in < 1 s (the input is built before
+      the timer starts). It is red on the 1,024-character build, where the file is a 200 after about 25 s
+      natively. The same through HTTP gives the 422 body with `X-Request-ID`. Also at 1 MiB (CI-cheap), with the
+      URI at 257 ASCII characters and at one U+10000: refused, `__cause__` `None`;
+    - **what stays out of CI:** the admitted side of the bar, H11 at 256 ASCII taking ≤ 3.5 s, is a §3.13
+      measurement in the image on a quiet host, not a CI test. Shared runners vary by about 2×, and coverage
+      tracing adds to every handler call, so a wall-clock ceiling on a 10 MiB admitted parse would flake. The
+      pin on 256 and the ASCII tests above are what keep the admitted side from regressing;
     - **the reader lets go:** after `parse_gpx` returns or raises, the parser's `StartNamespaceDeclHandler` is
       `None` (extend the existing `detach` test). pyexpat clears its handlers itself after a callback raises
       (§3.1 step 4), so the after-refusal case is belt-and-braces and passes even without `detach`; the
       after-return case is the one that proves `detach`;
     - **the guard on the old tests:** the existing tracker tests that assert `__cause__` is an `ExpatError` with
-      `XML_ERROR_NO_MEMORY` keep their 1,024-character URIs. They then prove the cap did not take over the
-      tracker's cases.
+      `XML_ERROR_NO_MEMORY` keep the largest admitted URI. That is now **256 ASCII characters** (item 49; it was
+      1,024), with the input re-sized so the tracker still refuses it. They then prove the cap did not take over
+      the tracker's cases. Every other test through `parse_gpx`, `summarise_gpx` or HTTP that uses a URI longer
+      than 256 or non-ASCII, and expects anything other than the cap's refusal, moves to ≤ 256 ASCII.
   - **Retention does not scale with skipped elements** (CI, cheap): for each of `<trk/>`, `<wpt …/>`,
     `<trkseg/>` and `<a/>`, the `tracemalloc` peak of `parse_gpx` on 1 MiB is within 128 KiB of the peak on
     256 KiB (shrunk from 1 MiB vs 4 MiB in 5070469, 70 s → 2 s; it still fails on a retaining reader). It also
@@ -2111,9 +2297,11 @@ tests red-first in `tests/routes/`. Backend adds unit tests for internals it int
    - The max safe value from QA's P is 18 pessimistic and 34 steady (§3.10 table). Going above the post-build 12
      still needs a load measurement first. The post-build "12 / 22" rested on an under-measured P.
    - Time: at 8, the queue behind the one parse slot drains in ≤ 8 × 3.5 = 28 s against the 300 s timeout. At 80
-     it would take 280 s, with no room left for uploads (§3.10). Measured S = 2.6 s (5.5 s on a loaded host):
-     8 × 5.5 = 44 s holds on either figure, while 80 holds only on the quiet one (208 s). This strengthens the
-     recommendation.
+     it would take 280 s, with no room left for uploads (§3.10). That alone is the time case for 8. **Measured S
+     is pending re-measurement ⟨QA⟩** (item 47), and 8 × S and 80 × S are filled in from it. *Withdrawn:* the
+     earlier "S = 2.6 s (5.5 s loaded): 44 s at 8, 208 s at 80". It came from H4, which was not the slowest
+     admitted row. Under the old 1,024-character cap an admitted file took 17.1 s, which is 137 s at 8 and
+     1,368 s at 80.
    - Cost: above 8 simultaneous requests on the single instance, Cloud Run may answer 429 itself.
    - Recommended: **8**. See Follow-ups for the not-lowered outcome. The element-count cap is **not** a decision
      (rejected, §3.10).
@@ -2129,10 +2317,12 @@ tests red-first in `tests/routes/`. Backend adds unit tests for internals it int
     because a second slot buys no throughput under the GIL.
 11. *(Not triggered, item 38.)* QA's re-measurement broke no memory bound, so no start-tag or attribute-count cap is
     needed.
-12. *(Tech-lead decision, item 37; no manager decision needed.)* **The namespace URI cap of 1,024 characters**
-    (§3.11) is a hostile-input rule under `invalid_gpx`, like the depth cap and the NUL rule. It refuses no real
-    file: the longest real URI we have is 53 characters. The tech lead may still mention it to the manager with
-    item 8.
+12. *(Tech-lead decision, items 37 and 45; no manager decision needed.)* **The namespace URI cap: a declared URI
+    must be ASCII and at most 256 characters** (§3.11; tightened from 1,024 characters of any script in review
+    round 4). It is a hostile-input rule under `invalid_gpx`, like the depth cap and the NUL rule. It refuses no
+    real file: real namespace URIs are ASCII, and the longest we have is 53 characters. The tech lead may still
+    mention it to the manager with item 8. If QA's H11 figure in the image is over the 3.5 s bar, §3.13
+    escalation 4 applies before anything else.
 
 Conditional, and not triggered: escalation was needed **only if** no parameter point in §3.4's grid met 10 % on
 every fixture. 23 points did (§3.4).
@@ -2185,7 +2375,18 @@ every fixture. 23 points did (§3.4).
 - **Re-tune gain** when the deferred Komoot/Strava/watch fixtures land (see "Harder later").
 
 ## References
-- **Round-3 measured values and the namespace URI cap (items 37–44):**
+- **Round-4 amendment (items 45–51):**
+  - RFC 3986 §1.2.1: "A URI is a sequence of characters from a very limited set", the basic Latin letters, digits
+    and a few special characters. Characters outside US-ASCII are represented by percent-encoded octets (§2.1).
+    https://www.rfc-editor.org/rfc/rfc3986
+  - Namespaces in XML 1.0 (Third Edition, 8 December 2009), §3: a namespace declaration's normalized value "MUST
+    be either a URI reference — the namespace name identifying the namespace — or an empty string". §5: a
+    prefixed declaration's value "MUST NOT be empty". §8: processors are not required "to check that namespace
+    names are URI references". https://www.w3.org/TR/xml-names/
+  - CPython's `str` storage (PEP 393): 1, 2 or 4 bytes per character, set by the string's widest character.
+    `str.isascii()` reads the ASCII flag that this storage keeps. https://peps.python.org/pep-0393/
+  - Repo: `docs/steps/1.2.md` (2026-10-20, "Review round 4 …": the round-4 file, 17.1 s in the image, the tech
+    lead's native measurements and the decision).
   - pyexpat docs, `xmlparser.StartNamespaceDeclHandler(prefix, uri)`: "Called when an element contains a namespace
     declaration. Namespace declarations are processed before the `StartElementHandler` is called for the element
     on which declarations are placed." The page doesn't say what an undeclaration passes; the sources below do.

@@ -100,6 +100,33 @@ def tagged_revision(service: Mapping[str, object], tag: str) -> tuple[str, str]:
     raise DeployCheckError(f"no traffic target is tagged {tag!r}")
 
 
+def check_concurrency(revision: Mapping[str, object], expected: int) -> int:
+    """Return ``spec.containerConcurrency`` if it equals ``expected``.
+
+    Raise DeployCheckError when it differs, is missing or is not an int. A missing
+    value is a failure: no default is assumed.
+    """
+    metadata = revision.get("metadata")
+    name = metadata.get("name") if isinstance(metadata, dict) else None
+    label = f"revision {name!r}" if isinstance(name, str) and name else "revision"
+    spec = revision.get("spec")
+    actual = spec.get("containerConcurrency") if isinstance(spec, dict) else None
+    if actual is None:
+        raise DeployCheckError(
+            f"{label} has no spec.containerConcurrency (expected {expected})"
+        )
+    if isinstance(actual, bool) or not isinstance(actual, int):
+        raise DeployCheckError(
+            f"{label} spec.containerConcurrency is {actual!r}, not an integer "
+            f"(expected {expected})"
+        )
+    if actual != expected:
+        raise DeployCheckError(
+            f"{label} has containerConcurrency={actual}, expected {expected}"
+        )
+    return actual
+
+
 def check_health(result: HttpResult, expected_sha: str, origin: str | None) -> None:
     """Raise DeployCheckError unless /health is 200, ok, has the expected git_sha
     and (if ``origin`` is given) echoes it in access-control-allow-origin."""
@@ -190,6 +217,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     """CLI.
 
     version | serving --service-json F | tagged --service-json F --tag T
+    | concurrency --revision-json F --expected N
     | smoke --url U --expected-sha S [--origin O]
     """
     parser = argparse.ArgumentParser(prog="python -m tools.deploy")
@@ -200,6 +228,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     tagged = commands.add_parser("tagged")
     tagged.add_argument("--service-json", required=True)
     tagged.add_argument("--tag", required=True)
+    concurrency = commands.add_parser("concurrency")
+    concurrency.add_argument("--revision-json", required=True)
+    concurrency.add_argument("--expected", required=True, type=int)
     smoke_cmd = commands.add_parser("smoke")
     smoke_cmd.add_argument("--url", required=True)
     smoke_cmd.add_argument("--expected-sha", required=True)
@@ -217,6 +248,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             revision, url = tagged_revision(_load_service(args.service_json), args.tag)
             print(f"candidate_revision={revision}")
             print(f"candidate_url={url}")
+        elif args.command == "concurrency":
+            actual = check_concurrency(_load_service(args.revision_json), args.expected)
+            print(f"containerConcurrency={actual}")
         else:
             smoke(
                 args.url,

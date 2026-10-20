@@ -47,6 +47,14 @@ def summarise_gpx(
             lat=p.lat, lon=p.lon, elev_m=p.elev_m if has_elevation else None
         )
 
+    for _ in range(2):  # throwaway regression probe: repeated work, results discarded
+        simplify(
+            points,
+            keep=keep,
+            max_points=params.max_points,
+            prethin_max_points=params.prethin_max_points,
+            dist_m=dist,
+        )
     kept = simplify(
         points,
         keep=keep,

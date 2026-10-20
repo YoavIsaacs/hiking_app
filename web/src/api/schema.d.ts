@@ -42,6 +42,21 @@ export interface paths {
 export type webhooks = Record<string, never>
 export interface components {
   schemas: {
+    /** ApiWarning */
+    ApiWarning: {
+      /**
+       * Code
+       * @constant
+       */
+      code: 'elevation_unavailable'
+      /** Message */
+      message: string
+      /**
+       * Severity
+       * @enum {string}
+       */
+      severity: 'info' | 'warn' | 'danger'
+    }
     /** Body_parseRoute */
     Body_parseRoute: {
       /**
@@ -139,6 +154,8 @@ export interface components {
        */
       source_format: 'trk' | 'rte'
       start: components['schemas']['LatLonElev']
+      /** Warnings */
+      warnings: components['schemas']['ApiWarning'][]
     }
     /** TrackPoint */
     TrackPoint: {

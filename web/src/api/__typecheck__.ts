@@ -77,6 +77,7 @@ type ParseFailure = Extract<
 >['error']
 type Pt = Parsed['start']
 type TrackPt = Parsed['points'][number]
+type Warn = Parsed['warnings'][number]
 export const parseRouteFieldChecks: [
   Equal<Parsed['name'], string>,
   Equal<Parsed['distance_m'], number>,
@@ -108,7 +109,9 @@ export const parseRouteFieldChecks: [
     | 'elevation_source'
     | 'source_format'
     | 'point_count_original'
+    | 'warnings'
   >,
+  Equal<Parsed['warnings'], Warn[]>,
   Equal<Parsed['end'], Pt>,
   Equal<Pt['lat'], number>,
   Equal<Pt['lon'], number>,
@@ -119,7 +122,16 @@ export const parseRouteFieldChecks: [
   Equal<TrackPt['elev_m'], number | null>,
   Equal<TrackPt['dist_m'], number>,
   Equal<keyof TrackPt, 'lat' | 'lon' | 'elev_m' | 'dist_m'>,
+  Equal<Warn['code'], 'elevation_unavailable'>,
+  Equal<Warn['severity'], 'info' | 'warn' | 'danger'>,
+  Equal<Warn['message'], string>,
+  Equal<keyof Warn, 'code' | 'severity' | 'message'>,
 ] = [
+  true,
+  true,
+  true,
+  true,
+  true,
   true,
   true,
   true,

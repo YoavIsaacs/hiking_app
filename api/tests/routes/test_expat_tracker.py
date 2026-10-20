@@ -9,6 +9,7 @@
 * legitimate files are unaffected.
 """
 
+import ast
 import tracemalloc
 from collections.abc import Callable
 from pathlib import Path
@@ -35,6 +36,7 @@ from app.routes.summary import summarise_gpx
 from tests.fixtures.loader import fixture_params, valid_fixtures
 from tests.routes.gpx_builders import gpx_bytes, out_and_back
 from tests.routes.hostile_shapes import (
+    API_DIR,
     KIB,
     MIB,
     TWO_POINTS,
@@ -45,6 +47,7 @@ from tests.routes.hostile_shapes import (
     xmlns_binding_burst,
 )
 from tests.routes.http_helpers import URL, assert_error
+from tests.routes.test_never_500 import BURST_FRAGMENT, FRAGMENTS
 
 # typed as returning object so mypy lets the tests assert the None return
 require: Callable[..., object] = require_alloc_tracker
@@ -141,14 +144,15 @@ def test_the_runtime_error_says_what_is_missing() -> None:
 # --- no tracker, no app: the guard runs at import, through the real import chain ---
 
 IMPORT_UNDER_OLD_EXPAT = """
+    import json
     import xml.parsers.expat as expat
     expat.version_info = (2, 7, 1)  # parse.py binds its default from this at import
     try:
         import {module}
     except RuntimeError as exc:
-        print('{{"outcome": "refused", "message": %r}}' % str(exc))
+        print(json.dumps({{"outcome": "refused", "message": str(exc)}}))
     else:
-        print('{{"outcome": "imported", "message": ""}}')
+        print(json.dumps({{"outcome": "imported", "message": ""}}))
 """
 
 
@@ -312,8 +316,27 @@ def test_the_xmlns_binding_shape_is_refused_too() -> None:
 
 # --- precedence is document order (ADR 3.1 step 5) ---
 
-ROOT_P = b'<gpx xmlns:p="urn:p">'
+# The URI must be long, or the burst does not amplify and the tracker rightly accepts it
+# (a 5-character URI made these tests pass vacuously).
+ROOT_P = b'<gpx xmlns:p="urn:' + b"u" * (1 * KIB - 4) + b'">'
 WPT_BURST = wpt_with_prefixed_burst(512 * KIB)
+
+
+def test_the_burst_alone_is_refused_at_the_defaults() -> None:
+    """The guard for the three precedence tests below: with nothing else in the file,
+    the burst is a tracker refusal, so any other outcome below is a precedence one."""
+    with pytest.raises(InvalidGpx) as excinfo:
+        parse_gpx(ROOT_P + WPT_BURST + b"</gpx>")
+    assert excinfo.value.message == TOO_COMPLEX_MESSAGE
+    assert isinstance(excinfo.value.__cause__, ExpatError)
+    assert excinfo.value.__cause__.code == NO_MEMORY
+
+
+def test_the_burst_is_not_a_refusal_with_a_short_uri() -> None:
+    """The negative of the guard: the same burst on a 5-character URI is accepted, so
+    the guard really tests the URI length and not the attribute count."""
+    doc = b'<gpx xmlns:p="urn:p">' + WPT_BURST + TWO_POINTS + b"</gpx>"
+    assert len(parse_gpx(doc).points) == 2
 
 
 def test_a_burst_after_the_100_001st_point_gives_too_many_points() -> None:
@@ -460,3 +483,72 @@ def test_summarise_gpx_raises_invalid_gpx_with_the_too_complex_message() -> None
     with pytest.raises(InvalidGpx) as excinfo:
         summarise_gpx(ROUND3_1MIB, "hostile.gpx")
     assert excinfo.value.message == TOO_COMPLEX_MESSAGE
+
+
+# --- one parser factory: ParserCreate is called only inside _new_parser (ADR) ---
+
+APP_DIR = API_DIR / "app"
+
+
+def parser_create_calls(source: str) -> list[str]:
+    """The enclosing function name ("<module>" at top level) of every call to
+    ``ParserCreate`` or ``xml.sax.make_parser``/``XMLParser``/``XMLPullParser``
+    (any parser built outside ``_new_parser`` would have no allocation tracker)."""
+    watched = {"ParserCreate", "make_parser", "XMLParser", "XMLPullParser"}
+    found: list[str] = []
+
+    def visit(node: ast.AST, scope: str) -> None:
+        if isinstance(node, ast.Call):
+            func = node.func
+            name = (
+                func.id
+                if isinstance(func, ast.Name)
+                else func.attr
+                if isinstance(func, ast.Attribute)
+                else ""
+            )
+            if name in watched:
+                found.append(scope)
+        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
+            scope = node.name
+        for child in ast.iter_child_nodes(node):
+            visit(child, scope)
+
+    visit(ast.parse(source), "<module>")
+    return found
+
+
+def test_the_call_finder_sees_a_parser_created_anywhere() -> None:
+    """The finder itself: it must catch the bypasses the real test guards against."""
+    cases = {
+        "from x import ParserCreate\nParserCreate()": ["<module>"],
+        "def f():\n    return expat.ParserCreate()": ["f"],
+        "async def g():\n    sax.make_parser()": ["g"],
+        "def h():\n    return ET.XMLParser()": ["h"],
+        "def _new_parser():\n    ParserCreate()\ndef f(): ...": ["_new_parser"],
+        "def f():\n    return 1": [],
+    }
+    for source, expected in cases.items():
+        assert parser_create_calls(source) == expected, source
+
+
+def test_parser_create_is_called_exactly_once_in_app_and_inside_new_parser() -> None:
+    calls = [
+        (path.relative_to(APP_DIR).as_posix(), scope)
+        for path in sorted(APP_DIR.rglob("*.py"))
+        for scope in parser_create_calls(path.read_text(encoding="utf-8"))
+    ]
+    assert calls == [("routes/parse.py", "_new_parser")]
+
+
+# --- a prefixed-attribute burst among the fuzz fragments (ADR "Through HTTP") ---
+
+
+def test_the_fuzz_burst_fragment_is_refused_on_its_own() -> None:
+    with pytest.raises(InvalidGpx) as excinfo:
+        parse_gpx(b"<gpx>" + BURST_FRAGMENT + b"</gpx>")
+    assert excinfo.value.message == TOO_COMPLEX_MESSAGE
+
+
+def test_the_fuzz_module_inserts_the_burst_fragment() -> None:
+    assert BURST_FRAGMENT in FRAGMENTS

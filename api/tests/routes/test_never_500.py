@@ -20,6 +20,7 @@ from app.routes.errors import RouteParseError
 from app.routes.summary import summarise_gpx
 from tests.fixtures.loader import GPX_DIR
 from tests.routes.gpx_builders import gpx_bytes, straight_line
+from tests.routes.hostile_shapes import KIB, burst
 from tests.routes.http_helpers import URL
 
 SEED_FILES = [
@@ -27,6 +28,16 @@ SEED_FILES = [
     (GPX_DIR / "derived-tel-hadid-no-ele.gpx").read_bytes()[:20_000],
     gpx_bytes([straight_line(40)]),
 ]
+
+# the round-3 shape (ADR 0004 "Through HTTP"): self-contained, so it is hostile wherever
+# it lands; tests/routes/test_expat_tracker.py proves it is refused on its own
+BURST_FRAGMENT = (
+    b'<z xmlns:p="urn:'
+    + b"u" * (1 * KIB - 4)
+    + b'"'
+    + burst(' p:%s=""', 384 * KIB).encode()
+    + b"/>"
+)
 
 FRAGMENTS = [
     b"<!DOCTYPE",
@@ -57,6 +68,7 @@ FRAGMENTS = [
     b'<?xml version="1.0" encoding="utf-7"?>',
     b'<?xml version="1.0" encoding=""?>',
     b'<trkpt lat="0" lon="0"/>' * 50,
+    BURST_FRAGMENT,
 ]
 
 # Targeted mutations: random byte inserts almost always break the XML first, so these

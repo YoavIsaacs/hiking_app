@@ -29,6 +29,7 @@ from app.routes.parse import parse_gpx
 API_DIR = Path(__file__).resolve().parents[2]
 APP_DIR = API_DIR / "app"
 MIB = 1024 * 1024
+KIB = 1024
 
 TWO_POINTS = (
     b'<trk><trkseg><trkpt lat="1" lon="1"/><trkpt lat="2" lon="2"/></trkseg></trk>'
@@ -369,8 +370,8 @@ def skipped_doc(shape: str, size: int) -> bytes:
 @pytest.mark.parametrize("shape", list(SKIPPED))
 def test_retention_does_not_grow_with_skipped_elements(shape: str) -> None:
     parse_gpx(skipped_doc(shape, 1024))  # warm up imports and caches
-    small = skipped_doc(shape, 1 * MIB)
-    large = skipped_doc(shape, 4 * MIB)
+    small = skipped_doc(shape, 256 * KIB)
+    large = skipped_doc(shape, 1 * MIB)
     peak_small = traced_peak(lambda: parse_gpx(small))
     peak_large = traced_peak(lambda: parse_gpx(large))
-    assert peak_large - peak_small <= 1 * MIB, (peak_small, peak_large)
+    assert peak_large - peak_small <= 128 * KIB, (peak_small, peak_large)

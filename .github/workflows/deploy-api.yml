@@ -37,6 +37,9 @@ jobs:
       SERVICE: hike-api
       UV_PYTHON_PREFERENCE: only-managed # never the runner's system python (ADR 0004 section 3.11)
       PINNED_PYTHON: "3.12.15" # must equal api/.python-version; the Interpreter step fails if it drifts
+      # Single source for the Cloud Run per-instance concurrency: the deploy flag and the check below
+      # both read it (ADR 0004 section 3.10, manager decision 2026-10-20).
+      EXPECTED_CONCURRENCY: "8"
       DEPLOY_TOOL: uv run --frozen --directory api python -m tools.deploy
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -109,7 +112,7 @@ jobs:
             --service-account="$RUNTIME_SA" \
             --no-traffic --tag=candidate \
             --min-instances=0 --max-instances=1 \
-            --memory=512Mi --cpu=1 --concurrency=80 --cpu-boost \
+            --memory=512Mi --cpu=1 --concurrency="$EXPECTED_CONCURRENCY" --cpu-boost \
             --no-invoker-iam-check \
             --set-env-vars="HIKE_ENV=production,HIKE_LOG_LEVEL=INFO,HIKE_CORS_ORIGINS=[],HIKE_CORS_FIREBASE_SITE=$PROJECT_ID" \
             --quiet
@@ -120,6 +123,17 @@ jobs:
           gcloud run services describe "$SERVICE" --region="$REGION" --project="$PROJECT_ID" \
             --format=json > "$RUNNER_TEMP/after.json"
           $DEPLOY_TOOL tagged --service-json "$RUNNER_TEMP/after.json" --tag candidate >> "$GITHUB_OUTPUT"
+
+      - name: Verify candidate concurrency
+        env:
+          CANDIDATE_REVISION: ${{ steps.after.outputs.candidate_revision }}
+        run: |
+          ACTUAL=$(gcloud run revisions describe "$CANDIDATE_REVISION" --region="$REGION" --project="$PROJECT_ID"             --format='value(spec.containerConcurrency)')
+          if [ "$ACTUAL" != "$EXPECTED_CONCURRENCY" ]; then
+            echo "::error::candidate $CANDIDATE_REVISION has containerConcurrency '${ACTUAL:-unset}', expected $EXPECTED_CONCURRENCY; not promoting"
+            exit 1
+          fi
+          echo "candidate $CANDIDATE_REVISION containerConcurrency=$ACTUAL"
 
       - name: Smoke the candidate
         env:

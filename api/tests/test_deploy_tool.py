@@ -662,6 +662,55 @@ def test_tagged_revision_does_not_mutate_the_document() -> None:
     assert service == before
 
 
+# --- check_concurrency ---
+
+
+def revision_doc(
+    value: object = 8, name: str | None = "hike-api-00008-def"
+) -> dict[str, object]:
+    spec: dict[str, object] = {} if value is None else {"containerConcurrency": value}
+    doc: dict[str, object] = {"spec": spec}
+    if name is not None:
+        doc["metadata"] = {"name": name}
+    return doc
+
+
+def test_check_concurrency_accepts_the_expected_value() -> None:
+    assert deploy.check_concurrency(revision_doc(8), 8) == 8
+
+
+def test_check_concurrency_rejects_a_different_value_naming_all_three() -> None:
+    with pytest.raises(DeployCheckError) as info:
+        deploy.check_concurrency(revision_doc(80), 8)
+
+    message = str(info.value)
+    assert "hike-api-00008-def" in message
+    assert "80" in message
+    assert "expected 8" in message
+
+
+def test_check_concurrency_without_a_revision_name_still_fails_clearly() -> None:
+    with pytest.raises(DeployCheckError, match="containerConcurrency=80"):
+        deploy.check_concurrency(revision_doc(80, name=None), 8)
+
+
+def test_check_concurrency_rejects_a_missing_field_without_guessing_a_default() -> None:
+    with pytest.raises(DeployCheckError, match="no spec.containerConcurrency"):
+        deploy.check_concurrency(revision_doc(None), 0)
+
+
+@pytest.mark.parametrize("doc", [{}, {"spec": None}, {"spec": []}])
+def test_check_concurrency_rejects_malformed_documents(doc: dict[str, object]) -> None:
+    with pytest.raises(DeployCheckError):
+        deploy.check_concurrency(doc, 8)
+
+
+@pytest.mark.parametrize("value", ["8", 8.0, True, [8]])
+def test_check_concurrency_rejects_non_int_values(value: object) -> None:
+    with pytest.raises(DeployCheckError, match="not an integer"):
+        deploy.check_concurrency(revision_doc(value), 8)
+
+
 # --- main (CLI) ---
 
 
@@ -843,6 +892,77 @@ def test_main_smoke_with_wrong_sha_exits_1_after_all_attempts(
     assert len(fetch.calls) == 6
     assert sleep.calls == [5.0] * 5
     assert "git_sha" in captured.err
+
+
+def write_revision(tmp_path: Path, doc: dict[str, object]) -> str:
+    path = tmp_path / "revision.json"
+    path.write_text(json.dumps(doc), encoding="utf-8")
+    return str(path)
+
+
+def test_main_concurrency_prints_value_and_exits_0(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    path = write_revision(tmp_path, revision_doc(8))
+
+    code = run_main(["concurrency", "--revision-json", path, "--expected", "8"])
+
+    assert code == 0
+    assert kv(capsys.readouterr().out) == {"containerConcurrency": "8"}
+
+
+def test_main_concurrency_mismatch_exits_1_and_explains_on_stderr(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    path = write_revision(tmp_path, revision_doc(80))
+
+    code = run_main(["concurrency", "--revision-json", path, "--expected", "8"])
+
+    captured = capsys.readouterr()
+    assert code == 1
+    assert captured.out == ""
+    assert "hike-api-00008-def" in captured.err
+    assert "80" in captured.err
+
+
+def test_main_concurrency_missing_field_exits_1(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    path = write_revision(tmp_path, revision_doc(None))
+
+    code = run_main(["concurrency", "--revision-json", path, "--expected", "8"])
+
+    assert code == 1
+    assert capsys.readouterr().out == ""
+
+
+def test_main_concurrency_unreadable_json_exits_1(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    code = run_main(
+        [
+            "concurrency",
+            "--revision-json",
+            str(tmp_path / "missing.json"),
+            "--expected",
+            "8",
+        ]
+    )
+
+    assert code == 1
+    assert capsys.readouterr().out == ""
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["concurrency", "--expected", "8"],
+        ["concurrency", "--revision-json", "r.json"],
+        ["concurrency", "--revision-json", "r.json", "--expected", "eight"],
+    ],
+)
+def test_main_concurrency_usage_errors_exit_2(argv: list[str]) -> None:
+    assert run_main(argv) == 2
 
 
 # --- urllib_fetch (loopback) ---

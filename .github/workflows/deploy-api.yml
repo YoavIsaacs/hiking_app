@@ -128,12 +128,10 @@ jobs:
         env:
           CANDIDATE_REVISION: ${{ steps.after.outputs.candidate_revision }}
         run: |
-          ACTUAL=$(gcloud run revisions describe "$CANDIDATE_REVISION" --region="$REGION" --project="$PROJECT_ID"             --format='value(spec.containerConcurrency)')
-          if [ "$ACTUAL" != "$EXPECTED_CONCURRENCY" ]; then
-            echo "::error::candidate $CANDIDATE_REVISION has containerConcurrency '${ACTUAL:-unset}', expected $EXPECTED_CONCURRENCY; not promoting"
-            exit 1
-          fi
-          echo "candidate $CANDIDATE_REVISION containerConcurrency=$ACTUAL"
+          gcloud run revisions describe "$CANDIDATE_REVISION" --region="$REGION" --project="$PROJECT_ID" \
+            --format=json > "$RUNNER_TEMP/candidate-revision.json"
+          $DEPLOY_TOOL concurrency --revision-json "$RUNNER_TEMP/candidate-revision.json" \
+            --expected "$EXPECTED_CONCURRENCY"
 
       - name: Smoke the candidate
         env:

@@ -29,6 +29,13 @@ MAX_CAPTURED_TEXT_CHARS: Final = 64 * 1024
 # ADR 0004 3.1 step 4 / 3.11 "Why a URI cap": a declared namespace URI that is not
 # ASCII or is longer than this many characters gets invalid_gpx TOO_COMPLEX_MESSAGE
 MAX_NAMESPACE_URI_CHARS: Final = 256
+# ADR 0005 5: Open-Meteo allows up to 100 coordinates per request
+ELEVATION_BATCH_SIZE: Final = 100
+ELEVATION_MAX_RETRIES: Final = 1  # per lookup (per route), shared by its batches
+ELEVATION_MAX_CALLS: Final = 5  # roadmap 1.3 checkpoint
+LOOKUP_MAX_POINTS: Final = (
+    ELEVATION_MAX_CALLS - ELEVATION_MAX_RETRIES
+) * ELEVATION_BATCH_SIZE  # 400
 
 
 @dataclass(frozen=True, slots=True)
@@ -43,6 +50,11 @@ class ParseParams:
     max_points: int = MAX_SUMMARY_POINTS  # 3 <= max_points <= MAX_SUMMARY_POINTS
     # >= 2 * max_points, so pre-thinning always leaves RDP room to fill its budget
     prethin_max_points: int = PRETHIN_MAX_POINTS
+    # ADR 0005 3/5: 3..LOOKUP_MAX_POINTS; effective = min(this, max_points)
+    lookup_max_points: int = LOOKUP_MAX_POINTS
+    # ADR 0005 3: 1.2's values until the recorded lookups say otherwise
+    lookup_smoothing_window_m: float = 20.0
+    lookup_gain_threshold_m: float = 9.5
 
     def __post_init__(self) -> None:
         """Raise ValueError on nonsense values (a programming error)."""

@@ -1,6 +1,9 @@
 """The whole pure pipeline: bytes in, RouteSummary out. The benchmark target."""
 
+from collections.abc import Sequence
+
 from app.models.route import LatLonElev, RouteSummary, TrackPoint
+from app.models.warnings import ApiWarning
 from app.routes.elevation import gain_loss, high_point_index, smooth_elevation
 from app.routes.errors import TooFewPoints
 from app.routes.geo import cumulative_distance, is_loop
@@ -8,6 +11,7 @@ from app.routes.naming import route_name
 from app.routes.params import DEFAULT_PARAMS, ParseParams
 from app.routes.parse import drop_consecutive_duplicates, parse_gpx
 from app.routes.simplify import simplify
+from app.routes.track import RawTrack
 
 
 def summarise_gpx(
@@ -78,4 +82,26 @@ def summarise_gpx(
         elevation_source="file" if has_elevation else "none",
         source_format=raw.source_format,
         point_count_original=len(raw.points),
+        warnings=[],
     )
+
+
+def summarise_track(
+    track: RawTrack, filename: str | None, params: ParseParams = DEFAULT_PARAMS
+) -> RouteSummary:
+    """Stage 1 (ADR 0005 1). Stub: summarise_gpx keeps the body until the build."""
+    raise NotImplementedError
+
+
+def with_looked_up_elevation(
+    summary: RouteSummary,
+    elevations: Sequence[float],
+    params: ParseParams = DEFAULT_PARAMS,
+) -> RouteSummary:
+    """Stage 3 (ADR 0005 3). Stub."""
+    raise NotImplementedError
+
+
+def with_warning(summary: RouteSummary, warning: ApiWarning) -> RouteSummary:
+    """Append a warning; nothing else changes (ADR 0005 6). Stub."""
+    raise NotImplementedError

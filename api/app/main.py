@@ -1,3 +1,6 @@
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+
 import anyio
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -12,6 +15,13 @@ from app.routers import health, routes
 from app.routes.params import MAX_CONCURRENT_PARSES
 
 
+@asynccontextmanager
+async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    """Own the elevation HTTP client (ADR 0005 4). Stub, not wired into FastAPI yet."""
+    raise NotImplementedError
+    yield
+
+
 def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or Settings()
     policy = cors_policy(settings.cors_origins, settings.cors_firebase_site)
@@ -24,6 +34,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     )
     app.state.settings = settings
     app.state.parse_limiter = anyio.CapacityLimiter(MAX_CONCURRENT_PARSES)
+    app.state.elevation_lookup = None
 
     app.add_middleware(
         CORSMiddleware,

@@ -1,5 +1,6 @@
-from typing import Literal
+from typing import Annotated, Literal
 
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 LogLevel = Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
@@ -19,3 +20,4 @@ class Settings(BaseSettings):
     git_sha: str = "unknown"
     open_meteo_base_url: str = "https://api.open-meteo.com"
     log_level: LogLevel = "INFO"
+    elevation_timeout_s: Annotated[float, Field(gt=0, le=30)] = 5.0

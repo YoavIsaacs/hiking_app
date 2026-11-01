@@ -10,7 +10,7 @@ from app.errors import ERROR_RESPONSES, ApiError
 from app.models.route import RouteSummary
 from app.routes.errors import RouteParseError
 from app.routes.params import MAX_UPLOAD_BYTES
-from app.routes.summary import summarise_gpx
+from app.services.route_parse import summarise_upload
 
 router = APIRouter(prefix="/v1/routes", tags=["routes"], route_class=UploadLimitRoute)
 
@@ -33,10 +33,9 @@ async def parse_route(
         await file.close()
     if len(data) > MAX_UPLOAD_BYTES:
         raise too_large()
-    del elevation  # wired in the build (ADR 0005 1): summarise_upload takes it
     try:
-        return await anyio.to_thread.run_sync(
-            summarise_gpx, data, file.filename, limiter=limiter
+        return await summarise_upload(
+            data, file.filename, limiter=limiter, elevation=elevation
         )
     except RouteParseError as exc:
         raise ApiError(422, exc.code, exc.message) from exc

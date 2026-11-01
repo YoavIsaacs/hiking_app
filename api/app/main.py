@@ -5,6 +5,7 @@ import anyio
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.clients.elevation import ElevationClient, new_http_client
 from app.config import Settings
 from app.cors import cors_policy
 from app.errors import install_error_handlers
@@ -17,9 +18,16 @@ from app.routes.params import MAX_CONCURRENT_PARSES
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-    """Own the elevation HTTP client (ADR 0005 4). Stub, not wired into FastAPI yet."""
-    raise NotImplementedError
-    yield
+    """Own the elevation HTTP client for the life of the app (ADR 0005 4)."""
+    settings: Settings = app.state.settings
+    async with new_http_client(settings) as http:
+        app.state.elevation_lookup = ElevationClient(
+            http, timeout_s=settings.elevation_timeout_s
+        )
+        try:
+            yield
+        finally:
+            app.state.elevation_lookup = None
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -31,6 +39,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         title="Hike Prep API",
         version=settings.version,
         generate_unique_id_function=operation_id,
+        lifespan=lifespan,
     )
     app.state.settings = settings
     app.state.parse_limiter = anyio.CapacityLimiter(MAX_CONCURRENT_PARSES)

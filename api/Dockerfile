@@ -32,7 +32,6 @@ WORKDIR /app
 COPY --from=builder /opt/python /opt/python
 COPY --from=builder /app/.venv /app/.venv
 COPY .python-version ./
-RUN echo 3.12.0 > .python-version  # DELIBERATE BREAK (revert follows)
 COPY app ./app
 # Drift guard: the build fails unless the interpreter is exactly the pinned, uv-managed one and the app's import
 # guard accepts its expat (require_alloc_tracker raises on an expat without the allocation tracker).

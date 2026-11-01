@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Fails early and clearly if the API would run on anything but the pinned uv-managed CPython.
-# ADR 0004 section 3.11: the system python3.12 on ubuntu-latest (3.12.3) has no expat allocation tracker.
+# ADR 0004 section 3.11: the system python3.12 on ubuntu-24.04 (3.12.3) has no expat allocation tracker.
 #
 #   check-interpreter.sh <api-dir> [--import-app]
 #

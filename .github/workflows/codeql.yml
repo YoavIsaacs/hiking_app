@@ -19,7 +19,7 @@ concurrency:
 jobs:
   analyze:
     name: Analyze (${{ matrix.language }})
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04 # pinned, not ubuntu-latest (see ci.yml header)
     permissions:
       security-events: write
       contents: read

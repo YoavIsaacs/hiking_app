@@ -20,7 +20,7 @@ concurrency:
 jobs:
   pr-title:
     name: pr-title
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04 # pinned, not ubuntu-latest (see ci.yml header)
     timeout-minutes: 5
     permissions:
       pull-requests: read

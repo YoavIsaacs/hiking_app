@@ -20,7 +20,10 @@ on:
 permissions:
   contents: read
 
-# Never fall back to the runner's system python3.12 (3.12.3 on ubuntu-latest: no expat allocation
+# Runners are pinned to ubuntu-24.04, not ubuntu-latest: latest moved to 26.04 on 2026-11-01 and
+# Playwright 1.64's WebKit build needs 24.04's libicu74 (main red, run 41313710211). Bump on purpose,
+# together with the Playwright cache key (playwright-ubuntu-24.04-*), never by surprise.
+# Never fall back to the runner's system python3.12 (3.12.3 on ubuntu-24.04: no expat allocation
 # tracker, ADR 0004 section 3.11). only-managed makes uv ignore every non-uv interpreter, and
 # setup-uv's python-version pins the exact patch, so a missing download fails instead of falling back.
 env:
@@ -37,7 +40,7 @@ concurrency:
 jobs:
   changes:
     name: changes
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04 # pinned, not ubuntu-latest (see ci.yml header)
     timeout-minutes: 5
     permissions:
       contents: read
@@ -96,7 +99,7 @@ jobs:
   lint:
     name: lint
     timeout-minutes: 10
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04 # pinned, not ubuntu-latest (see ci.yml header)
     permissions:
       contents: read
     steps:
@@ -128,7 +131,7 @@ jobs:
     timeout-minutes: 15
     needs: changes
     if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.api == 'true') }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04 # pinned, not ubuntu-latest (see ci.yml header)
     permissions:
       contents: read
     defaults:
@@ -166,7 +169,7 @@ jobs:
     timeout-minutes: 15
     needs: changes
     if: ${{ !cancelled() && !inputs.fresh-deps && (needs.changes.result != 'success' || needs.changes.outputs.api == 'true') }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04 # pinned, not ubuntu-latest (see ci.yml header)
     permissions:
       contents: read
     env:
@@ -279,7 +282,7 @@ jobs:
     timeout-minutes: 15
     needs: changes
     if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.contract == 'true') }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04 # pinned, not ubuntu-latest (see ci.yml header)
     permissions:
       contents: read
     steps:
@@ -329,7 +332,7 @@ jobs:
     timeout-minutes: 15
     needs: changes
     if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.web == 'true') }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04 # pinned, not ubuntu-latest (see ci.yml header)
     permissions:
       contents: read
     steps:
@@ -360,7 +363,7 @@ jobs:
     timeout-minutes: 30
     needs: changes
     if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.api == 'true' || needs.changes.outputs.web == 'true') }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04 # pinned, not ubuntu-latest (see ci.yml header)
     permissions:
       contents: read
     steps:
@@ -394,7 +397,7 @@ jobs:
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cache/ms-playwright
-          key: playwright-${{ runner.os }}-${{ steps.pw.outputs.version }}
+          key: playwright-ubuntu-24.04-${{ steps.pw.outputs.version }}
       - name: Install Playwright browsers and system deps
         if: steps.pw-cache.outputs.cache-hit != 'true'
         run: pnpm --filter web --fail-if-no-match exec playwright install --with-deps chromium webkit

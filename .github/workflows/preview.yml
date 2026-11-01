@@ -25,7 +25,7 @@ jobs:
     if: >-
       github.event.pull_request.head.repo.full_name == github.repository &&
       github.event.pull_request.user.login != 'dependabot[bot]'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04 # pinned, not ubuntu-latest (see ci.yml header)
     timeout-minutes: 10
     permissions:
       contents: read
@@ -106,7 +106,7 @@ jobs:
   comment:
     name: preview-comment
     needs: deploy
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04 # pinned, not ubuntu-latest (see ci.yml header)
     timeout-minutes: 5
     permissions:
       pull-requests: write

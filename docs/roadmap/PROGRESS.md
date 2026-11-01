@@ -29,9 +29,10 @@ Read this, then `docs/steps/<current step>.md`. Nothing here lives only in chat.
   unstaged files mid-edit (it happened twice on `step/1.2-close` and restored cleanly).
   **For 1.10:** CORS POST, Blob typing, 429 copy. **Manager:** update the master roadmap doc (own expat reader, not
   gpxpy; `/v1/routes/parse`).
-  **Owed by the manager (1.1 deferred, 2026-10-19):** Komoot out-and-back, Strava recording, own watch/phone recording
-  (+ each app's distance and gain) into `docs/maps/` (uncommitted). Then QA adds them, removes `out_and_back` from
-  `DEFERRED_BY_MANAGER` in `api/tests/fixtures/test_gpx_corpus.py`, and 1.1 can close.
+  **1.1 (manager, 2026-11-01): AllTrails is the only data source**; Komoot / Strava / own recordings dropped (GPX assumed
+  equivalent across apps). Still owed by the manager: one AllTrails out-and-back `.gpx` + AllTrails' distance and gain, into
+  `docs/maps/` (uncommitted). Then QA adds it, removes `out_and_back` from `DEFERRED_BY_MANAGER` in
+  `api/tests/fixtures/test_gpx_corpus.py`, and 1.1 closes at 10 files / 7 edge cases / 1 source (deviation).
   - Dependabot #24 (actions minor) and #26 (`setup-uv` 7.6 → 10.3; changelog checked: no impact — we set
     `enable-cache: true` explicitly, no `.tool-versions`) merged 2026-10-19; post-merge Deploy API 69 s green, live
     `git_sha` 17e3ff3. No open PRs.
@@ -54,7 +55,7 @@ Read this, then `docs/steps/<current step>.md`. Nothing here lives only in chat.
   The ruleset UI also set `require_extra_approval_for_unattributed_changes: true` (not in the runbook) — harmless so far; first suspect if a PR is blocked unexpectedly.
 - **Releases:** release-please (GitHub App `hike-release-please`; var `RELEASE_APP_CLIENT_ID`, secret
   `RELEASE_APP_PRIVATE_KEY`) keeps a release PR open; the manager merges it to cut a release. Nightly 02:43 UTC on fresh deps; failures go to one open `nightly-failure` issue.
-- **Open PRs:** none (2026-10-20; #29–#31, #34 release 0.2.0, #35 merged).
+- **Open PRs:** none (2026-11-01; Dependabot #36–#39 merged by the manager, merged into the 1.3 branch).
 - **Local leftovers (manager may delete):** temp clones `%TEMP%\tmp.7qIrHpAUnP`, `%TEMP%\tmp.GMVXYXKa6R`;
   Docker images `hike-api:qa`, `hike-api:test`.
 

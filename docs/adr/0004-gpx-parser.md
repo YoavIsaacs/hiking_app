@@ -1,6 +1,6 @@
 # 0004 — GPX parser: module boundary, RouteSummary/ErrorResponse contract, algorithms, upload limits, benchmark
 
-Status: accepted; post-build corrections accepted (tech lead, 2026-10-20); round-3 amendment (items 28–36) accepted (tech lead, 2026-10-20); round-3 measured values and the namespace URI cap (items 37–44) accepted (tech lead, 2026-10-20); round-4 amendment and its measured values (items 45–51) accepted (tech lead, 2026-10-20); round-4 re-check correction (item 52) accepted (tech lead, 2026-10-20); manager decision on Cloud Run `--concurrency` recorded (item 53) accepted (tech lead, 2026-10-20); step-1.3 amendment (items 54–55) accepted (tech lead, 2026-11-01); step-1.3a amendment (item 56) proposed · Date: 2026-10-19 · Amended: 2026-10-19 (three rounds), 2026-10-20 (post-build corrections; round-3 decision; round-3 measured values and URI cap; URI cap measured on the capped build; round 4: URI cap tightened to ASCII ≤ 256; round-4 values measured in `hike-api:qa-r4`; round-4 re-check: new row H11(d), S = 2.6 s from H11(d), was 2.32 s from H11(a); manager decision: Cloud Run `--concurrency=8`), 2026-11-01 (step 1.3: S = 3.0 s from H11(d) in `hike-api:1.3`; RSS ratchet under repeated hostile uploads recorded as an open risk; step 1.3a: the RSS ratchet found to be a reference cycle through an exception's traceback, broken at its source, item 56) · Step: 1.2
+Status: accepted; post-build corrections accepted (tech lead, 2026-10-20); round-3 amendment (items 28–36) accepted (tech lead, 2026-10-20); round-3 measured values and the namespace URI cap (items 37–44) accepted (tech lead, 2026-10-20); round-4 amendment and its measured values (items 45–51) accepted (tech lead, 2026-10-20); round-4 re-check correction (item 52) accepted (tech lead, 2026-10-20); manager decision on Cloud Run `--concurrency` recorded (item 53) accepted (tech lead, 2026-10-20); step-1.3 amendment (items 54–55) accepted (tech lead, 2026-11-01); step-1.3a amendment (item 56) accepted (tech lead, 2026-11-01) · Date: 2026-10-19 · Amended: 2026-10-19 (three rounds), 2026-10-20 (post-build corrections; round-3 decision; round-3 measured values and URI cap; URI cap measured on the capped build; round 4: URI cap tightened to ASCII ≤ 256; round-4 values measured in `hike-api:qa-r4`; round-4 re-check: new row H11(d), S = 2.6 s from H11(d), was 2.32 s from H11(a); manager decision: Cloud Run `--concurrency=8`), 2026-11-01 (step 1.3: S = 3.0 s from H11(d) in `hike-api:1.3`; RSS ratchet under repeated hostile uploads recorded as an open risk; step 1.3a: the RSS ratchet found to be a reference cycle through an exception's traceback, broken at its source, item 56; item 56 corrected after 1.3a review round 1: reject-path tests, the pre-fix no-swap OOM, the S re-check) · Step: 1.2
 
 ## Amendments
 **2026-10-19.** These record decisions already taken in step 1.2: review round 1, QA verify and the devops
@@ -308,7 +308,7 @@ shape. There is no code change and no test change. The sections this item touche
     - **Testing:** H11(d) is a §3.13 measurement in the image, outside CI like the rest of H11 (How it is
       tested). The cap admits these shapes by design, so no test changes.
 
-**2026-10-20, manager decision: Cloud Run `--concurrency` (proposed).** The manager decided Manager decisions 6 on
+**2026-10-20, manager decision: Cloud Run `--concurrency` (accepted).** The manager decided Manager decisions 6 on
 2026-10-20. Only status wording changes in the sections this item touches (item 12, the third-round heading,
 Context "Runtime", §3.10, Manager decisions 6, Follow-ups). The reasoning and the earlier log items stay as history.
 
@@ -332,7 +332,7 @@ Context "Runtime", §3.10, Manager decisions 6, Follow-ups). The reasoning and t
       point.
     - **Testing:** the post-deploy check is the test, on every deploy. No app code or test changes.
 
-**2026-11-01, step 1.3: S re-measured in the 1.3 image; RSS ratchet under repeated hostile uploads (proposed).**
+**2026-11-01, step 1.3: S re-measured in the 1.3 image; RSS ratchet under repeated hostile uploads (accepted by the tech lead, 2026-11-01).**
 QA re-ran the H rows in the pinned 1.3 image (`docs/steps/1.3.md`, carry item "re-run the ADR 0004 H rows on it";
 harness in 062e8ed). There is no code change and no test change. The sections these items touch are rewritten in
 place: §3.10, §3.11, §3.13, Options considered, Consequences, Manager decisions 6 and 12, Follow-ups,
@@ -344,6 +344,8 @@ References.
       session, `hike-api:qa-r4` (the 1.2 image) took 2.74–2.91 s, median 2.81 s.
     - **S = 3.0 s**: H11(d)'s max in the image of record, 3.00 s. It replaces item 52's 2.6 s. It is still inside
       the 3.5 s bar, but with **about 0.5 s to spare**, not 0.9 s. §3.13 escalation 4 is not triggered.
+      *Item 56: under review. Re-checks in 1.3a ran 2.90 s and 2.97–3.54 s at most in two sessions, with no
+      regression against `main`. S waits for a re-time on a quiet host (Follow-ups).*
     - **Host variance, not a regression.** The 1.2 image has not changed since item 52, yet it ran 2.74–2.91 s in
       this session against 2.32–2.59 s on 2026-10-20 (a different day and host state, and the reviewer's
       interleaved harness rather than QA's). In the same session the 1.3 image is no slower than the 1.2 image
@@ -361,7 +363,8 @@ References.
     - **Measured (QA, 2026-11-01, over HTTP, 512 MiB):** H2 at U = 256, sequential 10 MiB uploads to a fresh
       container. The uvicorn process's RSS: 118.7 MiB after 1 request, 194.9 after 3, 320 after 5, 383 after 10,
       398 after 60. It plateaus under 512 MiB, with no OOM kill. `hike-api:qa-r4` shows the same, so 1.3 did not
-      cause it. `MALLOC_ARENA_MAX=2` did not help (381 MiB).
+      cause it. `MALLOC_ARENA_MAX=2` did not help (381 MiB). *Item 56: that run had swap. With no swap, as on
+      Cloud Run, the pre-fix image is OOM-killed at about upload 45.*
     - **What it breaks.** The "≤ 160 MiB RSS" bar holds **per request** (118.7 MiB after the first). It does not
       hold **across repeated hostile traffic**. §3.10's budget charges the idle B = 55 MiB plus a 10 % margin
       (51 MiB) for freed arenas the OS doesn't get back. At the plateau the process holds about 343 MiB above B,
@@ -385,12 +388,14 @@ References.
     - *Item 56: the probe and the smoke are now one script, `tests/routes/rss_probe.py`, run in the required CI
       job `api-image`.*
 
-**2026-11-01, step 1.3a: the RSS ratchet found and fixed (proposed).** Step 1.3a (`docs/steps/1.3a.md`, checklist
-"RSS ratchet (ADR 0004 item 55)") ran the follow-up "Investigate the RSS ratchet". Backend found the cause and fixed
-it (5f4b8f3). QA wrote the probe, with a `--diagnose` mode for the investigation (c047bfa), and devops runs it in
-the new required job `api-image` (c461b5f, 1b52ad8). This item resolves item 55 and closes that follow-up. The
-sections it touches are corrected in place: §3.10, §3.13, Options considered, Consequences, How it is tested,
-Manager decisions 6, Follow-ups, References. Item 55 is kept as history.
+**2026-11-01, step 1.3a: the RSS ratchet found and fixed (accepted by the tech lead, 2026-11-01).** Step 1.3a
+(`docs/steps/1.3a.md`, checklist "RSS ratchet (ADR 0004 item 55)") ran the follow-up "Investigate the RSS ratchet".
+Backend found the cause and fixed it (5f4b8f3). QA wrote the probe, with a `--diagnose` mode for the investigation
+(c047bfa), and devops runs it in the new required job `api-image` (c461b5f, 1b52ad8). This item resolves item 55 and
+closes that follow-up. The sections it touches are corrected in place: §3.10, §3.13, Options considered,
+Consequences, How it is tested, Manager decisions 6, Follow-ups, References. Item 55 is kept as history. *Review
+round 1 (2026-11-01) corrected item 56 in place: the reject-path tests that landed in 65aaff3 and 54c90d2, the
+pre-fix figures re-read without swap (8ad1fe7), and QA's S re-check.*
 
 56. **The ratchet was a reference cycle through an exception's traceback, and it is broken at its source**
     (§3.10, §3.13, Consequences, Follow-ups).
@@ -428,16 +433,41 @@ Manager decisions 6, Follow-ups, References. Item 55 is kept as history.
       - **Before** (`hike-api:1.3a-pre`): RSS 120 / 195 / 321 / 385 / 512 MiB after 1 / 3 / 5 / 10 / 60 uploads;
         the concurrent C = 8 peak was 521 MiB. So item 55's 398 MiB "plateau" was not a ceiling: in this run the
         process reached the container limit by upload 60.
+      - **Those pre-fix runs had swap** (corrected, review round 1). `--memory=512m` alone lets a container use
+        memory plus swap up to twice the limit (Docker docs, References). QA's cgroup read of a pre-fix run: memsw
+        limited to 1,024 MiB, about 330 MiB swapped, `oom_kill` 0. That is why neither item 55 nor the run above
+        saw an OOM kill. Cloud Run documents that an instance over its memory limit is terminated, and its docs
+        offer no swap (References). With `--memory=512m --memory-swap=512m`, which is how `api-image` runs since
+        8ad1fe7, the pre-fix image is **OOM-killed at about upload 45** of the sequential series (reviewer), and
+        in round 1 of the concurrent phase (QA). **The accurate statement: before the fix, a burst of about 45 hostile uploads would
+        have OOM-killed the Cloud Run instance.** Item 55's "no OOM" and "plateau under 512 MiB" hold only with
+        swap, and they are kept only as history.
       - **After** (`hike-api:1.3a-fix`): about 61–73 MiB, flat through 60 uploads, with VmHWM 132 MiB. The C = 8
         peak was 280–312 MiB over three runs (backend, tech lead, devops). Every response was 422; there was no
-        5xx and no OOM kill.
-      - **H11(d) over HTTP:** 2.71 and 2.73 s in two runs. One backend run took 3.27 s; host noise is suspected,
-        and QA is re-timing at n = 8. H11(d) is admitted (200), and the fix only changes the error path, so its
-        code path is unchanged apart from one extra function call. **S stays 3.0 s** (item 54) until QA's n = 8
-        re-time. If that run's max is above 3.0 s, S moves to it by item 54's method (the max in the image of
-        record), and the queue is re-stated.
+        5xx and no OOM kill. These peaks sit well under 512 MiB, so removing swap does not change the after-fix
+        verdict, and `api-image` now judges it with no swap.
+      - **Other reject shapes, over HTTP** (QA, `rss_probe.py --shape all`, 65aaff3): the sequential phase for
+        each of 22 shapes (4xx and elevation-failure 200s) on a fresh server, all passing. 600-request runs show no creep.
+      - **H11(d) re-check** (required: the fix runs inside the parse slot, `docs/steps/1.3a.md` Tests). QA, all on
+        Docker Desktop on Windows:
+        - `hike-api:1.3a-verify`, n = 8 × 3 rounds (item 54's method): max **2.90 s**;
+        - a later session, `hike-api:1.3a-head`, n = 8 × 3: **2.97–3.54 s**;
+        - an interleaved A/B in one session, with the host not idle (16 % CPU, browsers running): A = `main`
+          85d175d, n = 24, median 3.190 s, max 5.042 s (one outlier; the next highest 3.715 s); B = the branch,
+          n = 24, median 3.168 s, max 3.680 s. B − A medians = −0.02 s, inside the ≥ 0.2 s noise;
+        - `h_rows` times H11(d) through `parse_gpx`, not `summarise_in_worker`, so QA also compared the two entry
+          points in-process, interleaved, n = 6: `summarise_gpx` median 3.436 s, `summarise_in_worker` 3.389 s.
+          The wrapper costs nothing measurable.
+        - **Conclusion: no regression from 1.3a.** The fix changes only the error path, and H11(d) is admitted
+          (200). The absolute time drifts with the host: the same branch measured 2.90 s and 3.54 s at most in
+          two sessions.
+        - **S stays 3.0 s, marked "under review"** (tech-lead decision, review round 1). S is not restated from a
+          session whose host was not quiet. The re-time on a quiet host by item 54's method is a follow-up. If its
+          max is above 3.0 s, S and the queue figures are restated, and the tech lead raises it with the manager
+          under Manager decisions 6 (Follow-ups).
       - Against the step's bars (`docs/steps/1.3a.md`, Checkpoint): ≤ 200 MiB after 10 and after 60 (about 61–73);
-        a C = 8 peak < 400 MiB with no OOM and no 500 (280–312); H11(d) < 3.5 s (2.71–3.27 s so far).
+        a C = 8 peak < 400 MiB with no OOM and no 500 (280–312); H11(d) < 3.5 s, judged locally by QA by item 54's
+        method (max 2.90 s, n = 8 × 3, `hike-api:1.3a-verify`).
     - **What it corrects.**
       - The "≤ 160 MiB RSS" bar now also holds across repeated traffic in the sequential probe, not only per
         request: the high-water mark over 60 uploads is 132 MiB.
@@ -475,22 +505,52 @@ Manager decisions 6, Follow-ups, References. Item 55 is kept as history.
       probe is now a CI check.
     - **Consequences** (Consequences):
       - The fix is per call site. Any new `to_thread.run_sync` whose function raises an expected error past large
-        locals brings the ratchet back. The unit tests pin this call site only. The probe catches regressions end
-        to end, but only for H2-shaped rejects.
+        locals brings the ratchet back. For `POST /v1/routes/parse`, every response path is now pinned: the
+        route-level tests cover every 4xx shape and the elevation-failure 200s (Testing, below). A *new* route or
+        call site is covered only once its own reject shapes are added to `reject_shapes.py`; until then, nothing
+        catches it.
       - A bug that becomes a 500 still carries its traceback, and so still forms the cycle once. That is
-        deliberate: the log needs the traceback, and the fuzz test exists so that 500s don't happen.
-      - `api-image` now posts 60 sequential uploads, 3 rounds of 8 concurrent ones and one H11(d) on every PR that
-        touches `api/**`. Its H11(d) bar is judged on a shared GitHub runner, not on a quiet host (Follow-ups).
+        deliberate: the log needs the traceback, `test_parse_500_still_logged.py` pins that it is still logged,
+        and the fuzz test exists so that 500s don't happen.
+      - `api-image` now posts 60 sequential uploads, 3 rounds of 8 concurrent ones and 3 H11(d) on every PR that
+        touches `api/**`, with no swap (`--memory-swap=512m`, 8ad1fe7). It **gates memory and status only**:
+        RSS ≤ 200 MiB after 10 and 60, a C = 8 peak < 400 MiB, every hostile upload 422 and every H11(d) 200, no
+        dead server. The H11(d) time (the median of 3, with the failed elevation lookup's time printed apart) is
+        a `::warning::` over 3.5 s, not a failure (tech-lead decision, review round 1). The reason: a single
+        end-to-end time on a shared GitHub runner would flake a required check. The reviewer's host alone ranged
+        3.05–4.36 s, and one run carried a 1.25 s failed elevation lookup. So the H11(d) bar, and with it S, is
+        judged only locally by item 54's method (§3.13), and a slow-down shows in CI as a warning someone has to
+        read, not as a red check.
     - **Testing.**
       - **Unit** (`tests/unit/test_parse_no_cycles.py`, backend). The collector is turned off and set to
         `DEBUG_SAVEALL`. On three rejected inputs (DTD, malformed, not GPX), `summarise_in_worker` returns an
         `InvalidGpx` with no traceback anywhere in its chain, and a collection then finds no frame, traceback,
         `xmlparser`, `_GpxReader` or `UploadFile`. The same holds over `TestClient` for three 422 uploads each. A
         valid file still returns a summary. These fail without the fix.
+      - **Route level, every response path** (`tests/routes/test_reject_paths_hold_nothing.py`, QA, 65aaff3).
+        Through `create_app` with its lifespan, for every shape in `tests/routes/reject_shapes.py`: every 4xx
+        (each `RouteParseError`, including `too_many_points`; the non-chunked 413s; the validation errors) and the
+        accepted uploads whose elevation lookup fails (200). With the collector off, two measurements per shape:
+        **cycles** (`DEBUG_SAVEALL`: the garbage holds no frame with a > 1 MiB `bytes` local, no open
+        `UploadFile`, no `xmlparser` or `_GpxReader`) and **retention** (`tracemalloc`: traced memory does not
+        grow by anything near the size of 3 repeated uploads). QA's definition of the property is "holds no
+        upload". Each case also pins its status and code, so a shape that stops being rejected the right way fails
+        rather than passing silently. A valid accepted upload is checked for cycles too. H2 itself, the probe's
+        shape, is the tracker refusing mid-document.
+      - **A 500 is still logged** (`tests/routes/test_parse_500_still_logged.py`, QA): a non-`RouteParseError`
+        raised in the worker is a 500 whose body carries nothing internal, and whose one ERROR log line has the
+        `X-Request-ID` and a traceback naming `summarise_in_worker`. This pins that the scrub touches only the
+        expected errors.
       - **In the image** (`tests/routes/rss_probe.py`, QA; its pure `evaluate` is unit-tested in
-        `tests/routes/test_rss_probe_logic.py`): the step's three bars, run by `api-image` in the image it builds.
-        The pre-fix figures fail them (385 MiB after 10, against ≤ 200), and `api-image` is a required check, so a
-        regression fails the PR.
+        `tests/routes/test_rss_probe_logic.py`), run by `api-image` in the image it builds, with no swap. It gates
+        the step's memory bars and, since 54c90d2, the statuses: 422 for every hostile upload and 200 for every
+        H11(d). H11(d)'s time is a warning (Consequences, above); `--enforce-time` makes it fail for local
+        checkpoint runs. The pre-fix image fails the gate (385 MiB after 10 against ≤ 200 with swap; OOM-killed at
+        about upload 45 without it), and `api-image` is a required check, so a regression fails the PR.
+      - **In the image, every reject shape** (`rss_probe.py --shape NAME|all`, 65aaff3; run locally, not in
+        `api-image`): the sequential phase over HTTP on a fresh server per shape, with the same RSS bar and a
+        failure on any unexpected status. 22 shapes pass; 600-request runs show no creep. The route-level tests
+        above are the CI guard for these shapes; this is the authoritative over-HTTP check behind them.
 
 ## Context
 Step 1.2 adds `POST /v1/routes/parse`. It turns an uploaded GPX file into a typed `RouteSummary`, rejects bad input
@@ -1226,7 +1286,10 @@ none of them reads an unbounded body.
       - *History (item 55, before the fix):* the RSS ratcheted to about 398 MiB (no OOM); QA estimated about
         470 MiB of 512 at C = 8 from it, and the pessimistic column would not have fitted. The pre-fix image then
         reached 512 MiB after 60 uploads, with a C = 8 peak of 521 MiB (item 56). The cause was a reference cycle
-        through a rejected upload's exception traceback.
+        through a rejected upload's exception traceback. *Corrected (item 56, review round 1):* those runs had
+        swap (`--memory=512m` alone allows twice the limit in memory plus swap). With no swap, as on Cloud Run, the
+        pre-fix image was OOM-killed at about upload 45, so a burst of about 45 hostile uploads would have
+        OOM-killed the instance. "No OOM" held only with swap.
     - *Superseded (post-build, P ≈ 192 MiB):* max safe 12 pessimistic and 22 steady; 8 needed 424/364 MiB. Those
       numbers rested on the under-measured P and are kept only as history.
     - QA's container check (worst-case shapes POSTed to the image under `--memory=512m`: no OOM, no restart)
@@ -1620,12 +1683,26 @@ on Windows):
 Also recorded (QA's probe `tests/routes/rss_probe.py`, step 1.3a, 2026-11-01; `--memory=512m`, over HTTP, a fresh
 container per run; item 56):
 - **before the fix** (`hike-api:1.3a-pre`): RSS 120 / 195 / 321 / 385 / 512 MiB after 1 / 3 / 5 / 10 / 60
-  uploads; concurrent C = 8 peak 521 MiB;
+  uploads; concurrent C = 8 peak 521 MiB. *Corrected (review round 1):* these runs had swap; `--memory=512m` alone
+  allows memory plus swap of twice the limit, and QA's cgroup read showed memsw limited to 1,024 MiB, about
+  330 MiB swapped and `oom_kill` 0. With `--memory-swap=512m` (no swap, as on Cloud Run; `api-image` since
+  8ad1fe7), the pre-fix image is OOM-killed at about upload 45 (reviewer) and in concurrent round 1 (QA). So a
+  burst of about 45 hostile uploads would have OOM-killed the Cloud Run instance. The same applies to item 55's
+  "no OOM kill" above. §3.13 memory runs use `--memory-swap` equal to `--memory` from now on;
 - **after the fix** (`hike-api:1.3a-fix`): about 61–73 MiB flat through 60 uploads, VmHWM 132 MiB. The "≤ 160 MiB
   RSS" bar now also holds across repeated hostile traffic in the sequential probe. The C = 8 peak is 280–312 MiB
   over three runs, all 422, with no 5xx and no OOM kill;
-- H11(d) over HTTP: 2.71–2.73 s in two runs and 3.27 s in one (host noise suspected; QA re-times at n = 8). S stays
-  3.0 s until then (item 54's method);
+- H11(d) over HTTP: 2.71–2.73 s in two runs and 3.27 s in one (host noise suspected);
+- **H11(d) re-check** (QA, Docker Desktop on Windows; item 56): `hike-api:1.3a-verify`, n = 8 × 3, max 2.90 s; a
+  later session, `hike-api:1.3a-head`, n = 8 × 3, 2.97–3.54 s; an interleaved A/B in one non-quiet session (16 %
+  CPU): `main` 85d175d median 3.190 s (max 5.042 s, one outlier; next 3.715 s), branch median 3.168 s (max
+  3.680 s), n = 24 each, a −0.02 s difference inside the ≥ 0.2 s noise; in-process, `summarise_gpx` 3.436 s
+  against `summarise_in_worker` 3.389 s (medians, interleaved, n = 6). No regression from 1.3a; the absolute
+  time drifts with the host;
+- **S = 3.0 s, under review** (tech-lead decision, review round 1). It is not restated from a non-quiet session. The
+  re-time on a quiet host by item 54's method is a follow-up; if its max is above 3.0 s, S and the queue figures
+  are restated (at 3.7 s, 80 × S = 296 s against the 300 s timeout) and the manager is asked under Manager
+  decisions 6. In `api-image` the H11(d) time is a `::warning::`, not a gate (item 56);
 - the method's lesson: the cause was a reference cycle through the traceback of an exception that crossed the
   worker-thread boundary, and it held whatever the frames held (the upload). One request per process can't show
   it, so the probe of repeated requests to one process is part of the method and runs in `api-image`.
@@ -2304,7 +2381,9 @@ Imports point one way: `routers → routes → models`. `app/routes/*` never imp
     - Time is O(bytes) plus O(decoded URI) per namespaced name, with the URI capped at 256 ASCII characters
       (item 45). Each hostile row has a bar of ≤ 3.5 s, so the queue at `--concurrency=8` drains in ≤ 28 s at the
       bar (§3.10). The measured S is 3.0 s (H11(d), `hike-api:1.3`, item 54; 2.6 s in `hike-api:qa-r4`, item
-      52), so it drains in 24 s. Python's per-element overhead (2.0–2.5 s for a 10 MiB flood) is a floor of this
+      52), so it drains in 24 s. *S is under review (item 56):* 1.3a's re-checks ran up to 3.54 s in a later
+      session, with no regression against `main`, and S waits for a re-time on a quiet host. At 3.7 s, 80 × S
+      would be 296 s against the 300 s timeout, so the Cloud Run default would no longer hold even on time. Python's per-element overhead (2.0–2.5 s for a 10 MiB flood) is a floor of this
       design, and the URI adds to it on every namespaced event, more so when the local name is not ASCII. So the
       margin under the bar is thinner than the memory margins: about 0.5 s in the image (3.5 − 3.0), the figure
       that is judged, and the same image moved about 0.3 s between sessions (item 54). Natively it is about 1 s
@@ -2331,10 +2410,19 @@ Imports point one way: `routers → routes → models`. `app/routes/*` never imp
       from B again.
       - What it makes harder: the fix lives at one call site (`summarise_in_worker`). Any new worker-thread call
         that raises an expected error past large locals has to return it scrubbed, the same way, or the ratchet
-        comes back. The unit tests guard this call site; `api-image`'s probe guards H2-shaped rejects end to end.
-      - A bug that becomes a 500 still forms the cycle, by design: its traceback is logged.
+        comes back. For this route every response path is guarded: the unit tests pin the call site,
+        `test_reject_paths_hold_nothing.py` checks every 4xx shape and the elevation-failure 200s for cycles and
+        retention, and `api-image`'s probe guards H2 end to end with no swap. A new route or call site is guarded
+        only once its shapes join `reject_shapes.py`.
+      - A bug that becomes a 500 still forms the cycle, by design: its traceback is logged, which
+        `test_parse_500_still_logged.py` pins.
+      - `api-image` gates memory and status, not time. H11(d)'s time is a `::warning::` there, because a single
+        end-to-end time on a shared runner would flake a required check. So a parse slow-down does not fail a PR;
+        it is caught by the warning and by §3.13's local re-runs.
       - *History (item 55):* sequential uploads ratcheted RSS to about 398 MiB; QA estimated about 470 MiB of 512
         at C = 8, inside the 51 MiB margin; the "8 cannot OOM" claim was arithmetic on an idle process only.
+        *Corrected (item 56):* that was with swap. Without it, the pre-fix image was OOM-killed at about upload 45,
+        so a burst of about 45 hostile uploads would have OOM-killed the Cloud Run instance.
     - **Tracker values are a trade-off we own.** A future legitimate file type with very large single tokens (for
       example a multi-MiB attribute value) could approach the threshold. QA's L rows are the tripwire, and the
       fix is an amendment that raises the threshold.
@@ -2654,10 +2742,22 @@ tests red-first in `tests/routes/`. Backend adds unit tests for internals it int
   - **unit:** `tests/unit/test_parse_no_cycles.py` (backend). With the collector off and `DEBUG_SAVEALL`, a rejected
     upload leaves no frame, traceback, `xmlparser`, `_GpxReader` or `UploadFile` as cyclic garbage, both through
     `summarise_in_worker` and over `TestClient`;
-  - **in the image, a CI gate:** `tests/routes/rss_probe.py` (QA) runs in the required job `api-image`. It sends
-    60 sequential H2 U = 256 uploads (RSS ≤ 200 MiB after 10 and after 60), then a C = 8 smoke (peak < 400 MiB,
-    no 5xx, no dead process), then one H11(d) (< 3.5 s). Its pass/fail logic is unit-tested in
-    `tests/routes/test_rss_probe_logic.py`.
+  - **route level, every response path:** `tests/routes/test_reject_paths_hold_nothing.py` (QA). Through the real
+    app, with the collector off, every 4xx shape in `tests/routes/reject_shapes.py` and the elevation-failure 200s
+    leave no upload in cyclic garbage (`DEBUG_SAVEALL`) and do not retain it (`tracemalloc`), and each pins its
+    status and code. `tests/routes/test_parse_500_still_logged.py` (QA) pins that a non-`RouteParseError` is
+    still a 500 that logs its traceback with the `X-Request-ID`;
+  - **in the image, a CI gate:** `tests/routes/rss_probe.py` (QA) runs in the required job `api-image`, at
+    `--memory=512m --memory-swap=512m` (no swap, as on Cloud Run). It sends 60 sequential H2 U = 256 uploads
+    (RSS ≤ 200 MiB after 10 and after 60), then a C = 8 smoke (peak < 400 MiB, no 5xx, no dead process), then 3
+    H11(d) on a fresh server. It fails on any hostile upload that is not 422 and any H11(d) that is not 200. The
+    H11(d) median over 3.5 s is a `::warning::`, not a failure (tech-lead decision, review round 1: a single
+    end-to-end time on shared runners would flake a required check); `--enforce-time` makes it fail for local
+    runs. Its pass/fail logic is unit-tested in `tests/routes/test_rss_probe_logic.py`;
+  - **in the image, every shape, locally:** `rss_probe.py --shape NAME|all` runs the sequential phase over HTTP
+    on a fresh server per shape, with the same RSS bar and status check. Run it when a reject path changes;
+  - **H11(d) and S stay a §3.13 measurement**, by item 54's method (n = 8 × 3 rounds, in the image, quiet host),
+    not a CI gate.
 - **No e2e in 1.2:** there is no screen. 1.10 adds the UI path.
 
 ## Manager decisions needed
@@ -2687,7 +2787,11 @@ tests red-first in `tests/routes/`. Backend adds unit tests for internals it int
      *Open risk (item 55):* the memory figures assume an idle B; after repeated hostile uploads the process
      plateaus at about 398 MiB, which this decision did not account for. *Resolved (item 56):* after the fix the
      process holds about 61–73 MiB after hostile traffic, and the C = 8 smoke peaks at 280–312 MiB, so the
-     figures hold and the decision stands. *Withdrawn:* the earlier "S = 2.6 s (5.5 s loaded):
+     figures hold and the decision stands. *Under review (item 56):* S = 3.0 s waits for a re-time on a quiet
+     host (1.3a's re-checks ran up to 3.54 s in a non-quiet session, with no regression). If that max is above
+     3.0 s, S and the queue figures are restated here and the tech lead raises it with the manager. The decision
+     for 8 is not at risk (8 × 3.7 = 30 s), but the "80 still holds on time" remark is: at 3.7 s, 80 × S = 296 s
+     of 300 s. *Withdrawn:* the earlier "S = 2.6 s (5.5 s loaded):
      44 s at 8, 208 s at 80". It came from H4, which was not the slowest admitted row; the value 2.6 s returns
      only because H11(d) measured the same. *Superseded (item 52):* S = 2.32 s from H11(a), with 18.5 s at 8 and
      185 s at 80. Under the old 1,024-character cap an admitted file took 17.1 s, which is 137 s at 8 and
@@ -2777,17 +2881,31 @@ every fixture. 23 points did (§3.4).
     distance from 512 MiB are the numbers, recorded in `PROGRESS.md`; S is re-checked if the fix runs inside the
     parse slot. The decision is an amendment to this ADR.
 - **After the RSS fix (item 56; new, step 1.3a):**
-  - **H11(d) in `api-image`.** The probe's < 3.5 s bar is judged on a shared GitHub runner, while §3.13 judges it
-    on a quiet host, and the margin is about 0.5 s (item 54). One local run already took 3.27 s. If the job flakes
-    on time alone, the tech lead decides between re-timing at n > 1 and taking the median in the job, or leaving
-    the time bar to §3.13 and keeping the memory bars in CI. Lowering the bar is not an option.
+  - **Re-time H11(d) on a quiet host, and settle S** (QA; new, review round 1). S = 3.0 s is "under review": 1.3a's
+    re-checks found no regression, but ran up to 3.54 s in a non-quiet session (item 56). Re-time H11(d) in the
+    image of record on a quiet host by item 54's method (n = 8 × 3 rounds; if it is slow, re-run the previous
+    image in the same session to tell host from code). If the max is at most 3.0 s, drop "under review". If it
+    is above 3.0 s, restate S and the queue figures (§3.10, §3.13, Consequences, Manager decisions 6; the thin one
+    is 80 × S against 300 s, 296 s at 3.7 s), and the tech lead raises it with the manager under Manager
+    decisions 6. If it is at or above 3.5 s, §3.13 escalation 4 applies.
+  - ~~**H11(d) in `api-image`.**~~ — decided (tech lead, review round 1, `docs/steps/1.3a.md`): `api-image` gates
+    memory and status only. It times H11(d) as the median of 3, prints the failed elevation lookup's time apart,
+    and reports a median over 3.5 s as a `::warning::`, not a failure. The reason: a single end-to-end time on a
+    shared runner would flake a required check (the reviewer's host ranged 3.05–4.36 s, one run inflated by a
+    1.25 s failed lookup). The bar stays 3.5 s and is judged locally by §3.13. The original text: the probe's
+    < 3.5 s bar is judged on a shared GitHub runner, while §3.13 judges it on a quiet host, and the margin is
+    about 0.5 s (item 54); if the job flakes on time alone, the tech lead decides between the median in the job
+    and leaving the time bar to §3.13; lowering the bar is not an option.
   - **The 160 MiB bar is not in CI.** The probe gates RSS ≤ 200 MiB (the step's checkpoint), not §3.13's
     ≤ 160 MiB. The measured VmHWM is 132 MiB. QA may add the VmHWM to the probe's bars if the tech lead wants
     §3.13's bar gated.
-  - **Other rejected shapes.** The probe sends H2 only, and the unit tests use three `invalid_gpx` inputs (DTD,
-    malformed, not GPX). Other rejections (`too_many_points`, `too_few_points`, a depth refusal, the tracker
-    refusing mid-document) go through the same `except RouteParseError`, but no test checks them for cycles.
-    Backend could add a `too_many_points` case to `test_parse_no_cycles.py`.
+  - ~~**Other rejected shapes.**~~ — done by QA in 65aaff3. `tests/routes/test_reject_paths_hold_nothing.py`
+    checks every 4xx shape in `reject_shapes.py` (`too_many_points`, `too_few_points`, the depth refusal, the
+    namespace cap, the 413s, the validation errors and more) and the elevation-failure 200s, for cycles and for
+    retention, with the collector off. `rss_probe.py --shape all` checks them over HTTP in the image (22 shapes
+    pass; 600-request runs show no creep). H2, the probe's own shape, is the tracker refusing mid-document. The
+    original text: the probe sent H2 only and the unit tests three `invalid_gpx` inputs, so the other rejections
+    went through the same `except RouteParseError` with no test checking them for cycles.
   - **The 33 per-connection objects** left after each request (uvicorn/starlette, no frames, no upload) are left
     to the collector. Nothing is planned.
 - **429 from the platform (1.10 UX):** at a lowered concurrency, Cloud Run can answer 429 "no available instance"
@@ -2823,6 +2941,17 @@ every fixture. 23 points did (§3.4).
     `api/tests/unit/test_parse_no_cycles.py`); QA's probe c047bfa (`api/tests/routes/rss_probe.py`, `--diagnose`;
     `api/tests/routes/test_rss_probe_logic.py`); devops' `api-image` job c461b5f and 1b52ad8
     (`.github/workflows/ci.yml`). The probe figures before and after go into `PROGRESS.md` with the 1.3a verify.
+  - Repo, review round 1: `docs/steps/1.3a.md` "Decisions and deviations" (2026-11-01, review round 1); QA's
+    65aaff3 (`api/tests/routes/test_reject_paths_hold_nothing.py`, `api/tests/routes/test_parse_500_still_logged.py`,
+    `api/tests/routes/reject_shapes.py`, `rss_probe.py --shape`); QA's 54c90d2 (the probe's 422/200 status bars,
+    H11(d) as a median-of-3 warning, `--enforce-time`); devops' 8ad1fe7 (`api-image` at `--memory-swap=512m`).
+  - Docker docs, "Resource constraints", `--memory-swap`: if it is unset and `--memory` is set, "the container can
+    use as much swap as the `--memory` setting, if the host has swap memory configured"; set equal to `--memory`,
+    "the container doesn't have access to swap" (checked 2026-11-01).
+    https://docs.docker.com/engine/containers/resource_constraints/
+  - Cloud Run docs, "Configure memory limits for services": "Cloud Run instances that exceed their allowed memory
+    limit are terminated" (checked 2026-11-01; the page does not offer swap).
+    https://docs.cloud.google.com/run/docs/configuring/services/memory-limits
   - Python Language Reference 3.12, §8.4.1 "`except` clause": "Exceptions are cleared because with the traceback
     attached to them, they form a reference cycle with the stack frame, keeping all locals in that frame alive
     until the next garbage collection occurs" (checked 2026-11-01).

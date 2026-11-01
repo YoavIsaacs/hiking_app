@@ -28,7 +28,7 @@ headroom is below this table and can't be known. 1.5's forecasts draw on the sam
 | --- | --- | --- |
 | 400 (the cap) | 1 | 25 |
 | 113 (10 km at 90 m spacing) | 5 | 88 |
-| 73 (Tel Hadid at 90 m spacing) | 8 | 136 |
+| 72 (Tel Hadid at 90 m spacing) | 8 | 138 |
 
 **Finding 2: the starting smoothing over-counts.** QA ran a reference implementation that follows this ADR (scratch,
 not app code) on Tel Hadid at 400 points, 20 m and 9.5 m: **181.18 m against 103 m (+76 %)**, where the band is
@@ -146,8 +146,8 @@ flowchart LR
   4. Log one line (§7), then: on failure `with_warning(summary, ELEVATION_UNAVAILABLE)`; on success
      `await anyio.to_thread.run_sync(with_looked_up_elevation, summary, result.elevations, params)`, in a worker
      thread on anyio's **default** limiter. The work is bounded (≤ 400 points, ≤ `max_resample_points` samples,
-     ≤ about 100 ms for a hostile globe-spanning line) and must not queue behind a 2.6 s hostile parse in the one
-     parse slot.
+     ≤ about 100 ms for a hostile globe-spanning line) and must not queue behind a 3.0 s hostile parse in the one
+     parse slot (S = 3.0 s, H11(d) in `hike-api:1.3`, ADR 0004 item 54).
 - **Why a service module, not the router:** the router keeps the HTTP mapping (upload, size, 422). The service can
   be unit-tested with a fake `ElevationLookup` and no `TestClient`. Phase 2 orchestration (forecast, rules) gets
   siblings in `app/services/`.
@@ -493,14 +493,14 @@ async def parse_route(
   get one rule: `"none"` comes with `elevation_unavailable`.
 - **No-elevation routes return ≤ 400 points (was 500)**, both from the pure `summarise_gpx` and over HTTP. 1.2
   tests that pin 500 for a no-elevation file change (QA). With `lookup_spacing_m` > 0 they return about
-  distance / spacing + 1 points (73 for Tel Hadid at 90 m), so their map line is coarser (a 1.10 UX check).
+  distance / spacing + 1 points (72 for Tel Hadid at 90 m), so their map line is coarser (a 1.10 UX check).
 - For looked-up routes, `min_elev_m`/`max_elev_m`/`high_point` are taken over ≤ 400 horizontally chosen points. A
   summit on a straight stretch can fall between them, so the reported maximum can be a little low. That is accepted
   at 90 m DEM resolution.
 - **Harder later:**
   - Raising the call budget, or more than 400 lookup points, is an ADR amendment plus a manager check against the
     free-tier limits.
-  - **Free capacity is about 10,000 looked-up coordinates a day (25 to 136 backfills, Amendment 1)**, shared with
+  - **Free capacity is about 10,000 looked-up coordinates a day (25 to 138 backfills, Amendment 1)**, shared with
     1.5's forecasts and with other tenants on Cloud Run's egress IPs. Other tenants' use on those IPs can't be
     kept out at $0: a static egress IP (Cloud NAT) is paid, so it is excluded under the $0 rule. The $0 answers are
     Amendment 1's options. Public use (Phase 3) needs the manager decision there.

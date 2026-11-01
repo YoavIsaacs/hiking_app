@@ -255,6 +255,39 @@ def test_a_wiggle_under_the_lookup_threshold_is_not_gain() -> None:
     assert after.gain_m == 0.0 and after.loss_m == 0.0
 
 
+def wiggle(amplitude_m: float) -> list[float]:
+    """Five 135 m up-down cycles of the given height, one value per 135 m point."""
+    return [100.0, 100.0 + amplitude_m] * 5 + [100.0]
+
+
+def test_a_wiggle_just_under_the_picked_threshold_is_not_gain() -> None:
+    """Smoothing off, so T alone decides: 2.99 m is under the picked 3.0 m."""
+    params = ParseParams(lookup_smoothing_window_m=0.0)
+    assert params.lookup_gain_threshold_m == 3.0
+    after = with_looked_up_elevation(line_summary(11), wiggle(2.99), params)
+    assert after.gain_m == 0.0 and after.loss_m == 0.0
+
+
+def test_a_wiggle_just_over_the_picked_threshold_is_counted() -> None:
+    """The other side of the boundary: 3.0 m and 3.1 m cycles all count (5 cycles)."""
+    params = ParseParams(lookup_smoothing_window_m=0.0)
+    for amplitude in (3.0, 3.1):
+        after = with_looked_up_elevation(line_summary(11), wiggle(amplitude), params)
+        assert after.gain_m == pytest.approx(5 * amplitude, abs=0.2), amplitude
+        assert after.loss_m == pytest.approx(5 * amplitude, abs=0.2), amplitude
+
+
+def test_with_the_picked_smoothing_a_4_m_wiggle_is_counted_and_a_3_5_m_one_is_not() -> (
+    None
+):
+    """The default window and T together: the smoothed excursion crosses T between."""
+    under = with_looked_up_elevation(line_summary(11), wiggle(3.5))
+    over = with_looked_up_elevation(line_summary(11), wiggle(4.0))
+    assert under.gain_m == 0.0 and under.loss_m == 0.0
+    assert over.gain_m is not None and over.gain_m > 2.0
+    assert over.loss_m is not None and over.loss_m > 2.0
+
+
 def test_a_wiggle_over_the_lookup_threshold_counts_whatever_the_file_pair_says() -> (
     None
 ):

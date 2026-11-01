@@ -198,7 +198,8 @@ def test_a_low_threshold_and_low_amplification_make_an_amplifying_document_fail(
 
 def test_the_threshold_value_is_applied_not_left_at_expats_64_mib_default() -> None:
     """At 4x the document is refused once past the threshold. Expat's default
-    threshold (64 MiB) would let this ~9 MB parse through."""
+    threshold (64 MiB) would let this 64 KiB document (~3 MB tracked) parse
+    through."""
     parser = _new_parser(alloc_threshold_bytes=0, alloc_max_amplification=4.0)
     with pytest.raises(ExpatError):
         feed(parser, SMALL_AMPLIFYING)

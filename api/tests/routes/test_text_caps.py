@@ -12,6 +12,9 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.routes.params import MAX_CAPTURED_TEXT_CHARS
+
+# _CHUNK_BYTES is private on purpose: these tests place text exactly on a parser
+# feed boundary, which only the real chunk size can do.
 from app.routes.parse import _CHUNK_BYTES, parse_gpx
 from app.routes.summary import summarise_gpx
 from tests.routes.gpx_builders import gpx_bytes, out_and_back

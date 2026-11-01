@@ -32,6 +32,7 @@ from tests.routes.hostile_shapes import (
 )
 
 P_CEILING_MIB = 120.0  # ADR 3.13: P <= 120 MiB, i.e. RSS high-water <= 160 MiB
+P_FLOOR_MIB = 9.0  # P includes the 10 MiB of input; a 0.0 means the measure is broken
 SECONDS_CEILING = 5.0  # ADR: <= 3.5 s in the image; CI runners get headroom
 
 SHAPES = {
@@ -55,4 +56,4 @@ def test_a_10_mib_hostile_start_tag_is_refused_quickly_in_bounded_memory(
     assert out["message"] == "The file is too complex to parse.", out
     seconds, grown = out["seconds"], out["p_mib"]
     assert isinstance(seconds, float) and seconds <= SECONDS_CEILING, out
-    assert isinstance(grown, float) and grown <= P_CEILING_MIB, out
+    assert isinstance(grown, float) and P_FLOOR_MIB <= grown <= P_CEILING_MIB, out

@@ -17,8 +17,6 @@ from collections.abc import Iterator, Sequence
 from functools import cache
 from pathlib import Path
 
-import pytest
-
 API_DIR = Path(__file__).resolve().parents[2]
 KIB = 1024
 MIB = 1024 * 1024
@@ -95,6 +93,8 @@ def run_python(
             check=False,
         )
     except subprocess.TimeoutExpired:
+        import pytest  # here, so h_rows.py runs in an image that has no pytest
+
         pytest.fail(f"the child process did not finish within {timeout_s} s")
 
 
@@ -147,10 +147,18 @@ MEASURED_PARSE_CHILD = """
                 kernel32.GetCurrentProcess(), ctypes.byref(counters), counters.cb
             )
             return counters.PeakWorkingSetSize
-        peak = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
-        return peak if sys.platform == "darwin" else peak * 1024
+        if sys.platform == "darwin":
+            return resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+        # Linux: VmHWM is this process's own high-water mark. ru_maxrss is not: exec
+        # keeps the parent's high-water mark, so a child of a big pytest process read
+        # a "baseline" above its own peak and every P came out 0.0 (vacuous bars).
+        with open("/proc/self/status") as status:
+            for line in status:
+                if line.startswith("VmHWM:"):
+                    return int(line.split()[1]) * 1024
+        raise RuntimeError("no VmHWM in /proc/self/status")
 
-    from app.routes.errors import InvalidGpx
+    from app.routes.errors import RouteParseError
     from app.routes.parse import parse_gpx
 
     baseline = peak_rss_bytes()
@@ -159,11 +167,13 @@ MEASURED_PARSE_CHILD = """
     message = None
     try:
         outcome = f"{len(parse_gpx(data).points)} points"
-    except InvalidGpx as exc:
-        outcome, message = "invalid_gpx", exc.message
+    except RouteParseError as exc:  # invalid_gpx, too_many_points, too_few_points
+        outcome, message = exc.code, exc.message
     seconds = time.perf_counter() - started
-    grown_mib = (peak_rss_bytes() - baseline) / (1024 * 1024)
-    print(json.dumps(
-        {"outcome": outcome, "message": message, "seconds": seconds, "p_mib": grown_mib}
-    ))
+    peak = peak_rss_bytes()
+    print(json.dumps({
+        "outcome": outcome, "message": message, "seconds": seconds,
+        "p_mib": (peak - baseline) / (1024 * 1024),  # growth since the imports
+        "rss_mib": peak / (1024 * 1024),  # the child's absolute high-water mark
+    }))
 """

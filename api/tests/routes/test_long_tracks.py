@@ -8,15 +8,21 @@ import pytest
 from hypothesis import HealthCheck, given, settings
 
 from app.models.route import RouteSummary
-from app.routes.summary import summarise_gpx
+from app.routes.params import DEFAULT_PARAMS
+from app.routes.summary import lookup_point_count, summarise_gpx
 from tests.routes.strategies import LongShape, Track, long_track, long_tracks
 
 
 def check(track: Track, summary: RouteSummary) -> None:
     flat = track.flat
     assert summary.point_count_original == len(flat)
-    # no usable elevation is simplified to 400 points, not 500 (ADR 0005 section 5)
-    expected = 500 if summary.has_elevation else 400
+    # no usable elevation is simplified to lookup_point_count points, not 500
+    # (ADR 0005 section 5 and Amendment 1)
+    expected = (
+        500
+        if summary.has_elevation
+        else lookup_point_count(summary.distance_m, DEFAULT_PARAMS)
+    )
     assert summary.elevation_source == ("file" if summary.has_elevation else "none")
     assert summary.warnings == []
     assert len(summary.points) == expected

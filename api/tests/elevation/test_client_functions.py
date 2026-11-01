@@ -198,8 +198,10 @@ def test_parse_elevations_rejects_every_bad_body(body: bytes) -> None:
 def test_lookup_defaults_are_the_adr_values() -> None:
     params = ParseParams()
     assert params.lookup_max_points == 400
-    assert params.lookup_smoothing_window_m == 20.0
-    assert params.lookup_gain_threshold_m == 9.5
+    # the ADR 0005 section 3 grid's pick (tools/elevation_grid_output.txt)
+    assert params.lookup_spacing_m == 90.0
+    assert params.lookup_smoothing_window_m == 135.0
+    assert params.lookup_gain_threshold_m == 3.0
 
 
 @pytest.mark.parametrize("value", [3, 4, 100, 399, 400])

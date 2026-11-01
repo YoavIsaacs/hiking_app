@@ -12,9 +12,10 @@ from pydantic import ValidationError
 from app.models.route import LatLonElev, RouteSummary
 from app.models.warnings import ELEVATION_UNAVAILABLE, ApiWarning
 from app.routes.elevation import gain_loss, smooth_elevation
-from app.routes.params import ParseParams
+from app.routes.params import DEFAULT_PARAMS, ParseParams
 from app.routes.parse import parse_gpx
 from app.routes.summary import (
+    lookup_point_count,
     summarise_gpx,
     summarise_track,
     with_looked_up_elevation,
@@ -38,7 +39,7 @@ def recorded(summary: RouteSummary) -> list[float]:
     return [table[pair_of(p.lat, p.lon)] for p in summary.points]
 
 
-def line_summary(n: int, step_m: float = 100.0) -> RouteSummary:
+def line_summary(n: int, step_m: float = 135.0) -> RouteSummary:
     return stage1(gpx_bytes([straight_line(n, step_m=step_m, ele=None)]))
 
 
@@ -90,7 +91,8 @@ def test_pure_stage_one_never_reports_warnings_or_a_lookup(
 def test_the_no_elevation_fixture_is_simplified_to_400_points_not_500() -> None:
     summary = stage1()
     assert summary.elevation_source == "none" and summary.has_elevation is False
-    assert len(summary.points) == 400
+    # ADR 0005 Amendment 1: about one point per lookup_spacing_m, never 500
+    assert len(summary.points) == lookup_point_count(summary.distance_m, DEFAULT_PARAMS)
     assert summary.warnings == []
     assert summary.point_count_original > 700
 
@@ -100,7 +102,7 @@ def test_the_no_elevation_fixture_is_simplified_to_400_points_not_500() -> None:
     [(10, 10), (399, 399), (400, 400), (401, 400), (1000, 400), (5000, 400)],
 )
 def test_a_no_elevation_track_has_at_most_400_points(n: int, expected: int) -> None:
-    assert len(line_summary(n, step_m=3.0).points) == expected
+    assert len(line_summary(n, step_m=135.0).points) == expected
 
 
 @pytest.mark.parametrize(
@@ -113,7 +115,7 @@ def test_a_track_with_elevation_keeps_the_500_point_cap(n: int, expected: int) -
 
 
 def test_one_missing_ele_among_many_also_gets_the_400_point_cap() -> None:
-    pts = straight_line(900, step_m=3.0, ele=100.0)
+    pts = straight_line(900, step_m=135.0, ele=100.0)
     pts[450] = Pt(pts[450].lat, pts[450].lon, None)
     summary = stage1(gpx_bytes([pts]))
     assert summary.elevation_source == "none" and len(summary.points) == 400
@@ -155,7 +157,8 @@ def test_the_section_3_table_for_a_looked_up_tel_hadid() -> None:
 
     assert after.elevation_source == "lookup" and after.has_elevation is True
     assert after.warnings == []
-    assert len(after.points) == len(before.points) == 400
+    assert len(after.points) == len(before.points)
+    assert len(after.points) == lookup_point_count(before.distance_m, DEFAULT_PARAMS)
     assert [(p.lat, p.lon, p.dist_m) for p in after.points] == [
         (p.lat, p.lon, p.dist_m) for p in before.points
     ]
@@ -247,7 +250,7 @@ def test_up_then_down_has_equal_gain_and_loss() -> None:
 
 
 def test_a_wiggle_under_the_lookup_threshold_is_not_gain() -> None:
-    values = [100.0, 105.0] * 5 + [100.0]
+    values = [100.0, 102.0] * 5 + [100.0]  # 2 m, under the picked T of 3 m
     after = with_looked_up_elevation(line_summary(11), values)
     assert after.gain_m == 0.0 and after.loss_m == 0.0
 

@@ -7,6 +7,7 @@ Every test builds the app with ``create_app`` and runs it WITH its lifespan
 
 import json
 import logging
+import math
 import re
 import time
 from collections.abc import Callable, Iterator
@@ -26,7 +27,8 @@ from app.main import create_app
 from app.middleware import REQUEST_ID_HEADER
 from app.models.route import RouteSummary
 from app.models.warnings import ELEVATION_UNAVAILABLE
-from app.routes.summary import summarise_gpx
+from app.routes.params import DEFAULT_PARAMS
+from app.routes.summary import lookup_point_count, summarise_gpx
 from tests.elevation_support import (
     BEN_SHEMEN,
     MODIIN,
@@ -61,7 +63,7 @@ def post(client: TestClient, data: bytes, name: str = "route.gpx") -> httpx.Resp
     return response
 
 
-def no_ele_route(n: int, step_m: float = 20.0) -> tuple[bytes, list[Pt]]:
+def no_ele_route(n: int, step_m: float = 135.0) -> tuple[bytes, list[Pt]]:
     pts = straight_line(n, step_m=step_m, ele=None)
     return gpx_bytes([pts]), pts
 
@@ -117,8 +119,12 @@ def test_the_no_elevation_fixture_gets_gain_within_15_percent_of_103_m(
     distance = body["distance_m"]
     assert isinstance(distance, float) and abs(distance - 6400) / 6400 <= 0.02
     assert elevation_api.call_count <= 5
-    assert elevation_api.call_count == 4  # 400 points, 4 batches, no retry needed
-    assert elevation_api.batch_sizes == [100, 100, 100, 100]
+    n = lookup_point_count(distance, DEFAULT_PARAMS)  # ADR 0005 Amendment 1
+    assert len(body["points"]) == n  # type: ignore[arg-type]  # JSON list
+    assert elevation_api.call_count == math.ceil(n / 100)  # no retry needed
+    assert elevation_api.batch_sizes == [100] * (n // 100) + (
+        [n % 100] if n % 100 else []
+    )
 
 
 def test_looked_up_values_are_the_recorded_ones_as_returned_not_smoothed(
@@ -128,7 +134,8 @@ def test_looked_up_values_are_the_recorded_ones_as_returned_not_smoothed(
     body = assert_backfilled(post(lifespan_client, NO_ELE.read_bytes(), NO_ELE.name))
     table = recorded_table(TEL_HADID)
     points = body["points"]
-    assert isinstance(points, list) and len(points) == 400
+    n = lookup_point_count(body["distance_m"], DEFAULT_PARAMS)  # type: ignore[arg-type]  # JSON number
+    assert isinstance(points, list) and len(points) == n
     values = [table[pair_of(p["lat"], p["lon"])] for p in points]
     assert [p["elev_m"] for p in points] == values
     assert body["max_elev_m"] == max(values) and body["min_elev_m"] == min(values)
@@ -207,7 +214,7 @@ def test_calls_follow_the_simplified_point_count_and_never_exceed_4_without_a_re
     calls: int,
     points: int,
 ) -> None:
-    data, _ = no_ele_route(n, step_m=3.0 if n > 400 else 20.0)
+    data, _ = no_ele_route(n, step_m=135.0)
     body = assert_backfilled(post(lifespan_client, data))
     assert elevation_api.call_count == calls
     assert len(body["points"]) == points  # type: ignore[arg-type]  # JSON list
@@ -217,7 +224,7 @@ def test_calls_follow_the_simplified_point_count_and_never_exceed_4_without_a_re
 def test_only_the_simplified_points_are_looked_up_not_every_track_point(
     lifespan_client: TestClient, elevation_api: ElevationApi
 ) -> None:
-    data, _ = no_ele_route(1000, step_m=3.0)
+    data, _ = no_ele_route(1000, step_m=135.0)
     body = assert_backfilled(post(lifespan_client, data))
     looked_up = {p for r in elevation_api.requests for p in query_pairs(r)}
     assert looked_up == {pair_of(p["lat"], p["lon"]) for p in body["points"]}  # type: ignore[attr-defined]  # JSON list
@@ -330,7 +337,8 @@ def test_one_implausible_or_missing_ele_is_backfilled_to_the_same_answer_as_no_e
     assert body["elevation_source"] == "lookup"
     assert body["gain_m"] == baseline["gain_m"]  # exactly: same points, same values
     assert body == baseline
-    assert elevation_api.call_count == 4
+    n = lookup_point_count(baseline["distance_m"], DEFAULT_PARAMS)  # type: ignore[arg-type]  # JSON number
+    assert elevation_api.call_count == math.ceil(n / 100)
 
 
 # --- failure: the route is still returned, flagged, never a 500 ---------------
@@ -487,7 +495,7 @@ def test_a_failed_lookup_returns_the_same_route_as_the_pure_stage(
     lifespan_client: TestClient, elevation_api: ElevationApi
 ) -> None:
     elevation_api.serve(status_handler(500))
-    data, _ = no_ele_route(1000, step_m=3.0)
+    data, _ = no_ele_route(1000, step_m=135.0)
     body = assert_flagged(post(lifespan_client, data))
     stage1 = summarise_gpx(data, "route.gpx").model_dump(mode="json")
     stage1["warnings"] = [UNAVAILABLE]
@@ -539,7 +547,7 @@ def test_any_failure_pattern_on_a_400_point_route_is_200_and_within_5_calls(
         )
 
     elevation_api.serve(scripted)
-    response = post(lifespan_client, no_ele_route(1000, step_m=3.0)[0])
+    response = post(lifespan_client, no_ele_route(1000, step_m=135.0)[0])
     assert response.status_code == 200, response.text
     body = response.json()
     assert elevation_api.call_count <= 5

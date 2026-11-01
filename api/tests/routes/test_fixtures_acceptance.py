@@ -8,7 +8,8 @@ import pytest
 
 from app.models.route import RouteSummary
 from app.routes.errors import RouteParseError
-from app.routes.summary import summarise_gpx
+from app.routes.params import DEFAULT_PARAMS
+from app.routes.summary import lookup_point_count, summarise_gpx
 from tests.fixtures.loader import (
     GPX_DIR,
     Expected,
@@ -168,7 +169,8 @@ def test_no_elevation_fixture_reports_null_not_zero(
     assert result.has_elevation is False
     assert result.elevation_source == "none"
     assert result.warnings == []
-    assert len(result.points) == 400  # ADR 0005 section 5: not 500
+    # ADR 0005 section 5 and Amendment 1: lookup_point_count, not 500
+    assert len(result.points) == lookup_point_count(result.distance_m, DEFAULT_PARAMS)
     assert result.gain_m is None
     assert result.loss_m is None
     assert result.min_elev_m is None

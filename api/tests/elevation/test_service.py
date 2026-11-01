@@ -11,7 +11,12 @@ import pytest
 from app.clients.elevation import LookupOutcome, LookupResult
 from app.models.warnings import ELEVATION_UNAVAILABLE
 from app.routes.errors import InvalidGpx
-from app.routes.summary import summarise_gpx, with_looked_up_elevation
+from app.routes.params import DEFAULT_PARAMS
+from app.routes.summary import (
+    lookup_point_count,
+    summarise_gpx,
+    with_looked_up_elevation,
+)
 from app.services.route_parse import summarise_upload
 from tests.elevation_support import coord, synthetic_elevation
 from tests.fixtures.loader import GPX_DIR
@@ -133,7 +138,7 @@ async def test_it_looks_up_exactly_the_stage_one_points_and_fills_them_in(
 
     assert len(fake.asked) == 1
     assert list(fake.asked[0]) == [(p.lat, p.lon) for p in stage1.points]
-    assert len(stage1.points) == 400
+    assert len(stage1.points) == lookup_point_count(stage1.distance_m, DEFAULT_PARAMS)
     assert result.elevation_source == "lookup" and result.has_elevation is True
     assert result.warnings == []
     assert result == with_looked_up_elevation(stage1, values_for(fake.asked[0]))
@@ -227,7 +232,9 @@ async def test_a_successful_lookup_logs_one_info_line_with_the_documented_fields
     assert record.getMessage() == "elevation_lookup"
     assert record.levelno == logging.INFO
     fields = record.__dict__
-    assert fields["points"] == 400
+    stage1 = summarise_gpx(NO_ELE, "a.gpx")
+    assert fields["points"] == len(stage1.points)
+    assert fields["points"] == lookup_point_count(stage1.distance_m, DEFAULT_PARAMS)
     assert fields["batches"] == 4
     assert fields["calls"] == 4
     assert fields["outcome"] == "ok"
@@ -251,7 +258,7 @@ async def test_a_failed_lookup_logs_one_warning_line_with_the_outcome_and_status
     status: int | None,
 ) -> None:
     fake = FakeLookup(limiter, outcome=outcome, status_code=status, calls=2, batches=1)
-    data = gpx_bytes([straight_line(60, ele=None)])
+    data = gpx_bytes([straight_line(60, step_m=135.0, ele=None)])
     await summarise_upload(data, "a.gpx", limiter=limiter, elevation=fake)
     (record,) = elevation_records(caplog)
     assert record.levelno == logging.WARNING

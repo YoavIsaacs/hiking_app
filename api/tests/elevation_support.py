@@ -98,8 +98,35 @@ def query_pairs(request: httpx.Request) -> list[Pair]:
     return list(zip(lats, lons, strict=True))
 
 
+def streamed(
+    status: int, body: bytes = b"", headers: dict[str, str] | None = None
+) -> httpx.Response:
+    """A response whose body is a stream, not pre-read.
+
+    ``httpx.Response(content=...)`` is already in memory and already decoded, which
+    is not what a real transport hands the client. A stream makes the client's
+    ``aiter_raw()`` path run, and a ``Content-Encoding`` header is then the client's to
+    decode (send the compressed bytes).
+    """
+    return httpx.Response(status, headers=headers, stream=httpx.ByteStream(body))
+
+
+def restream(response: httpx.Response) -> httpx.Response:
+    """The same response as a stream if it was built with ``content=``/``json=``."""
+    if not response.is_stream_consumed:
+        return response
+    headers = {
+        k: v for k, v in response.headers.items() if k.lower() != "content-length"
+    }
+    return streamed(response.status_code, response.content, headers)
+
+
+def ok_body(values: Sequence[float]) -> bytes:
+    return json.dumps({"elevation": list(values)}).encode()
+
+
 def ok_response(values: Sequence[float]) -> httpx.Response:
-    return httpx.Response(200, json={"elevation": list(values)})
+    return streamed(200, ok_body(values), {"content-type": "application/json"})
 
 
 def synthetic_handler(request: httpx.Request) -> httpx.Response:
@@ -122,7 +149,7 @@ def status_handler(
 ) -> Handler:
     def handle(request: httpx.Request) -> httpx.Response:
         query_pairs(request)
-        return httpx.Response(status, content=body)
+        return streamed(status, body)
 
     return handle
 
@@ -161,8 +188,8 @@ class ElevationApi:
         self.requests.append(request)
         result = self.handler(request)
         if isinstance(result, httpx.Response):
-            return result
-        return await result
+            return restream(result)
+        return restream(await result)
 
     # --- configuring ---
     def serve(self, handler: Handler) -> None:

@@ -21,7 +21,13 @@ from tests.elevation.test_endpoint_lookup import (
     no_ele_route,
     post,
 )
-from tests.elevation_support import ElevationApi, query_pairs, synthetic_handler
+from tests.elevation_support import (
+    ElevationApi,
+    ok_body,
+    query_pairs,
+    synthetic_elevation,
+    synthetic_handler,
+)
 
 
 def _gzip_response(content: bytes) -> httpx.Response:
@@ -45,8 +51,8 @@ def test_a_valid_gzip_body_is_a_success(
     lifespan_client: TestClient, elevation_api: ElevationApi
 ) -> None:
     def compressed(request: httpx.Request) -> httpx.Response:
-        plain = synthetic_handler(request)
-        return _gzip_response(gzip.compress(plain.content))
+        values = [synthetic_elevation(lat, lon) for lat, lon in query_pairs(request)]
+        return _gzip_response(gzip.compress(ok_body(values)))
 
     elevation_api.serve(compressed)
     assert_backfilled(post(lifespan_client, no_ele_route(60)[0]))
@@ -63,6 +69,8 @@ def test_no_log_record_at_debug_level_carries_a_coordinate(
     caplog.set_level(logging.DEBUG)
     with TestClient(create_app(debug)) as client:
         assert_backfilled(post(client, NO_ELE.read_bytes(), NO_ELE.name))
+    # the lookup really was logged, so an empty capture cannot pass the check below
+    assert [r for r in caplog.records if r.getMessage() == "elevation_lookup"]
     sent = {c for r in elevation_api.requests for p in query_pairs(r) for c in p}
     assert len(sent) > 50
     text = "\n".join(f"{r.getMessage()} {r.args!r}" for r in caplog.records)

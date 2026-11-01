@@ -87,9 +87,11 @@ async def test_the_request_asks_for_identity_encoding(settings: Settings) -> Non
     assert seen[0].headers["accept-encoding"] == "identity"
 
 
-async def test_a_prebuilt_response_over_the_cap_is_bad_response() -> None:
+async def test_a_streamed_identity_body_over_the_cap_is_bad_response() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(200, content=b" " * (MAX_RESPONSE_BYTES + 1))
+        return httpx.Response(
+            200, stream=httpx.ByteStream(b" " * (MAX_RESPONSE_BYTES + 1))
+        )
 
     async with _client(httpx.MockTransport(handler)) as http:
         result = await ElevationClient(http, timeout_s=5.0).lookup([(1.0, 2.0)])
@@ -104,7 +106,7 @@ async def test_status_code_after_a_retried_5xx_is_the_last_non_200() -> None:
         calls += 1
         if calls == 1:
             return httpx.Response(503)
-        return httpx.Response(200, json={"elevation": [5.0]})
+        return httpx.Response(200, stream=httpx.ByteStream(b'{"elevation": [5.0]}'))
 
     async with _client(httpx.MockTransport(handler)) as http:
         result = await ElevationClient(http, timeout_s=5.0).lookup([(1.0, 2.0)])

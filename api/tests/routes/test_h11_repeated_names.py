@@ -4,7 +4,7 @@ H11 is the admitted worst case for time: one name repeated to fill 10 MiB at the
 largest admitted namespace URI (256 ASCII characters). The tracker never refuses a
 repeated name, so these are 200s; the bars are the memory ceiling and the wall time.
 (d), a non-ASCII local name under the default namespace, is the slowest of them and
-the reason S = 2.6 s (item 52); it was measured by hand until now.
+the reason S = 3.0 s (ADR 0004 item 54); it was measured by hand until now.
 
 The bar is 3.5 s in the production image on a quiet host. Here the ceiling is looser
 because this runs on whatever machine runs pytest (natively on Windows (d) takes

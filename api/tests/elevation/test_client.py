@@ -23,6 +23,7 @@ from app.routes.params import ELEVATION_MAX_CALLS, LOOKUP_MAX_POINTS
 from tests.elevation_support import (
     coord,
     query_pairs,
+    restream,
     synthetic_elevation,
     synthetic_handler,
 )
@@ -48,7 +49,7 @@ async def run(
     async def recording(request: httpx.Request) -> httpx.Response:
         seen.append(request)
         result = handler(request)
-        return result if isinstance(result, httpx.Response) else await result
+        return restream(result if isinstance(result, httpx.Response) else await result)
 
     async with httpx.AsyncClient(
         transport=httpx.MockTransport(recording), base_url=BASE
@@ -486,11 +487,14 @@ def test_any_failure_pattern_on_a_400_point_route_keeps_calls_within_5(
 ) -> None:
     cs = coords(LOOKUP_MAX_POINTS)
     counter = 0
+    non_200: list[int] = []  # statuses served, in the order served
 
     def scripted(request: httpx.Request) -> httpx.Response:
         nonlocal counter
         kind = pattern[counter] if counter < len(pattern) else "ok"
         counter += 1
+        if kind[0] == "s" and kind[1:].isdigit():
+            non_200.append(int(kind[1:]))
         return behave(kind, request)
 
     result, seen = anyio.run(run, scripted, cs)
@@ -498,6 +502,7 @@ def test_any_failure_pattern_on_a_400_point_route_keeps_calls_within_5(
     assert result.batches == 4
     if result.outcome == "ok":
         assert result.elevations == expected_values(cs)
-        assert result.status_code is None
+        # ADR 0005 section 7: the last non-200 status served before success, else None
+        assert result.status_code == (non_200[-1] if non_200 else None)
     else:
         assert result.elevations is None

@@ -8,8 +8,8 @@ flagged, no 500", and ADR 0005 section 4 lists the errors the client turns into 
 result; this one is a malformed body. Expected: 200, the route flagged
 ``elevation_unavailable``, outcome ``bad_response``, no retry (calls == 1).
 
-Fix is app code (``app/clients/elevation.py``, the ``except`` clauses in
-`_attempt`, lines 171-190): catch ``httpx.DecodingError`` as ``bad_response``.
+Fixed in the app: the client now reads raw bytes (the body is a stream here, as with
+a real server) and decodes gzip itself, so a garbage gzip body is ``bad_response``.
 """
 
 import httpx

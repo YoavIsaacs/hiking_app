@@ -207,9 +207,9 @@ def _load_service(path: str) -> dict[str, object]:
         with open(path, encoding="utf-8") as handle:
             data = json.load(handle)
     except (OSError, ValueError) as error:
-        raise DeployCheckError(f"cannot read service JSON {path}: {error}") from error
+        raise DeployCheckError(f"cannot read JSON file {path}: {error}") from error
     if not isinstance(data, dict):
-        raise DeployCheckError(f"service JSON {path} is not an object")
+        raise DeployCheckError(f"JSON file {path} is not an object")
     return data
 
 

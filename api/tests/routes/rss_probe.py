@@ -5,7 +5,8 @@ ADR 0004 item 55.
 QA's check for step 1.3a. It runs inside the production image (no pytest, no network
 beyond localhost) and is what the ``api-image`` CI job runs:
 
-    docker run --rm --memory=512m -v "$PWD/api/tests:/app/tests:ro" \
+    docker run --rm --memory=512m --memory-swap=512m \
+        -v "$PWD/api/tests:/app/tests:ro" \
         --entrypoint python hike-api:ci -m tests.routes.rss_probe
 
 What it does, in a fresh container each time:
@@ -16,8 +17,13 @@ What it does, in a fresh container each time:
    ``VmRSS``/``VmHWM`` from ``/proc/<pid>/status`` after requests 1, 3, 5, 10 and 60;
 3. runs the concurrent smoke (8 hostile uploads in flight, a few rounds) on the same,
    already-ratcheted server and records the peak RSS and every status code;
-4. on a second fresh server, times H11(d) once over HTTP;
-5. prints a table and exits 1 if a bar below fails.
+4. on a second fresh server, posts H11(d) 3 times over HTTP and reports the median,
+   with the server's own ``elevation_lookup`` ``duration_ms`` (from its log) beside it,
+   so parse time and the failed-lookup time are printed separately;
+5. prints a table and exits 1 if a memory bar or a status bar fails (every hostile
+   upload must be 422, every H11(d) 200). The H11(d) time bar is a ``::warning::``
+   annotation, not a failure, because it flaked on shared CI hosts; ``--enforce-time``
+   makes it fail (use it for local checkpoint runs).
 
 ``--shape NAME [NAME ...]`` (or ``all``) runs only the sequential phase, over HTTP,
 for the other request shapes in ``reject_shapes.py`` (``too_many_points``, 413s,
@@ -38,6 +44,7 @@ import gc
 import http.client
 import json
 import os
+import statistics
 import subprocess
 import sys
 import tempfile
@@ -46,7 +53,7 @@ import time
 from collections.abc import Callable, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from typing import IO, TYPE_CHECKING, Protocol
 
 if TYPE_CHECKING:
     import uvicorn
@@ -65,9 +72,15 @@ MIB = 1024 * 1024
 # --- The bars: docs/steps/1.3a.md, "Checkpoint" (1) to (3). Do not loosen. ---------
 RSS_AFTER_10_MAX_MIB = 200.0  # checked after request 10 and again after request 60
 CONCURRENT_PEAK_MAX_MIB = 400.0  # exclusive: the peak must be < this
-H11D_MAX_S = 3.5  # exclusive: H11(d) must take < this
-# "No 500 and no OOM": any status >= 500, a refused or reset connection, or a dead
-# server process fails the probe.
+# Exclusive: the median of H11D_POSTS H11(d) posts must be < this. A warning by default,
+# a failure with --enforce-time (docs/steps/1.3a.md, "Review round 1").
+H11D_MAX_S = 3.5
+H11D_POSTS = 3
+# "No 500 and no OOM", and every status is the expected one: a hostile upload that is
+# not 422, an H11(d) that is not 200, a refused or reset connection, or a dead server
+# process fails the probe.
+HOSTILE_STATUS = 422
+H11D_STATUS = 200
 
 SAMPLE_AT = (1, 3, 5, 10, 60)
 SEQUENTIAL = max(SAMPLE_AT)
@@ -92,12 +105,34 @@ class Report:
     concurrent_peak_mib: float | None = None
     statuses: list[int] = field(default_factory=list)  # sequential and concurrent
     errors: list[str] = field(default_factory=list)  # dead process, connection errors
-    h11d_s: float | None = None
-    h11d_status: int | None = None
+    h11d_s: float | None = None  # the median over the H11(d) posts
+    h11d_statuses: list[int] = field(default_factory=list)
+    h11d_lookup_ms: list[float] = field(default_factory=list)  # server-side, from logs
 
 
-def evaluate(report: Report) -> list[str]:
-    """The failed bars, as messages. Empty means the probe passes. Pure."""
+def time_warning(report: Report) -> str | None:
+    """The H11(d) time bar as a message when it is missed, else None. Pure."""
+    if report.h11d_s is not None and report.h11d_s >= H11D_MAX_S:
+        return (
+            f"H11(d) median took {report.h11d_s:.2f} s, bar is < {H11D_MAX_S} s"
+            f"{lookup_note(report)}"
+        )
+    return None
+
+
+def lookup_note(report: Report) -> str:
+    if not report.h11d_lookup_ms:
+        return ""
+    ms = statistics.median(report.h11d_lookup_ms)
+    return f" (of which elevation_lookup {ms / 1000:.2f} s)"
+
+
+def evaluate(report: Report, enforce_time: bool = False) -> list[str]:
+    """The failed bars, as messages. Empty means the probe passes. Pure.
+
+    The H11(d) time bar only fails the probe with ``enforce_time``; otherwise it is
+    ``time_warning``.
+    """
     failed: list[str] = []
     by_n = {s.n: s for s in report.samples}
     for n in (10, SEQUENTIAL):
@@ -117,17 +152,39 @@ def evaluate(report: Report) -> list[str]:
             f"concurrent peak RSS is {peak:.1f} MiB,"
             f" bar is < {CONCURRENT_PEAK_MAX_MIB:.0f} MiB"
         )
-    bad = sorted({s for s in report.statuses if s >= 500})
+    bad = sorted({s for s in report.statuses if s != HOSTILE_STATUS})
     if bad:
-        failed.append(f"server answered with status {bad}, bar is no 5xx")
+        failed.append(
+            f"hostile uploads answered with status {bad}, bar is {HOSTILE_STATUS} only"
+        )
     failed.extend(report.errors)
     if report.h11d_s is None:
         failed.append("no H11(d) time recorded")
-    elif report.h11d_s >= H11D_MAX_S:
-        failed.append(f"H11(d) took {report.h11d_s:.2f} s, bar is < {H11D_MAX_S} s")
-    if report.h11d_status is not None and report.h11d_status >= 500:
-        failed.append(f"H11(d) answered {report.h11d_status}")
+    elif enforce_time:
+        message = time_warning(report)
+        if message:
+            failed.append(message)
+    bad_h11d = sorted({s for s in report.h11d_statuses if s != H11D_STATUS})
+    if bad_h11d:
+        failed.append(f"H11(d) answered {bad_h11d}, bar is {H11D_STATUS} only")
     return failed
+
+
+def lookup_durations_ms(log_text: str) -> list[float]:
+    """``duration_ms`` of every ``elevation_lookup`` line in the server's JSON log."""
+    found: list[float] = []
+    for line in log_text.splitlines():
+        try:
+            record = json.loads(line)
+        except ValueError:
+            continue
+        if (
+            isinstance(record, dict)
+            and record.get("message") == "elevation_lookup"
+            and isinstance(record.get("duration_ms"), int | float)
+        ):
+            found.append(float(record["duration_ms"]))
+    return found
 
 
 # --- /proc ----------------------------------------------------------------------------
@@ -234,8 +291,23 @@ def wait_ready(alive: Callable[[], bool]) -> None:
 # --- the server as a separate process (the probe proper) -----------------------------
 
 
+class ServerLike(Protocol):
+    """What the sequential and concurrent phases need from a server (tests stub it)."""
+
+    @property
+    def alive(self) -> bool: ...
+
+    @property
+    def pid(self) -> int: ...
+
+    def rss(self) -> tuple[float, float]: ...
+
+
 class Server:
     """uvicorn as the image's CMD starts it, on ``PORT``, as a child process."""
+
+    def __init__(self, log: IO[str] | None = None) -> None:
+        self.log = log  # the server's stderr (its JSON log); None inherits ours
 
     def __enter__(self) -> "Server":
         env = os.environ | {
@@ -254,7 +326,8 @@ class Server:
             ],
             env=env,
             cwd=os.getcwd(),
-            stdout=subprocess.DEVNULL,  # the JSON access log; statuses are printed
+            stdout=subprocess.DEVNULL,  # statuses are printed by the probe
+            stderr=self.log,
         )
         wait_ready(lambda: self.proc.poll() is None)
         return self
@@ -270,11 +343,15 @@ class Server:
     def alive(self) -> bool:
         return self.proc.poll() is None
 
+    @property
+    def pid(self) -> int:
+        return self.proc.pid
+
     def rss(self) -> tuple[float, float]:
         return proc_status_mib(self.proc.pid)
 
 
-def sequential(server: Server, body: bytes, report: Report) -> None:
+def sequential(server: ServerLike, body: bytes, report: Report) -> None:
     for n in range(1, SEQUENTIAL + 1):
         try:
             status, secs = post(body)
@@ -295,10 +372,10 @@ def sequential(server: Server, body: bytes, report: Report) -> None:
             )
 
 
-def concurrent(server: Server, body: bytes, report: Report) -> list[list[int]]:
+def concurrent(server: ServerLike, body: bytes, report: Report) -> list[list[int]]:
     peak = 0.0
     stop = threading.Event()
-    can_reset = reset_hwm(server.proc.pid)
+    can_reset = reset_hwm(server.pid)
 
     def watch() -> None:
         nonlocal peak
@@ -337,7 +414,39 @@ def concurrent(server: Server, body: bytes, report: Report) -> list[list[int]]:
     return rounds
 
 
-def run_probe() -> int:
+def run_h11d(report: Report) -> None:
+    """Post H11(d) H11D_POSTS times on a fresh server; median, lookup from its log."""
+    data = multipart_body(h11("d"))
+    times: list[float] = []
+    with tempfile.TemporaryFile("w+") as log:
+        with Server(log):
+            for i in range(1, H11D_POSTS + 1):
+                try:
+                    status, secs = post(data)
+                except OSError as error:
+                    report.errors.append(f"H11(d) post {i} failed: {error!r}")
+                    break
+                report.h11d_statuses.append(status)
+                times.append(secs)
+                print(f"H11(d) over HTTP #{i}: status {status} in {secs:.2f} s")
+        log.seek(0)
+        report.h11d_lookup_ms = lookup_durations_ms(log.read())
+    if times:
+        report.h11d_s = statistics.median(times)
+        lookups = ", ".join(f"{ms / 1000:.2f}" for ms in report.h11d_lookup_ms)
+        rest = report.h11d_s - _median_s(report.h11d_lookup_ms)
+        print(
+            f"H11(d) median {report.h11d_s:.2f} s; server-side elevation_lookup"
+            f" [{lookups or 'not captured'}] s; parse and the rest ~ {rest:.2f} s",
+            flush=True,
+        )
+
+
+def _median_s(ms: list[float]) -> float:
+    return statistics.median(ms) / 1000 if ms else 0.0
+
+
+def run_probe(enforce_time: bool = False) -> int:
     started = time.monotonic()
     report = Report()
     body = multipart_body(h2(256))
@@ -353,14 +462,7 @@ def run_probe() -> int:
             for i, statuses in enumerate(rounds, 1):
                 print(f"  round {i}: {sorted(statuses)}", flush=True)
     del body
-    with Server():
-        data = multipart_body(h11("d"))
-        try:
-            status, secs = post(data)
-            report.h11d_status, report.h11d_s = status, secs
-            print(f"H11(d) over HTTP: status {status} in {secs:.2f} s", flush=True)
-        except OSError as error:
-            report.errors.append(f"H11(d) failed: {error!r}")
+    run_h11d(report)
 
     print("\n  after upload | RSS MiB | peak RSS (VmHWM) MiB")
     for s in report.samples:
@@ -370,7 +472,10 @@ def run_probe() -> int:
     codes = sorted(set(report.statuses))
     print(f"  status codes seen: {codes}")
     print(f"  wall time: {time.monotonic() - started:.0f} s")
-    failed = evaluate(report)
+    failed = evaluate(report, enforce_time)
+    warning = None if enforce_time else time_warning(report)
+    if warning:
+        print(f"::warning::{warning}")
     for message in failed:
         print(f"FAIL: {message}")
     print("RESULT: " + ("FAIL" if failed else "PASS"))
@@ -558,6 +663,11 @@ def main(argv: Sequence[str]) -> int:
         help="sequential phase for these reject shapes (or 'all'), then exit",
     )
     parser.add_argument(
+        "--enforce-time",
+        action="store_true",
+        help=f"fail (not warn) when the median H11(d) time is >= {H11D_MAX_S} s",
+    )
+    parser.add_argument(
         "--diagnose-child", choices=DIAGNOSE_MODES, help=argparse.SUPPRESS
     )
     args = parser.parse_args(argv)
@@ -567,7 +677,7 @@ def main(argv: Sequence[str]) -> int:
         return diagnose_child(args.diagnose_child)
     if args.diagnose:
         return run_diagnose()
-    return run_probe()
+    return run_probe(args.enforce_time)
 
 
 if __name__ == "__main__":

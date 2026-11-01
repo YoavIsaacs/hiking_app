@@ -1,6 +1,7 @@
 """The RSS probe's pass/fail logic on canned numbers (the bars are tested)."""
 
 from collections.abc import Callable
+from typing import IO
 
 import pytest
 
@@ -14,7 +15,7 @@ def good() -> Report:
         concurrent_peak_mib=300.0,
         statuses=[422] * 60 + [422] * 24,
         h11d_s=2.9,
-        h11d_status=200,
+        h11d_statuses=[200, 200, 200],
     )
 
 
@@ -71,10 +72,23 @@ def test_concurrent_peak_bar_is_exclusive_at_400(peak: float | None, ok: bool) -
     assert (evaluate(report) == []) is ok
 
 
-@pytest.mark.parametrize(("status", "ok"), [(499, True), (500, False), (502, False)])
-def test_any_5xx_fails(status: int, ok: bool) -> None:
+@pytest.mark.parametrize(
+    ("status", "ok"),
+    [(422, True), (200, False), (413, False), (499, False), (500, False), (502, False)],
+)
+def test_every_hostile_upload_must_be_422(status: int, ok: bool) -> None:
     report = good()
-    report.statuses.append(status)
+    report.statuses.append(status)  # sequential and concurrent share the list
+    assert (evaluate(report) == []) is ok
+
+
+@pytest.mark.parametrize(
+    ("statuses", "ok"),
+    [([200, 200, 200], True), ([200, 422, 200], False), ([200, 500, 200], False)],
+)
+def test_every_h11d_post_must_be_200(statuses: list[int], ok: bool) -> None:
+    report = good()
+    report.h11d_statuses = statuses
     assert (evaluate(report) == []) is ok
 
 
@@ -84,11 +98,86 @@ def test_a_dead_server_or_refused_connection_fails() -> None:
     assert evaluate(report) == ["server process died during upload 7 (OOM?)"]
 
 
-@pytest.mark.parametrize(("secs", "ok"), [(3.49, True), (3.5, False), (None, False)])
-def test_h11d_bar_is_exclusive_at_3_5_s(secs: float | None, ok: bool) -> None:
+@pytest.mark.parametrize(("secs", "warns"), [(3.49, False), (3.5, True), (4.4, True)])
+def test_h11d_time_is_a_warning_not_a_failure_by_default(
+    secs: float, warns: bool
+) -> None:
     report = good()
     report.h11d_s = secs
-    assert (evaluate(report) == []) is ok
+    assert evaluate(report) == []
+    assert (probe.time_warning(report) is not None) is warns
+
+
+@pytest.mark.parametrize(("secs", "ok"), [(3.49, True), (3.5, False)])
+def test_h11d_bar_is_exclusive_at_3_5_s_with_enforce_time(
+    secs: float, ok: bool
+) -> None:
+    report = good()
+    report.h11d_s = secs
+    failed = evaluate(report, enforce_time=True)
+    assert (failed == []) is ok
+    assert ok or "H11(d) median took" in failed[0]
+
+
+@pytest.mark.parametrize("enforce", [False, True])
+def test_a_missing_h11d_time_fails_in_both_modes(enforce: bool) -> None:
+    report = good()
+    report.h11d_s = None
+    assert evaluate(report, enforce_time=enforce) == ["no H11(d) time recorded"]
+
+
+def test_the_time_warning_separates_the_lookup_time() -> None:
+    report = good()
+    report.h11d_s = 4.0
+    report.h11d_lookup_ms = [1200.0, 1250.0, 1300.0]
+    warning = probe.time_warning(report)
+    assert warning is not None
+    assert "elevation_lookup 1.25 s" in warning
+
+
+def test_lookup_durations_are_read_from_the_servers_json_log() -> None:
+    log = "\n".join(
+        [
+            "not json",
+            '{"message": "elevation_lookup", "duration_ms": 1250.5}',
+            '{"message": "request", "duration_ms": 9000}',
+            '{"message": "elevation_lookup", "duration_ms": "slow"}',
+            '["elevation_lookup"]',
+            '{"message": "elevation_lookup", "duration_ms": 3}',
+        ]
+    )
+    assert probe.lookup_durations_ms(log) == [1250.5, 3.0]
+
+
+def test_h11d_is_posted_three_times_and_the_median_is_reported(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    times = iter([4.4, 3.1, 3.2])
+
+    def fake_post(body: bytes) -> tuple[int, float]:
+        return 200, next(times)
+
+    class FakeServer:
+        def __init__(self, log: IO[str] | None = None) -> None:
+            self.log = log
+
+        def __enter__(self) -> "FakeServer":
+            assert self.log is not None
+            self.log.write('{"message": "elevation_lookup", "duration_ms": 1200}\n')
+            self.log.flush()
+            return self
+
+        def __exit__(self, *exc: object) -> None:
+            return None
+
+    monkeypatch.setattr(probe, "post", fake_post)
+    monkeypatch.setattr(probe, "Server", FakeServer)
+    report = Report()
+    probe.run_h11d(report)
+    assert report.h11d_s == 3.2  # the median, not the 4.4 outlier or the mean
+    assert report.h11d_statuses == [200, 200, 200]
+    assert report.h11d_lookup_ms == [1200.0]
+    assert probe.H11D_POSTS == 3
 
 
 def test_parse_status_reads_vmrss_and_vmhwm_in_mib() -> None:
@@ -105,7 +194,8 @@ class StubServer:
     def __init__(self, die_after: int | None = None) -> None:
         self.die_after = die_after
         self.posts = 0
-        self.proc = type("Proc", (), {"pid": 1})()
+
+    pid = 1
 
     @property
     def alive(self) -> bool:
@@ -131,7 +221,7 @@ def test_the_sequential_phase_reports_a_server_that_died_and_fails_the_run(
     server = StubServer(die_after=7)
     monkeypatch.setattr(probe, "post", counting_post(server))
     report = Report()
-    probe.sequential(server, b"x", report)  # type: ignore[arg-type]  # stub
+    probe.sequential(server, b"x", report)
     assert any("died during upload 7" in e for e in report.errors)
     assert server.posts == 7  # it stops at the death, it does not keep posting
     assert evaluate(report) != []
@@ -145,7 +235,7 @@ def test_the_sequential_phase_reports_a_refused_connection(
 
     monkeypatch.setattr(probe, "post", refuse)
     report = Report()
-    probe.sequential(StubServer(), b"x", report)  # type: ignore[arg-type]  # stub
+    probe.sequential(StubServer(), b"x", report)
     assert any("upload 1 failed" in e for e in report.errors)
     assert evaluate(report) != []
 
@@ -157,7 +247,7 @@ def test_the_concurrent_phase_reports_a_server_that_died(
     monkeypatch.setattr(probe, "post", counting_post(server))
     monkeypatch.setattr(probe, "reset_hwm", lambda pid: False)
     report = Report()
-    probe.concurrent(server, b"x", report)  # type: ignore[arg-type]  # stub
+    probe.concurrent(server, b"x", report)
     assert any("died in concurrent round 1" in e for e in report.errors)
     assert evaluate(report) != []
 

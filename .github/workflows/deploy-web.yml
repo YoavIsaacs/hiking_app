@@ -27,7 +27,7 @@ concurrency:
 jobs:
   deploy:
     name: deploy-web
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04 # pinned, not ubuntu-latest (see ci.yml header)
     timeout-minutes: 20
     # The environment admits only main and gives the OIDC subject
     # repo:<owner>/<repo>:environment:production that web-deploy trusts.
@@ -90,7 +90,7 @@ jobs:
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cache/ms-playwright
-          key: playwright-${{ runner.os }}-${{ steps.pw.outputs.version }}
+          key: playwright-ubuntu-24.04-${{ steps.pw.outputs.version }}
 
       - name: Install Playwright browsers and system deps
         if: steps.pw-cache.outputs.cache-hit != 'true'

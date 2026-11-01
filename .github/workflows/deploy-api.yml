@@ -22,7 +22,7 @@ concurrency:
 jobs:
   deploy:
     name: deploy-api
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04 # pinned, not ubuntu-latest (see ci.yml header)
     timeout-minutes: 20
     # The environment admits only main and gives the OIDC subject
     # repo:<owner>/<repo>:environment:production that api-deploy trusts.

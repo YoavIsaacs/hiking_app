@@ -23,7 +23,7 @@ concurrency:
 jobs:
   release-please:
     name: release-please
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04 # pinned, not ubuntu-latest (see ci.yml header)
     timeout-minutes: 10
     permissions: {} # GITHUB_TOKEN is not used; everything runs on the app token
     steps:

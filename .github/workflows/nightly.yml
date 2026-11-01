@@ -36,7 +36,7 @@ jobs:
   forced-failure:
     name: forced-failure
     if: inputs.force_failure
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04 # pinned, not ubuntu-latest (see ci.yml header)
     timeout-minutes: 2
     permissions: {}
     steps:
@@ -48,7 +48,7 @@ jobs:
     name: report-failure
     needs: [suite, forced-failure]
     if: ${{ failure() }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04 # pinned, not ubuntu-latest (see ci.yml header)
     timeout-minutes: 5
     permissions:
       contents: read

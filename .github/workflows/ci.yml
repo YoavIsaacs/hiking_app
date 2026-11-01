@@ -302,9 +302,10 @@ jobs:
       - name: Build image
         run: |
           docker build api --tag "$IMAGE"             --build-arg "GIT_SHA=$GITHUB_SHA" --build-arg "VERSION=$CI_VERSION"
+      # no swap, like Cloud Run
       - name: Run container
         run: |
-          docker run -d --name "$CONTAINER" --memory=512m             -e "PORT=$PORT" -p "127.0.0.1:$PORT:$PORT" "$IMAGE"
+          docker run -d --name "$CONTAINER" --memory=512m --memory-swap=512m             -e "PORT=$PORT" -p "127.0.0.1:$PORT:$PORT" "$IMAGE"
       - name: /health returns the build args
         run: |
           body=""
@@ -326,7 +327,7 @@ jobs:
       - name: RSS probe (hostile uploads)
         run: |
           docker rm -f "$CONTAINER"
-          docker run --rm --memory=512m -v "$PWD/api/tests:/app/tests:ro" --entrypoint python "$IMAGE" -m tests.routes.rss_probe
+          docker run --rm --memory=512m --memory-swap=512m -v "$PWD/api/tests:/app/tests:ro" --entrypoint python "$IMAGE" -m tests.routes.rss_probe
       - name: Container logs
         if: failure()
         run: docker logs "$CONTAINER" || true

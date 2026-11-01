@@ -181,11 +181,6 @@ class ElevationClient:
                     raw, encoding = read
         except (TimeoutError, httpx.TimeoutException):
             return None, _Failure("timeout"), True
-        except httpx.DecodingError:
-            # not raised by a real transport (we read raw bytes) but by transports that
-            # decode while building the response, e.g. respx; a RequestError, not a
-            # TransportError
-            return None, _Failure("bad_response"), False
         except httpx.TransportError:
             return None, _Failure("transport_error"), True
         body = _decode_body(raw, encoding)
@@ -203,16 +198,10 @@ async def _read_capped(response: httpx.Response) -> tuple[bytes, str] | None:
     Reads raw bytes: aiter_bytes() would inflate a whole chunk with no bound.
     """
     raw = bytearray()
-    try:
-        async for chunk in response.aiter_raw():
-            raw.extend(chunk)
-            if len(raw) > MAX_RESPONSE_BYTES:
-                return None
-    except httpx.StreamConsumed:
-        # a response built with content=... (mock transports) is already in memory
-        # and decoded; a real transport always streams
-        body = response.content
-        return None if len(body) > MAX_RESPONSE_BYTES else (body, "identity")
+    async for chunk in response.aiter_raw():
+        raw.extend(chunk)
+        if len(raw) > MAX_RESPONSE_BYTES:
+            return None
     return bytes(raw), response.headers.get("content-encoding", "identity")
 
 

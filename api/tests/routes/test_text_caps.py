@@ -9,11 +9,16 @@ import tracemalloc
 from collections.abc import Callable
 
 import pytest
+from fastapi.testclient import TestClient
 
 from app.routes.params import MAX_CAPTURED_TEXT_CHARS
+
+# _CHUNK_BYTES is private on purpose: these tests place text exactly on a parser
+# feed boundary, which only the real chunk size can do.
 from app.routes.parse import _CHUNK_BYTES, parse_gpx
 from app.routes.summary import summarise_gpx
 from tests.routes.gpx_builders import gpx_bytes, out_and_back
+from tests.routes.http_helpers import URL
 
 CAP = 65_536
 NS = "http://www.topografix.com/GPX/1/1"
@@ -180,6 +185,26 @@ def test_an_overflowed_ele_makes_the_summary_report_no_elevation_but_still_200()
     )
     summary = summarise_gpx(gpx(f"<trk><trkseg>{body}</trkseg></trk>"), "f.gpx")
     assert summary.has_elevation is False
+    assert summary.elevation_source == "none" and summary.warnings == []
+
+
+def test_an_overflowed_ele_is_backfilled_over_http(
+    lifespan_client: TestClient,
+) -> None:
+    body = "".join(
+        f'<trkpt lat="{p.lat!r}" lon="{p.lon!r}"><ele>'
+        + ("0" * (CAP + 1) + "5" if i == 0 else f"{p.ele!r}")
+        + "</ele></trkpt>"
+        for i, p in enumerate(out_and_back())
+    )
+    data = gpx(f"<trk><trkseg>{body}</trkseg></trk>")
+    response = lifespan_client.post(
+        URL, files={"file": ("f.gpx", data, "application/gpx+xml")}
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["elevation_source"] == "lookup"
+    assert response.json()["has_elevation"] is True
+    assert response.json()["warnings"] == []
 
 
 def test_a_metadata_name_of_exactly_the_cap_is_cut_to_200_by_route_name() -> None:

@@ -8,7 +8,9 @@ from fastapi.testclient import TestClient
 
 from app.middleware import REQUEST_ID_HEADER
 from app.models.route import RouteSummary
+from app.models.warnings import ELEVATION_UNAVAILABLE
 from app.routes.summary import summarise_gpx
+from tests.elevation_support import ElevationApi, status_handler
 from tests.fixtures.loader import (
     Expected,
     fixture_params,
@@ -36,8 +38,11 @@ def post(
 # --- 200 ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize(("path", "expected"), fixture_params(valid_fixtures()))
-def test_every_valid_fixture_returns_200_with_a_valid_summary(
+@pytest.mark.parametrize(
+    ("path", "expected"),
+    fixture_params([f for f in valid_fixtures() if f[1].has_elevation]),
+)
+def test_every_valid_fixture_with_elevation_returns_200_with_a_valid_summary(
     client: TestClient, path: Path, expected: Expected
 ) -> None:
     response = post(client, path.read_bytes(), path.name)
@@ -46,16 +51,39 @@ def test_every_valid_fixture_returns_200_with_a_valid_summary(
     assert response.headers[REQUEST_ID_HEADER]
     summary = RouteSummary.model_validate(response.json())
     assert summary == summarise_gpx(path.read_bytes(), path.name)
+    assert summary.elevation_source == "file" and summary.warnings == []
     assert set(response.json()) == set(RouteSummary.model_fields)
 
 
-def test_nullable_fields_are_present_as_null_not_omitted(client: TestClient) -> None:
+@pytest.mark.parametrize(
+    ("path", "expected"),
+    fixture_params([f for f in valid_fixtures() if f[1].has_elevation is False]),
+)
+def test_every_valid_fixture_without_elevation_is_looked_up_and_returns_200(
+    lifespan_client: TestClient, path: Path, expected: Expected
+) -> None:
+    response = post(lifespan_client, path.read_bytes(), path.name)
+    assert response.status_code == 200, response.text
+    assert response.headers["content-type"].startswith("application/json")
+    assert response.headers[REQUEST_ID_HEADER]
+    summary = RouteSummary.model_validate(response.json())
+    assert summary.elevation_source == "lookup" and summary.has_elevation is True
+    assert summary.warnings == []
+    assert len(summary.points) <= 400
+    assert set(response.json()) == set(RouteSummary.model_fields)
+
+
+def test_nullable_fields_are_present_as_null_not_omitted(
+    lifespan_client: TestClient, elevation_api: ElevationApi
+) -> None:
+    elevation_api.serve(status_handler(503))  # lookup down: the profile stays null
     data = gpx_bytes([straight_line(5, ele=None)])
-    body = post(client, data).json()
+    body = post(lifespan_client, data).json()
     for field in ("gain_m", "loss_m", "min_elev_m", "max_elev_m", "high_point"):
         assert field in body and body[field] is None
     assert body["has_elevation"] is False
     assert body["elevation_source"] == "none"
+    assert body["warnings"] == [ELEVATION_UNAVAILABLE.model_dump()]
 
 
 def test_upload_filename_is_used_for_the_name(client: TestClient) -> None:

@@ -29,6 +29,13 @@ MAX_CAPTURED_TEXT_CHARS: Final = 64 * 1024
 # ADR 0004 3.1 step 4 / 3.11 "Why a URI cap": a declared namespace URI that is not
 # ASCII or is longer than this many characters gets invalid_gpx TOO_COMPLEX_MESSAGE
 MAX_NAMESPACE_URI_CHARS: Final = 256
+# ADR 0005 5: Open-Meteo allows up to 100 coordinates per request
+ELEVATION_BATCH_SIZE: Final = 100
+ELEVATION_MAX_RETRIES: Final = 1  # per lookup (per route), shared by its batches
+ELEVATION_MAX_CALLS: Final = 5  # roadmap 1.3 checkpoint
+LOOKUP_MAX_POINTS: Final = (
+    ELEVATION_MAX_CALLS - ELEVATION_MAX_RETRIES
+) * ELEVATION_BATCH_SIZE  # 400
 
 
 @dataclass(frozen=True, slots=True)
@@ -43,6 +50,15 @@ class ParseParams:
     max_points: int = MAX_SUMMARY_POINTS  # 3 <= max_points <= MAX_SUMMARY_POINTS
     # >= 2 * max_points, so pre-thinning always leaves RDP room to fill its budget
     prethin_max_points: int = PRETHIN_MAX_POINTS
+    # ADR 0005 3/5: 3..LOOKUP_MAX_POINTS; effective = min(this, max_points)
+    lookup_max_points: int = LOOKUP_MAX_POINTS
+    # ADR 0005 Amendment 1 / 3: finite, >= 0; 0 = off. These three come from the
+    # section 3 grid on the recorded Open-Meteo responses (tools/elevation_grid.py,
+    # output in tools/elevation_grid_output.txt): the largest spacing among the points
+    # within 3 pp of the best worst-case margin (+13.1 pp; Tel Hadid 104.99 m vs 103 m).
+    lookup_spacing_m: float = 90.0
+    lookup_smoothing_window_m: float = 135.0
+    lookup_gain_threshold_m: float = 3.0
 
     def __post_init__(self) -> None:
         """Raise ValueError on nonsense values (a programming error)."""
@@ -50,12 +66,21 @@ class ParseParams:
             raise ValueError("resample_step_m must be a positive finite number")
         if self.max_resample_points < 1:
             raise ValueError("max_resample_points must be at least 1")
-        for name in ("smoothing_window_m", "gain_threshold_m", "loop_threshold_m"):
+        for name in (
+            "smoothing_window_m",
+            "gain_threshold_m",
+            "loop_threshold_m",
+            "lookup_spacing_m",
+            "lookup_smoothing_window_m",
+            "lookup_gain_threshold_m",
+        ):
             value: float = getattr(self, name)
             if not (math.isfinite(value) and value >= 0):
                 raise ValueError(f"{name} must be a non-negative finite number")
         if not 3 <= self.max_points <= MAX_SUMMARY_POINTS:
             raise ValueError(f"max_points must be within 3..{MAX_SUMMARY_POINTS}")
+        if not 3 <= self.lookup_max_points <= LOOKUP_MAX_POINTS:
+            raise ValueError(f"lookup_max_points must be within 3..{LOOKUP_MAX_POINTS}")
         if self.prethin_max_points < 2 * self.max_points:
             raise ValueError("prethin_max_points must be at least 2 * max_points")
 

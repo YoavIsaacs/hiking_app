@@ -62,6 +62,10 @@ def configure_logging(level: str) -> None:
         uv.propagate = True
         uv.filters[:] = [f for f in uv.filters if not isinstance(f, _SkipAlreadyLogged)]
     logging.getLogger("uvicorn.error").addFilter(_SkipAlreadyLogged())
+    # httpx logs every request URL at INFO; for the elevation client that is the
+    # route's coordinates (user data), so keep its logs to warnings and above.
+    for name in ("httpx", "httpcore"):
+        logging.getLogger(name).setLevel(logging.WARNING)
     access = logging.getLogger("uvicorn.access")
     access.handlers.clear()
     access.propagate = False

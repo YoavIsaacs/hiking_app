@@ -4,6 +4,7 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.models.warnings import ApiWarning
 from app.routes.params import MAX_NAME_LENGTH, MAX_SUMMARY_POINTS
 
 Latitude = Annotated[float, Field(ge=-90, le=90)]
@@ -52,3 +53,4 @@ class RouteSummary(BaseModel):
     elevation_source: ElevationSource
     source_format: SourceFormat
     point_count_original: Annotated[int, Field(ge=2)]
+    warnings: list[ApiWarning]

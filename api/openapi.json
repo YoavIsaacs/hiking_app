@@ -1,6 +1,37 @@
 {
   "components": {
     "schemas": {
+      "ApiWarning": {
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "const": "elevation_unavailable",
+            "title": "Code",
+            "type": "string"
+          },
+          "message": {
+            "minLength": 1,
+            "title": "Message",
+            "type": "string"
+          },
+          "severity": {
+            "enum": [
+              "info",
+              "warn",
+              "danger"
+            ],
+            "title": "Severity",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "severity",
+          "message"
+        ],
+        "title": "ApiWarning",
+        "type": "object"
+      },
       "Body_parseRoute": {
         "properties": {
           "file": {
@@ -272,6 +303,13 @@
           },
           "start": {
             "$ref": "#/components/schemas/LatLonElev"
+          },
+          "warnings": {
+            "items": {
+              "$ref": "#/components/schemas/ApiWarning"
+            },
+            "title": "Warnings",
+            "type": "array"
           }
         },
         "required": [
@@ -289,7 +327,8 @@
           "has_elevation",
           "elevation_source",
           "source_format",
-          "point_count_original"
+          "point_count_original",
+          "warnings"
         ],
         "title": "RouteSummary",
         "type": "object"

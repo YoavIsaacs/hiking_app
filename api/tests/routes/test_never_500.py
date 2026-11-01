@@ -177,7 +177,11 @@ def over_http(client: TestClient, data: bytes) -> None:
     )
     assert response.status_code in {200, 413, 422}, response.text
     if response.status_code == 200:
-        RouteSummary.model_validate(response.json())
+        summary = RouteSummary.model_validate(response.json())
+        # no usable <ele> is backfilled by the (respx, synthetic) lookup, so a 200
+        # never reports "none" here (ADR 0005 section 6 invariant, both directions)
+        assert summary.elevation_source in {"file", "lookup"}
+        assert summary.warnings == []
 
 
 @fuzz(300)
@@ -195,17 +199,17 @@ def test_mutated_fixtures_only_raise_route_parse_errors(data: bytes) -> None:
 @fuzz(60)
 @given(st.binary(max_size=64 * 1024))
 def test_random_bytes_over_http_give_200_413_or_422(
-    client: TestClient, data: bytes
+    lifespan_client: TestClient, data: bytes
 ) -> None:
-    over_http(client, data)
+    over_http(lifespan_client, data)
 
 
 @fuzz(60)
 @given(mutated())
 def test_mutated_fixtures_over_http_give_200_413_or_422(
-    client: TestClient, data: bytes
+    lifespan_client: TestClient, data: bytes
 ) -> None:
-    over_http(client, data)
+    over_http(lifespan_client, data)
 
 
 def _doc(
@@ -258,9 +262,9 @@ def test_nasty_payloads_only_raise_route_parse_errors(name: str) -> None:
 
 @pytest.mark.parametrize("name", NASTY)
 def test_nasty_payloads_over_http_give_200_or_422(
-    client: TestClient, name: str
+    lifespan_client: TestClient, name: str
 ) -> None:
-    over_http(client, NASTY[name])
+    over_http(lifespan_client, NASTY[name])
 
 
 def test_the_hostile_corpus_includes_a_payload_the_pipeline_accepts() -> None:

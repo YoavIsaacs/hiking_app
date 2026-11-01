@@ -249,10 +249,10 @@ def test_a_257_character_uri_posted_is_422_too_complex_and_never_a_500(
 
 @place
 def test_a_256_character_uri_posted_is_accepted(
-    client: TestClient,
+    lifespan_client: TestClient,  # these files carry no <ele>: they are backfilled
     build: Builder,
 ) -> None:
-    response = client.post(
+    response = lifespan_client.post(
         URL, files={"file": ("ok.gpx", build(uri(LIMIT)), "application/gpx+xml")}
     )
     assert response.status_code == 200, response.text
@@ -357,8 +357,10 @@ def test_the_10_mib_h4_shape_at_a_64_kib_uri_is_refused_in_under_a_second() -> N
 
 
 # --- the round-4 shape: a non-ASCII or long default namespace, then many children ---
-# Before the ASCII cap, 1,024 x U+10000 was admitted and every <a/> then cost expat a
-# four-byte-per-character URI comparison: the 10 MiB file returned 200 after 17-25 s.
+# Before the ASCII cap, 1,024 x U+10000 was admitted. pyexpat decodes `uri|local` into
+# a new str for every start and end event, and for such a URI that str is UCS-4 (4 bytes
+# a character), so each <a/> cost time and memory in proportion to the URI's decoded
+# size: the 10 MiB file returned 200 after 17-25 s.
 
 ROUND4_VALID_TAIL = f"<trk><trkseg>{PT1}{PT2}</trkseg></trk></gpx>"
 

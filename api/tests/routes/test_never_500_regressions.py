@@ -5,6 +5,7 @@ from the pure pipeline (RouteParseError only) and through the real app.
 """
 
 import contextlib
+from collections.abc import Iterator
 
 import pytest
 from fastapi.testclient import TestClient
@@ -16,13 +17,21 @@ from app.main import create_app
 from app.models.route import RouteSummary
 from app.routes.errors import RouteParseError
 from app.routes.summary import summarise_gpx
+from tests.elevation_support import ElevationApi
 from tests.routes.http_helpers import URL
 
 
 @pytest.fixture
-def tolerant_client(settings: Settings) -> TestClient:
-    """Returns the 500 response instead of re-raising it in the test."""
-    return TestClient(create_app(settings), raise_server_exceptions=False)
+def tolerant_client(
+    settings: Settings, elevation_api: ElevationApi
+) -> Iterator[TestClient]:
+    """Returns the 500 response instead of re-raising it in the test.
+
+    Runs the app with its lifespan: files with an implausible ``<ele>`` are backfilled
+    from the (respx) lookup, offline.
+    """
+    with TestClient(create_app(settings), raise_server_exceptions=False) as c:
+        yield c
 
 
 def _doc(elevations: list[str], prolog: bytes = b"") -> bytes:

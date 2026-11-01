@@ -262,6 +262,7 @@ def test_a_single_missing_ele_means_no_elevation_at_all() -> None:
     result = summarise_gpx(gpx_bytes([pts]), None)
     assert result.has_elevation is False
     assert result.elevation_source == "none"
+    assert result.warnings == []
     assert result.gain_m is None and result.loss_m is None
     assert result.min_elev_m is None and result.max_elev_m is None
     assert result.high_point is None

@@ -126,9 +126,11 @@ jobs:
       - name: pre-commit
         run: uvx pre-commit@4.7.0 run --all-files --show-diff-on-failure
       # /health reports api/pyproject.toml's version; release-please bumps it with the manifest (extra-files).
-      # Skipped on a fresh-deps run, which rewrites uv.lock on purpose and is not a PR gate.
+      # Also runs on fresh-deps: `uv lock --upgrade` keeps the project's own version, so the check still passes.
+      # release-please-config.json (JSON, no comments) points at the uv.lock entry with
+      # `$.package[?(@.source.virtual)]`: release-please's jsonpath does not match a `@.name==` filter
+      # (tested: "No entries modified"). The catch: a second virtual project in uv.lock would be bumped too.
       - name: Version sync (manifest, pyproject, uv.lock)
-        if: ${{ !inputs.fresh-deps }}
         run: bash .github/scripts/check-version-sync.sh
 
   api-test:
@@ -301,11 +303,13 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Build image
         run: |
-          docker build api --tag "$IMAGE"             --build-arg "GIT_SHA=$GITHUB_SHA" --build-arg "VERSION=$CI_VERSION"
+          docker build api --tag "$IMAGE" \
+            --build-arg "GIT_SHA=$GITHUB_SHA" --build-arg "VERSION=$CI_VERSION"
       # no swap, like Cloud Run
       - name: Run container
         run: |
-          docker run -d --name "$CONTAINER" --memory=512m --memory-swap=512m             -e "PORT=$PORT" -p "127.0.0.1:$PORT:$PORT" "$IMAGE"
+          docker run -d --name "$CONTAINER" --memory=512m --memory-swap=512m \
+            -e "PORT=$PORT" -p "127.0.0.1:$PORT:$PORT" "$IMAGE"
       - name: /health returns the build args
         run: |
           body=""
@@ -328,6 +332,7 @@ jobs:
         run: |
           docker rm -f "$CONTAINER"
           docker run --rm --memory=512m --memory-swap=512m -v "$PWD/api/tests:/app/tests:ro" --entrypoint python "$IMAGE" -m tests.routes.rss_probe
+      # Covers the health and uid steps only; the probe runs with --rm, its server log is in its own step output.
       - name: Container logs
         if: failure()
         run: docker logs "$CONTAINER" || true

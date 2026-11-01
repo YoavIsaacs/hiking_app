@@ -19,7 +19,9 @@ async def test_undecodable_body_is_bad_response_without_retry() -> None:
         nonlocal calls
         calls += 1
         return httpx.Response(
-            200, headers={"content-encoding": "gzip"}, content=b"not gzip"
+            200,
+            headers={"content-encoding": "gzip"},
+            stream=httpx.ByteStream(b"not gzip"),
         )
 
     async with _client(httpx.MockTransport(handler)) as http:

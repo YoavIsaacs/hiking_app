@@ -1,6 +1,7 @@
 """Open-Meteo elevation adapter (ADR 0005 4, 5)."""
 
 import json
+import zlib
 from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Final, Literal, Protocol
@@ -141,7 +142,7 @@ class ElevationClient:
             outcome="ok",
             calls=state.calls,
             batches=len(batches),
-            status_code=None,
+            status_code=state.last_status,
         )
 
     async def _batch(
@@ -174,21 +175,68 @@ class ElevationClient:
                     status = response.status_code
                     if status != 200:
                         return None, _Failure("http_status", status), status >= 500
-                    body = bytearray()
-                    async for chunk in response.aiter_bytes():
-                        body.extend(chunk)
-                        if len(body) > MAX_RESPONSE_BYTES:
-                            return None, _Failure("bad_response"), False
+                    read = await _read_capped(response)
+                    if read is None:
+                        return None, _Failure("bad_response"), False
+                    raw, encoding = read
         except (TimeoutError, httpx.TimeoutException):
             return None, _Failure("timeout"), True
-        except httpx.DecodingError:  # a RequestError, not a TransportError
+        except httpx.DecodingError:
+            # not raised by a real transport (we read raw bytes) but by transports that
+            # decode while building the response, e.g. respx; a RequestError, not a
+            # TransportError
             return None, _Failure("bad_response"), False
         except httpx.TransportError:
             return None, _Failure("transport_error"), True
-        values = parse_elevations(bytes(body), len(batch))
+        body = _decode_body(raw, encoding)
+        if body is None:
+            return None, _Failure("bad_response"), False
+        values = parse_elevations(body, len(batch))
         if values is None:
             return None, _Failure("bad_response"), False
         return values, None, False
+
+
+async def _read_capped(response: httpx.Response) -> tuple[bytes, str] | None:
+    """(body, content-encoding) with the raw size capped; None if over the cap.
+
+    Reads raw bytes: aiter_bytes() would inflate a whole chunk with no bound.
+    """
+    raw = bytearray()
+    try:
+        async for chunk in response.aiter_raw():
+            raw.extend(chunk)
+            if len(raw) > MAX_RESPONSE_BYTES:
+                return None
+    except httpx.StreamConsumed:
+        # a response built with content=... (mock transports) is already in memory
+        # and decoded; a real transport always streams
+        body = response.content
+        return None if len(body) > MAX_RESPONSE_BYTES else (body, "identity")
+    return bytes(raw), response.headers.get("content-encoding", "identity")
+
+
+def _decode_body(raw: bytes, content_encoding: str) -> bytes | None:
+    """The body with any gzip/deflate removed, bounded; None if unusable."""
+    encoding = content_encoding.strip().lower()
+    if encoding in ("", "identity"):
+        return raw
+    if encoding == "gzip" or encoding == "x-gzip":
+        wbits = zlib.MAX_WBITS | 16
+    elif encoding == "deflate":
+        wbits = zlib.MAX_WBITS
+    else:
+        return None
+    decoder = zlib.decompressobj(wbits)
+    try:
+        out = decoder.decompress(raw, MAX_RESPONSE_BYTES + 1)
+        if decoder.unconsumed_tail or len(out) > MAX_RESPONSE_BYTES:
+            return None
+        if not decoder.eof:  # truncated stream
+            return None
+    except zlib.error:
+        return None
+    return out
 
 
 def new_http_client(settings: Settings) -> httpx.AsyncClient:
@@ -196,5 +244,8 @@ def new_http_client(settings: Settings) -> httpx.AsyncClient:
         base_url=settings.open_meteo_base_url,
         timeout=httpx.Timeout(settings.elevation_timeout_s),
         follow_redirects=False,
-        headers={"User-Agent": f"hike-prep-api/{settings.version}"},
+        headers={
+            "User-Agent": f"hike-prep-api/{settings.version}",
+            "Accept-Encoding": "identity",
+        },
     )

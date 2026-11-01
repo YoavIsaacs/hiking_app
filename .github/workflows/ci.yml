@@ -4,7 +4,7 @@ name: CI
 # main and callers such as nightly.yml run everything. A job skipped by its job-level
 # `if:` is reported as "skipped", which GitHub counts as passing for required checks.
 # If `changes` itself fails, the gated jobs run rather than skip, so a broken filter can never hide a test.
-# Job names are required-check contracts: lint, api-test, web-test, e2e, api-contract, benchmark.
+# Job names are required-check contracts: lint, api-test, web-test, e2e, api-contract, benchmark, api-image.
 
 on:
   pull_request:
@@ -125,6 +125,11 @@ jobs:
           pnpm install --frozen-lockfile
       - name: pre-commit
         run: uvx pre-commit@4.7.0 run --all-files --show-diff-on-failure
+      # /health reports api/pyproject.toml's version; release-please bumps it with the manifest (extra-files).
+      # Skipped on a fresh-deps run, which rewrites uv.lock on purpose and is not a PR gate.
+      - name: Version sync (manifest, pyproject, uv.lock)
+        if: ${{ !inputs.fresh-deps }}
+        run: bash .github/scripts/check-version-sync.sh
 
   api-test:
     name: api-test
@@ -276,6 +281,63 @@ jobs:
         with:
           path: bench/history.json
           key: benchmark-${{ github.sha }}
+
+  # The production image, built and run as it will be deployed (the drift guard in the Dockerfile runs inside
+  # the build). Gated by the same `api` filter as api-test; skipped (counts as passing) when no api path changed.
+  api-image:
+    name: api-image
+    timeout-minutes: 15
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.api == 'true') }}
+    runs-on: ubuntu-24.04 # pinned, not ubuntu-latest (see ci.yml header)
+    permissions:
+      contents: read
+    env:
+      IMAGE: hike-api:ci
+      CONTAINER: hike-api-ci
+      PORT: "8081" # not 8765
+      CI_VERSION: 0.0.0-ci # a sentinel, so /health proves the VERSION build arg reaches the app
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Build image
+        run: |
+          docker build api --tag "$IMAGE"             --build-arg "GIT_SHA=$GITHUB_SHA" --build-arg "VERSION=$CI_VERSION"
+      - name: Run container
+        run: |
+          docker run -d --name "$CONTAINER" --memory=512m             -e "PORT=$PORT" -p "127.0.0.1:$PORT:$PORT" "$IMAGE"
+      - name: /health returns the build args
+        run: |
+          body=""
+          for _ in $(seq 1 30); do
+            if body="$(curl -fsS "http://127.0.0.1:$PORT/health" 2>/dev/null)"; then break; fi
+            sleep 1
+          done
+          echo "${body:-no response}"
+          test "$(echo "$body" | jq -r .status)" = "ok"
+          test "$(echo "$body" | jq -r .git_sha)" = "$GITHUB_SHA"
+          test "$(echo "$body" | jq -r .version)" = "$CI_VERSION"
+      - name: Container runs as uid 10001
+        run: |
+          uid="$(docker exec "$CONTAINER" id -u)"
+          echo "uid=$uid"
+          test "$uid" = "10001"
+      # TODO(tech lead): QA's script api/tests/routes/rss_probe.py is not merged yet. When it lands, delete the
+      # guard so a missing probe fails the job. The bars live in the script, not here. It runs in a fresh
+      # container of the same image with the tests mounted read-only (the image has no tests/).
+      - name: RSS probe (hostile uploads)
+        run: |
+          if [ ! -f api/tests/routes/rss_probe.py ]; then
+            echo "::warning::RSS probe is not wired yet: api/tests/routes/rss_probe.py does not exist, so api-image did not check memory."
+            exit 0
+          fi
+          docker rm -f "$CONTAINER"
+          docker run --rm --memory=512m -v "$PWD/api/tests:/app/tests:ro"             --entrypoint python "$IMAGE" -m tests.routes.rss_probe
+      - name: Container logs
+        if: failure()
+        run: docker logs "$CONTAINER" || true
+      - name: Remove container
+        if: always()
+        run: docker rm -f "$CONTAINER" || true
 
   api-contract:
     name: api-contract

@@ -1,5 +1,7 @@
 """The RSS probe's pass/fail logic on canned numbers (the bars are tested)."""
 
+from collections.abc import Callable
+
 import pytest
 
 from tests.routes import rss_probe as probe
@@ -92,3 +94,114 @@ def test_h11d_bar_is_exclusive_at_3_5_s(secs: float | None, ok: bool) -> None:
 def test_parse_status_reads_vmrss_and_vmhwm_in_mib() -> None:
     text = "Name:\tpython\nVmHWM:\t  409600 kB\nVmRSS:\t  204800 kB\nThreads:\t3\n"
     assert parse_status(text) == (200.0, 400.0)
+
+
+# --- the probe's own loops, with a stub server: a dead server must fail the run ---
+
+
+class StubServer:
+    """Stands in for ``Server``: alive until ``die_after`` requests have been made."""
+
+    def __init__(self, die_after: int | None = None) -> None:
+        self.die_after = die_after
+        self.posts = 0
+        self.proc = type("Proc", (), {"pid": 1})()
+
+    @property
+    def alive(self) -> bool:
+        return self.die_after is None or self.posts < self.die_after
+
+    def rss(self) -> tuple[float, float]:
+        return 100.0, 100.0
+
+
+def counting_post(
+    server: StubServer, status: int = 422
+) -> Callable[[bytes], tuple[int, float]]:
+    def post(body: bytes) -> tuple[int, float]:
+        server.posts += 1
+        return status, 0.1
+
+    return post
+
+
+def test_the_sequential_phase_reports_a_server_that_died_and_fails_the_run(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    server = StubServer(die_after=7)
+    monkeypatch.setattr(probe, "post", counting_post(server))
+    report = Report()
+    probe.sequential(server, b"x", report)  # type: ignore[arg-type]  # stub
+    assert any("died during upload 7" in e for e in report.errors)
+    assert server.posts == 7  # it stops at the death, it does not keep posting
+    assert evaluate(report) != []
+
+
+def test_the_sequential_phase_reports_a_refused_connection(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def refuse(body: bytes) -> tuple[int, float]:
+        raise ConnectionRefusedError("down")
+
+    monkeypatch.setattr(probe, "post", refuse)
+    report = Report()
+    probe.sequential(StubServer(), b"x", report)  # type: ignore[arg-type]  # stub
+    assert any("upload 1 failed" in e for e in report.errors)
+    assert evaluate(report) != []
+
+
+def test_the_concurrent_phase_reports_a_server_that_died(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    server = StubServer(die_after=8)
+    monkeypatch.setattr(probe, "post", counting_post(server))
+    monkeypatch.setattr(probe, "reset_hwm", lambda pid: False)
+    report = Report()
+    probe.concurrent(server, b"x", report)  # type: ignore[arg-type]  # stub
+    assert any("died in concurrent round 1" in e for e in report.errors)
+    assert evaluate(report) != []
+
+
+def test_a_shape_with_the_wrong_status_fails_the_shape_run(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class Fake:
+        alive = True
+        proc = type("Proc", (), {"pid": 1})()
+
+        def __enter__(self) -> "Fake":
+            return self
+
+        def __exit__(self, *exc: object) -> None:
+            return None
+
+        def rss(self) -> tuple[float, float]:
+            return 100.0, 100.0
+
+    monkeypatch.setattr(probe, "Server", Fake)
+    monkeypatch.setattr(probe, "post_shape", lambda shape: 500)
+    assert probe.run_shapes(["empty_file"]) == 1
+    monkeypatch.setattr(probe, "post_shape", lambda shape: 422)
+    assert probe.run_shapes(["empty_file"]) == 0
+    assert probe.run_shapes(["no-such-shape"]) == 2
+
+
+def test_a_shape_run_fails_when_rss_passes_the_bar(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class Fat:
+        alive = True
+        proc = type("Proc", (), {"pid": 1})()
+
+        def __enter__(self) -> "Fat":
+            return self
+
+        def __exit__(self, *exc: object) -> None:
+            return None
+
+        def rss(self) -> tuple[float, float]:
+            return 250.0, 250.0
+
+    monkeypatch.setattr(probe, "Server", Fat)
+    monkeypatch.setattr(probe, "post_shape", lambda shape: 422)
+    assert probe.run_shapes(["empty_file"]) == 1

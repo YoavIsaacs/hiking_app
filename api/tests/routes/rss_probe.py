@@ -19,6 +19,11 @@ What it does, in a fresh container each time:
 4. on a second fresh server, times H11(d) once over HTTP;
 5. prints a table and exits 1 if a bar below fails.
 
+``--shape NAME [NAME ...]`` (or ``all``) runs only the sequential phase, over HTTP,
+for the other request shapes in ``reject_shapes.py`` (``too_many_points``, 413s,
+validation errors, accepted uploads whose elevation lookup fails): one fresh server per
+shape, the same RSS bar, and a failure if the status is not the one the shape gets.
+
 ``--diagnose`` is the investigation mode (ADR 0004 follow-up). It serves the app *inside
 this process* (``create_app`` under uvicorn's programmatic API, in a thread) so that
 ``tracemalloc``, ``gc`` and ``malloc_trim`` can be called in the server's own process.
@@ -53,6 +58,7 @@ from tests.routes.http_helpers import (
     multipart_head,
     multipart_tail,
 )
+from tests.routes.reject_shapes import Shape, all_shapes
 
 MIB = 1024 * 1024
 
@@ -180,6 +186,32 @@ def post(body: bytes) -> tuple[int, float]:
         response = conn.getresponse()
         response.read()
         return response.status, time.perf_counter() - started
+    finally:
+        conn.close()
+
+
+def post_shape(shape: Shape) -> int | None:
+    """POST a shape; its status, or None if the server cut the connection after
+    answering early (a 413 sent before the body was read)."""
+    conn = http.client.HTTPConnection(HOST, PORT, timeout=REQUEST_TIMEOUT_S)
+    headers = {"Content-Type": shape.headers_content_type}
+    try:
+        if shape.chunked:
+            conn.request(
+                "POST",
+                URL,
+                body=(shape.body[i : i + MIB] for i in range(0, len(shape.body), MIB)),
+                headers=headers,
+                encode_chunked=True,
+            )
+        else:
+            headers["Content-Length"] = str(len(shape.body))
+            conn.request("POST", URL, body=shape.body, headers=headers)
+        response = conn.getresponse()
+        response.read()
+        return response.status
+    except (BrokenPipeError, ConnectionResetError):
+        return None
     finally:
         conn.close()
 
@@ -345,6 +377,58 @@ def run_probe() -> int:
     return 1 if failed else 0
 
 
+# --- --shape: the sequential phase for the other reject shapes ---
+
+
+def run_shapes(names: Sequence[str]) -> int:
+    """For each named shape (or ``all``): a fresh server, SEQUENTIAL posts, RSS sampled.
+
+    Fails when a shape's status is not the one it is meant to produce, the server
+    dies, or RSS after request 10 or 60 passes the bar.
+    """
+    shapes = all_shapes()
+    chosen = list(shapes) if "all" in names else list(names)
+    unknown = [n for n in chosen if n not in shapes]
+    if unknown:
+        print(f"unknown shape(s) {unknown}; known: {sorted(shapes)}")
+        return 2
+    failed: list[str] = []
+    for name in chosen:
+        shape = shapes[name]
+        problems: list[str] = []
+        with Server() as server:
+            print(f"{name}: {len(shape.body) / MIB:.2f} MiB, expect {shape.status}")
+            for n in range(1, SEQUENTIAL + 1):
+                try:
+                    status = post_shape(shape)
+                except OSError as error:
+                    problems.append(f"upload {n} failed: {error!r}")
+                    break
+                # status None is a 413 the server sent before it read the body
+                early_413 = status is None and shape.status == 413
+                if status != shape.status and not early_413:
+                    problems.append(
+                        f"upload {n}: status {status}, expected {shape.status}"
+                    )
+                    break
+                if not server.alive:
+                    problems.append(f"server process died during upload {n} (OOM?)")
+                    break
+                if n in SAMPLE_AT:
+                    rss, hwm = server.rss()
+                    print(
+                        f"  seq {n:>2}: status {status} RSS {rss:6.1f} HWM {hwm:6.1f}"
+                    )
+                    if n in (10, SEQUENTIAL) and rss > RSS_AFTER_10_MAX_MIB:
+                        problems.append(f"RSS after {n} is {rss:.1f} MiB")
+        for message in problems:
+            print(f"  FAIL: {message}")
+        if problems:
+            failed.append(name)
+    print("RESULT: " + (f"FAIL {failed}" if failed else "PASS"))
+    return 1 if failed else 0
+
+
 # --- --diagnose: the app in this process, so we can look inside it -------------------
 
 DIAGNOSE_MODES = ("plain", "observe", "intervene", "gc-each", "trim-each")
@@ -468,9 +552,17 @@ def main(argv: Sequence[str]) -> int:
         "--diagnose", action="store_true", help="in-process investigation"
     )
     parser.add_argument(
+        "--shape",
+        nargs="+",
+        metavar="NAME",
+        help="sequential phase for these reject shapes (or 'all'), then exit",
+    )
+    parser.add_argument(
         "--diagnose-child", choices=DIAGNOSE_MODES, help=argparse.SUPPRESS
     )
     args = parser.parse_args(argv)
+    if args.shape:
+        return run_shapes(args.shape)
     if args.diagnose_child:
         return diagnose_child(args.diagnose_child)
     if args.diagnose:

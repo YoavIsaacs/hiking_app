@@ -8,7 +8,19 @@
   "bump-patch-for-minor-pre-major": false,
   "packages": {
     ".": {
-      "changelog-path": "CHANGELOG.md"
+      "changelog-path": "CHANGELOG.md",
+      "extra-files": [
+        {
+          "type": "toml",
+          "path": "api/pyproject.toml",
+          "jsonpath": "$.project.version"
+        },
+        {
+          "type": "toml",
+          "path": "api/uv.lock",
+          "jsonpath": "$.package[?(@.source.virtual)].version"
+        }
+      ]
     }
   }
 }

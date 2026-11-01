@@ -268,13 +268,22 @@ def test_a_wiggle_just_under_the_picked_threshold_is_not_gain() -> None:
     assert after.gain_m == 0.0 and after.loss_m == 0.0
 
 
-def test_a_wiggle_just_over_the_picked_threshold_is_counted() -> None:
-    """The other side of the boundary: 3.0 m and 3.1 m cycles all count (5 cycles)."""
+def test_a_wiggle_clearly_over_the_picked_threshold_is_counted() -> None:
+    """Clearly over T (5 cycles). Not exactly T: the resampled series is built from
+    geodesic distances, which differ by ~1e-9 m between platforms (libm), so a peak can
+    come out 1e-11 m short of an exact 3.0 and the boundary is not decidable here."""
     params = ParseParams(lookup_smoothing_window_m=0.0)
-    for amplitude in (3.0, 3.1):
+    for amplitude in (3.1, 3.5):
         after = with_looked_up_elevation(line_summary(11), wiggle(amplitude), params)
         assert after.gain_m == pytest.approx(5 * amplitude, abs=0.2), amplitude
         assert after.loss_m == pytest.approx(5 * amplitude, abs=0.2), amplitude
+
+
+def test_gain_loss_counts_a_step_of_exactly_the_threshold() -> None:
+    """The inclusive boundary, on exactly representable values (no geodesy involved)."""
+    series = [100.0, 103.0] * 5 + [100.0]
+    assert gain_loss(series, threshold_m=3.0) == (15.0, 15.0)
+    assert gain_loss([100.0, 102.75] * 5 + [100.0], threshold_m=3.0) == (0.0, 0.0)
 
 
 def test_with_the_picked_smoothing_a_4_m_wiggle_is_counted_and_a_3_5_m_one_is_not() -> (

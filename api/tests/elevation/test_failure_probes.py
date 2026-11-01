@@ -7,6 +7,8 @@ router, like ``test_endpoint_lookup.py``.
 import gzip
 import logging
 import re
+from collections.abc import Callable
+from contextlib import AbstractContextManager
 
 import httpx
 import pytest
@@ -39,23 +41,28 @@ def _gzip_response(content: bytes) -> httpx.Response:
     )
 
 
+# The two gzip tests are about how the client handles Content-Encoding, so they run on
+# an httpx.MockTransport (see the ``transport_client`` fixture), not respx, which
+# decodes the body inside the transport before the client reads it.
+TransportClient = Callable[[httpx.MockTransport], AbstractContextManager[TestClient]]
+
+
 def test_a_truncated_gzip_body_is_flagged_not_a_500(
-    lifespan_client: TestClient, elevation_api: ElevationApi
+    transport_client: TransportClient,
 ) -> None:
     truncated = gzip.compress(b'{"elevation": [1]}')[:-6]
-    elevation_api.serve(lambda request: _gzip_response(truncated))
-    assert_flagged(post(lifespan_client, no_ele_route(60)[0]))
+    handler = lambda request: _gzip_response(truncated)  # noqa: E731
+    with transport_client(httpx.MockTransport(handler)) as client:
+        assert_flagged(post(client, no_ele_route(60)[0]))
 
 
-def test_a_valid_gzip_body_is_a_success(
-    lifespan_client: TestClient, elevation_api: ElevationApi
-) -> None:
+def test_a_valid_gzip_body_is_a_success(transport_client: TransportClient) -> None:
     def compressed(request: httpx.Request) -> httpx.Response:
         values = [synthetic_elevation(lat, lon) for lat, lon in query_pairs(request)]
         return _gzip_response(gzip.compress(ok_body(values)))
 
-    elevation_api.serve(compressed)
-    assert_backfilled(post(lifespan_client, no_ele_route(60)[0]))
+    with transport_client(httpx.MockTransport(compressed)) as client:
+        assert_backfilled(post(client, no_ele_route(60)[0]))
 
 
 def test_no_log_record_at_debug_level_carries_a_coordinate(

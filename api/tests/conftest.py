@@ -1,10 +1,13 @@
 import asyncio
 import sys
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
+from contextlib import AbstractContextManager, contextmanager
 
+import httpx
 import pytest
 from fastapi.testclient import TestClient
 
+from app.clients.elevation import new_http_client
 from app.config import Settings
 from app.main import create_app
 from tests.elevation_support import ElevationApi, elevation_mock
@@ -52,3 +55,30 @@ def lifespan_client(
     """The real app run WITH its lifespan, so the elevation client exists (ADR 0005)."""
     with TestClient(create_app(settings)) as c:
         yield c
+
+
+@pytest.fixture
+def transport_client(
+    settings: Settings, monkeypatch: pytest.MonkeyPatch
+) -> Callable[[httpx.MockTransport], AbstractContextManager[TestClient]]:
+    """The real app, lifespan and all, on a ``MockTransport``.
+
+    No respx: respx pre-reads and decodes every mocked response inside the transport,
+    so it cannot show how the client handles Content-Encoding or raw bytes. A
+    ``MockTransport`` hands the client the stream a real transport would. The only
+    substitution is the transport; ``lifespan`` still builds the client and the
+    ``ElevationClient`` from ``settings`` (the seam is ``app.main.new_http_client``).
+    """
+
+    @contextmanager
+    def run(transport: httpx.MockTransport) -> Iterator[TestClient]:
+        def build(s: Settings) -> httpx.AsyncClient:
+            http = new_http_client(s)
+            http._transport = transport  # noqa: SLF001  # keep headers/timeouts, swap wire
+            return http
+
+        monkeypatch.setattr("app.main.new_http_client", build)
+        with TestClient(create_app(settings)) as c:
+            yield c
+
+    return run

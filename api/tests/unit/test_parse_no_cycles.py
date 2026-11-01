@@ -13,7 +13,8 @@ from collections.abc import Iterator
 import pytest
 from fastapi.testclient import TestClient
 
-from app.routes.errors import InvalidGpx, TooManyPoints
+from app.models.route import RouteSummary
+from app.routes.errors import InvalidGpx
 from app.routes.params import DEFAULT_PARAMS
 from app.services.route_parse import summarise_in_worker
 from tests.routes.gpx_builders import gpx_bytes, out_and_back
@@ -74,9 +75,12 @@ def test_worker_returns_scrubbed_error_without_cycles(
 
 def test_worker_returns_summary_unchanged() -> None:
     data = gpx_bytes([out_and_back()])
-    assert not isinstance(
-        summarise_in_worker(data, "x.gpx", DEFAULT_PARAMS), InvalidGpx | TooManyPoints
-    )
+    outcome = summarise_in_worker(data, "x.gpx", DEFAULT_PARAMS)
+    assert isinstance(outcome, RouteSummary)
+    assert outcome.name == "x"
+    assert outcome.distance_m == pytest.approx(4010.0, abs=1.0)
+    assert outcome.is_loop is True
+    assert outcome.start.lat == pytest.approx(31.9)
 
 
 @pytest.mark.parametrize("data", HOSTILE)

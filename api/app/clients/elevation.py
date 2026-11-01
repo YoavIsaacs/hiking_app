@@ -181,6 +181,8 @@ class ElevationClient:
                             return None, _Failure("bad_response"), False
         except (TimeoutError, httpx.TimeoutException):
             return None, _Failure("timeout"), True
+        except httpx.DecodingError:  # a RequestError, not a TransportError
+            return None, _Failure("bad_response"), False
         except httpx.TransportError:
             return None, _Failure("transport_error"), True
         values = parse_elevations(bytes(body), len(batch))

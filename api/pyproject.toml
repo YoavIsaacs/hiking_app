@@ -1,6 +1,6 @@
 [project]
 name = "hike-prep-api"
-version = "0.2.0"
+version = "0.2.1"
 description = "Hike Prep App API"
 # First 3.12 with expat SetAllocTrackerActivationThreshold etc.; see docs/adr/0004 §3.11.
 requires-python = ">=3.12.13,<3.13"

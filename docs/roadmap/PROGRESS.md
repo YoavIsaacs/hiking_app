@@ -17,14 +17,12 @@ The tech lead keeps this file true. A step moves to Done only with checkpoint ev
 ## Current state (handoff for a fresh session)
 Read this, then `docs/steps/<current step>.md`. Nothing here lives only in chat.
 
-- **Current step:** 1.3 Elevation backfill — `docs/steps/1.3.md`, branch `step/1.3-elevation-backfill`. Stage: tests
-  (ADR 0005 accepted; next backend stub → qa red tests). #34/#35/#29/#30/#31 merged 2026-10-20.
-  **1.2 follow-ups (folded into the 1.3 brief):** pin the production image to uv-managed CPython 3.12.15 (expat 2.9.0, as CI; image has
-  2.8.5) and re-run ADR 0004 H rows on it; fix the child-process P measurement (reads 0.0 on Linux, vacuous in CI); run
-  H11(d) in QA's harness; 3 QA comment nits (`test_expat_tracker.py:201`, `test_namespace_uri_cap.py:360`,
-  `test_text_caps.py:560`); ADR item 50 wording; split `summarise_gpx` into parse → backfill → `summarise_track`.
-  ADR 0004: relabel the stale "80 (today)" mentions (§3.10 tables ~l.940/~1037, ~l.980, Consequences ~l.2093) to
-  "80 (Cloud Run default)" (architect). `tools/deploy.py` `_load_service` error says "service JSON" for revision files too (nit).
+- **Current step:** 1.3 Elevation backfill — `docs/steps/1.3.md`, branch `step/1.3-elevation-backfill`. Stage: **PR**
+  (build, verify, review done 2026-11-01; reviewer approved; review round fixed: raw-byte body cap + bounded gzip,
+  mock-only read paths removed). 1.2 carry items all closed in 1.3. After merge: watch Deploy API (first CI build of the
+  new Dockerfile), then live checkpoint + `elevation_lookup` log line (manager reads Cloud Logging).
+  **Next after 1.3 (proposed, small fix branch):** ADR 0004 item 55 RSS ratchet (119 → 398 MiB under repeated hostile
+  uploads) + an `api-image` PR job building `api/Dockerfile` (new required check → manager approval).
   **Tech-lead process note:** don't commit while a subagent is editing the same tree. Pre-commit stashes the
   unstaged files mid-edit (it happened twice on `step/1.2-close` and restored cleanly).
   **For 1.10:** CORS POST, Blob typing, 429 copy. **Manager:** update the master roadmap doc (own expat reader, not

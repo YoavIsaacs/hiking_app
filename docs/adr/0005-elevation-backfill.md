@@ -181,8 +181,15 @@ everything elevation-related on them.** No re-simplification and no densificatio
 `lookup_spacing_m` (Amendment 1). They are kept apart from 1.2's pair so that tuning one never moves the other's
 gates. The starting values were 1.2's 20 m and 9.5 m, with spacing off. QA's recorded Tel Hadid run gave 181.18 m
 (+76 %), an **over**-count from GLO-90's staircase (Amendment 1), so the grid below runs.
-- **Grid (backend, during the build; not committed as code):** spacing ∈ {0 (off), 45, 90, 135} m × window ∈ {0,
-  20, 45, 90, 135, 180} m × T ∈ {2.0, 2.5, …, 12.0} m, which is 504 points. Run it on the recordings in
+- **Grid (backend, during the build; committed as code, accepted by the tech lead 2026-11-01).** The grid is
+  `api/tools/elevation_grid.py` (`uv run python -m tools.elevation_grid` from `api/`), and its report is committed
+  as `api/tools/elevation_grid_output.txt`. `api/tests/elevation/test_grid.py` pins the `ParseParams` defaults to
+  the pick and the committed output to the current report. So the pick is reproducible, and a change to the
+  smoothing code or the recordings that moves any grid number, or a default that drifts from the pick, fails a
+  test. The tool imports the recorded fixtures from `tests.elevation_support`, so `tools/` depends on `tests/`.
+  The tech lead accepts that, because the tool is an analysis of test data and not app code; `app/` must never
+  import it. The grid: spacing ∈ {0 (off), 45, 90, 135} m × window ∈ {0, 20, 45, 90, 135, 180} m × T ∈ {2.0,
+  2.5, …, 12.0} m, which is 504 points. Run it on the recordings in
   `api/tests/fixtures/http/elevation/`. Replay is by coordinate (§7), so every spacing replays without re-recording.
   Score each point on all three parents with `<ele>` stripped: e = (gain − ref) / ref for Tel Hadid (103), Modiin
   (198) and Ben Shemen (200). The margin is m = 15 % − max |e|.
@@ -506,6 +513,17 @@ async def parse_route(
     Amendment 1's options. Public use (Phase 3) needs the manager decision there.
   - The spacing is tuned on 6.4–10.6 km routes. Longer routes extrapolate, and they reach the 400 cap at 400 ×
     spacing.
+  - **The pick is a sharp peak, and routes over about 36 km under-count looked-up gain** (review finding, accepted
+    by the tech lead 2026-11-01; numbers from `api/tools/elevation_grid_output.txt`). The pick, spacing 90 m /
+    window 135 m / T 3.0 m, has m = +13.1 pp. Its one-step neighbours: spacing 45 m gives −0.9 pp, so a parent
+    leaves ±15 %; window 90 m gives −2.5 pp; spacing 135 m gives −10.6 pp. The output's spacing 135 / window 135
+    row (best T 2.0 m, same m) has Tel Hadid at 76.61 m, **−25.6 %**, with Modiin −4.2 % and Ben Shemen −2.1 %,
+    all low. The other neighbours are window 180 m (+3.2 pp), T 2.5 m (+10.6 pp) and T 3.5 m (+11.7 pp). The
+    400-point cap binds once ⌈d / 90⌉ + 1 > 400, that is d > 399 × 90 m ≈ 35.9 km. Past that the mean point
+    spacing is d / 399, which is above 90 m and reaches 135 m at about 54 km, while the window stays at 135 m.
+    Between about 36 and 54 km the spacing falls between grid values, unmeasured; from about 54 km it is at or
+    past the 135 m cell where Tel Hadid is −25.6 %. Gain is under-reported there, with no warning. The parents
+    can't show it: they are 6.4–10.6 km and use 72–118 points. Not fixed in 1.3 (Follow-ups).
   - Coastal or sea points that come back non-finite fail the whole lookup (no holes).
   - `RouteSummary.warnings` becomes part of 1.9's request body, so its enum grows under the unknown-code rule.
   - httpx moves into the runtime image, and Starlette's httpx deprecation (pyproject filter) may force a
@@ -584,6 +602,16 @@ Also:
 - **ADR 0004 §1 says `RouteSummary` is response-only;** 1.9 makes it a request model too. 1.9's ADR should decide
   whether the server trusts a client-sent summary.
 - **Caching lookups** (brief, Out of scope): this is option B in Amendment 1's manager decision.
+- **Long-route lookup gain (Consequences: the pick is a sharp peak).** Once a long-route fixture with an AllTrails
+  reference exists (over about 36 km, so it hits the 400-point cap), either re-tune the §3 grid with it as a
+  fourth parent, or scale the window with the effective spacing d / 399. On today's grid a coarser spacing wants a
+  **smaller** window, not a proportionally larger one: at spacing 135 m the best rows are window 45 m (+4.5 pp)
+  and 0 m (+4.0 pp), while window 180 m is −15.9 pp. Sparser samples already smooth the staircase. Either fix is
+  an amendment to this ADR, judged on the long fixture, not on these numbers. AllTrails is now the only
+  reference source (manager, 2026-11-01). The fixture also needs a recording run by QA, done the way `record.py`
+  does it. Every de-duplicated point of a long route can be thousands of coordinates, a large share of the
+  10,000-a-day limit, so the run is paced and may need splitting across days. Until then, the under-count on
+  routes over 36 km stands.
 - **Commercial use (constraint):** if the app ever adds ads or subscriptions, Open-Meteo requires a paid plan
   (terms, re-checked 2026-11-01), which is a manager decision. While the $0/month rule holds, that rules out ads and
   subscriptions in the app. Lifting it reopens this ADR and 1.5's.

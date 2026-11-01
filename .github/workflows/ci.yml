@@ -321,17 +321,12 @@ jobs:
           uid="$(docker exec "$CONTAINER" id -u)"
           echo "uid=$uid"
           test "$uid" = "10001"
-      # TODO(tech lead): QA's script api/tests/routes/rss_probe.py is not merged yet. When it lands, delete the
-      # guard so a missing probe fails the job. The bars live in the script, not here. It runs in a fresh
-      # container of the same image with the tests mounted read-only (the image has no tests/).
+      # The bars live in the script (docs/steps/1.3a.md Checkpoint), not here; its exit code fails the job.
+      # Fresh container of the image built above, tests mounted read-only (the image has no tests/).
       - name: RSS probe (hostile uploads)
         run: |
-          if [ ! -f api/tests/routes/rss_probe.py ]; then
-            echo "::warning::RSS probe is not wired yet: api/tests/routes/rss_probe.py does not exist, so api-image did not check memory."
-            exit 0
-          fi
           docker rm -f "$CONTAINER"
-          docker run --rm --memory=512m -v "$PWD/api/tests:/app/tests:ro"             --entrypoint python "$IMAGE" -m tests.routes.rss_probe
+          docker run --rm --memory=512m -v "$PWD/api/tests:/app/tests:ro" --entrypoint python "$IMAGE" -m tests.routes.rss_probe
       - name: Container logs
         if: failure()
         run: docker logs "$CONTAINER" || true

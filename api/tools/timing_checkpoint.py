@@ -148,6 +148,13 @@ def estimated_total_at_pace_1(hike: Hike, base: Path) -> float:
 
 
 def run(manifest: Path, out: TextIO) -> int:
+    if not manifest.is_file():
+        out.write(
+            f"BAD INPUT: manifest not found: {manifest}\n"
+            f"Create it with the columns {', '.join(COLUMNS)} "
+            "(see this tool's docstring).\n"
+        )
+        return EXIT_BAD_INPUT
     try:
         hikes = parse_manifest(manifest.read_text(encoding="utf-8"))
         if len(hikes) < MIN_HIKES:

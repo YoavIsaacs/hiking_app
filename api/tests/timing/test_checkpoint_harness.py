@@ -227,3 +227,13 @@ def test_main_takes_the_manifest_path_from_argv(tmp_path: Path) -> None:
 
 def test_default_manifest_is_under_docs_maps_hikes() -> None:
     assert cp.DEFAULT_MANIFEST.parts[-4:] == ("docs", "maps", "hikes", "hikes.csv")
+
+
+def test_a_missing_manifest_message_names_the_file_and_the_columns(
+    tmp_path: Path,
+) -> None:
+    out = io.StringIO()
+    run(tmp_path / "absent.csv", out)
+    text = out.getvalue()
+    assert "manifest not found" in text and "absent.csv" in text
+    assert "total_elapsed_min" in text and "Errno" not in text

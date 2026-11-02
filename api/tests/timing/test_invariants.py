@@ -1,7 +1,6 @@
 """Hypothesis invariants of estimate() over generated routes (ADR 0006)."""
 
-import math
-from datetime import UTC, datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone
 
 import pytest
 from hypothesis import example, given, settings
@@ -114,12 +113,20 @@ def test_moving_time_scales_exactly_with_pace(
 @COMMON
 @example(
     route=make_route(
-        [0.0, 1.0, 1.001, 2.0, 3.0, 4.0], [0.0, 1.0, 18.0, 18.0, 19.0, 20.0]
+        [
+            10.333333333333332,
+            11.609567599996826,
+            13.14558941862585,
+            315.68161123725486,
+            417.2176330558839,
+            417.21863305588386,
+        ],
+        [0.0, 0.0, 3.0, 0.0, 0.0, 17.0],
     ),
-    start=datetime(2000, 1, 2, tzinfo=UTC),
+    start=datetime(2000, 1, 2, 0, 0, 1, 2, tzinfo=timezone(timedelta(seconds=60))),
     pace=1.0,
     rest=1.0,
-    shift=32405.83,
+    shift=32405.834604239782,
 )
 # No zero-length steps here: a repeated distance with a different elevation is a
 # step in E(x), where a one-ulp change in the shifted window edge flips the slope.
@@ -142,20 +149,10 @@ def test_shifting_every_distance_changes_neither_times_nor_etas(
     )
     a = estimate(route, start, pace, rest)
     b = estimate(shifted, start, pace, rest)
-    # Shifting rounds each dist delta by <= 2 ulp(max dist); at the clamp that becomes
-    # <= MIN_PER_M_BOUND min/m of error, scaled by pace and rest; x4 safety factor.
-    top = max(p.dist_m for p in shifted.points)
-    tol = (
-        4
-        * (len(route.points) - 1)
-        * 2
-        * math.ulp(top)
-        * MIN_PER_M_BOUND
-        * pace
-        * (1 + rest / 60)
-    )
-    assert b.moving_min == pytest.approx(a.moving_min, rel=1e-9, abs=tol)
-    assert b.total_min == pytest.approx(a.total_min, rel=1e-9, abs=tol)
+    # Float noise from the shift is <= ~1e-8 min even at near-vertical steps; a real
+    # shift-dependence bug (the d_0 window bug, ~0.07 min) is >= 1e-3 min.
+    assert b.moving_min == pytest.approx(a.moving_min, rel=1e-9, abs=1e-6)
+    assert b.total_min == pytest.approx(a.total_min, rel=1e-9, abs=1e-6)
     for x, y in zip(a.eta_by_point, b.eta_by_point, strict=True):
         assert abs(x - y) <= timedelta(milliseconds=1)
 

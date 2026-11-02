@@ -1,6 +1,7 @@
 # 0006 — Duration estimator: Tobler per segment, windowed and clamped slope, pace and rest, `Timing` contract
 
 Status: accepted (tech lead, 2026-11-02) · Date: 2026-11-02 · Step: 1.4
+Amended 2026-11-02: (1) §2 window clamped to the route's own span [d_0, D], not [0, D]; (2) §2 spike case restated with 70 points (10 m spacing only for 2,400–2,600 m) to stay within `MAX_SUMMARY_POINTS`; (3) §2 bound stated exactly as 0.06 / (6·exp(−3.5·0.55)) ≈ 0.0685515 min/m.
 
 ## Context
 Step 1.4 (`docs/steps/1.4.md`, `docs/roadmap/phase-1.md` §1.4) needs a pure `estimate(route, start_time, pace_factor,
@@ -38,13 +39,17 @@ timed as flat. `app/timing/` is pure. The defaults live in `Settings` and are re
   `(0.50) = 0.875254`; `(−0.50) = 1.242044`. Flat 5 km at pace 1 takes 300 / 5.036742 = **59.5623 min**.
 
 ### 2. Slope: centred chord window, then clamp (`segment_slopes`)
-For segment i (points i → i+1), where Δd_i = d_{i+1} − d_i and D = `points[-1].dist_m`:
+For segment i (points i → i+1), where Δd_i = d_{i+1} − d_i, d_0 = `points[0].dist_m` and D = `points[-1].dist_m`:
 1. If Δd_i = 0 (a repeated or co-located point), then s_i = 0.0. The segment adds 0 time, so its value never
    matters.
-2. Otherwise: m = (d_i + d_{i+1}) / 2, h = max(`SLOPE_WINDOW_M`, Δd_i) / 2, a = max(0, m − h), b = min(D, m + h), and
-   **s_i = (E(b) − E(a)) / (b − a)**. Since b − a ≥ Δd_i > 0, this never divides by zero.
-   - E is the piecewise-linear interpolation of (`dist_m`, `elev_m`). At a repeated distance the **last** point at
-     that distance wins (`bisect_right − 1`), as `app/routes/elevation.py::_resample` does.
+2. Otherwise: m = (d_i + d_{i+1}) / 2, h = max(`SLOPE_WINDOW_M`, Δd_i) / 2, a = max(d_0, m − h), b = min(D, m + h), and
+   **s_i = (E(b) − E(a)) / (b − a)**. Since d_0 ≤ d_i and d_{i+1} ≤ D, b − a ≥ Δd_i > 0, so this never divides by zero.
+   - The window is clamped to the route's own span, not to [0, D]. A summary built by our parser starts at d_0 = 0,
+     but a client-built one may start at d_0 > 0; clamping to 0 would stretch the chord over a flat phantom before
+     the first point.
+   - E is the piecewise-linear interpolation of (`dist_m`, `elev_m`). It is only ever evaluated at x in [d_0, D], so
+     it never extrapolates. At a repeated distance the **last** point at that distance wins (`bisect_right − 1`), as
+     `app/routes/elevation.py::_resample` does.
    - A segment longer than the window gets its own slope. A route shorter than the window gets its end-to-end slope
      on every segment.
 3. s_i = max(−`MAX_ABS_SLOPE`, min(`MAX_ABS_SLOPE`, s_i)).
@@ -56,13 +61,16 @@ the same reason as ADR 0004 §1: env overrides would let what runs drift from wh
   window would cost about +15 %.
 - **Why 0.5.** No sustained hiking grade is steeper. Beyond it, the exponential gives vertical rates (152 m/h at
   100 %) far slower than real hikers manage.
-- **The bound.** After the clamp, every segment's pace-1 time is at most 0.06 · Δd / 0.875254, which is
-  **68.55 min/km**. With pace and rest applied, `moving_min` ≤ pace · 0.06855 · D, and `total_min` is at most that
+- **The bound.** After the clamp, every segment's pace-1 time is at most 0.06 · Δd / speed_kmh(0.5), with
+  speed_kmh(0.5) = 6·exp(−3.5·0.55) ≈ 0.875254. The exact per-metre bound is **0.06 / (6·exp(−3.5·0.55)) ≈
+  0.0685515 min/m (68.55 min/km)**; the 5-digit 0.06855 is rounded low and must not be used as a test bound. With pace
+  and rest applied, `moving_min` ≤ pace · 0.06 / (6·exp(−3.5·0.55)) · D, and `total_min` is at most that
   × (1 + rest / 60).
 
 Because the slope is a chord, a short spike only matters where a window endpoint lands on its ramps. **The brief's
-spike case:** a flat 5 km route with points every 10 m and one extra point at 2,502 m with elevation 30 m (2 m up,
-8 m down). Only two segments change, [2450, 2460] to s = +0.1875 and [2550, 2560] to s = −0.1875. `moving_min` rises
+spike case** (as QA built it, 70 points, within `MAX_SUMMARY_POINTS = 500`): a flat 5 km route with points every 10 m
+between 2,400 and 2,600 m, every 100 m elsewhere, and one extra point at 2,502 m with elevation 30 m (2 m up, 8 m
+down). Only two segments change, [2450, 2460] to s = +0.1875 and [2550, 2560] to s = −0.1875. `moving_min` rises
 by **0.1532 min (≈ 9 s)**. QA asserts the increase is ≤ 0.2 min. Without the window and clamp, the 2 m segment's slope
 of 15 would give a time of about 10²¹ min.
 
@@ -265,7 +273,7 @@ All tests are pure unit tests in `api/tests/timing/`, offline, with no `TestClie
   - `len(eta_by_point) == len(points)`.
   - ETAs never decrease, and strictly increase where Δd ≥ 1 mm.
   - `total_min ≥ moving_min ≥ 0`.
-  - `moving_min ≤ pace · 0.06855 · D` (the §2 bound).
+  - `moving_min ≤ pace · 0.06 / (6·exp(−3.5·0.55)) · D` (the §2 bound, exact form, not the rounded 0.06855).
   - Purity: the same input gives an equal output twice.
 - **Preconditions:** naive start; pace 0.2, 4.1, NaN and inf; rest −1, 61 and NaN; decreasing `dist_m`. Each raises
   `ValueError`.

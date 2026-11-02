@@ -19,8 +19,10 @@ The tech lead keeps this file true. A step moves to Done only with checkpoint ev
 ## Current state (handoff for a fresh session)
 Read this, then `docs/steps/<current step>.md`. Nothing here lives only in chat.
 
-- **Current step:** 1.4 Duration estimator — `docs/steps/1.4.md`, branch `step/1.4-duration-estimator`. Stage: **Brief**.
-  Checkpoint needs the manager's 5 past hikes (GPX + real time); collect them before the checkpoint, not before the build.
+- **Current step:** 1.4 Duration estimator — `docs/steps/1.4.md`, branch `step/1.4-duration-estimator`. Stage: **PR**
+  (reviewer round 1 fixed; gates green). Checkpoint waits on the manager's 5 hikes in `docs\maps\hikes\` + `hikes.csv`
+  (UTF-8), run with `uv run python -m tools.timing_checkpoint`. Deferred to 1.10: bound client `start_time`/`dist_m`
+  (`OverflowError` near datetime limits).
   1.3 and 1.3a closed (2026-11-02). Follow-ups: S (H11(d)) quiet-host re-time (ADR 0004 item 56); long-route grid
   re-tune needs an AllTrails route > 36 km (ADR 0005); Open-Meteo quota shared with 1.5 forecasts — size it in 1.5's design.
   **For 1.10:** CORS POST, Blob typing, 429 copy. **Manager:** update the master roadmap doc (own expat reader, not

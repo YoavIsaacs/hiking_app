@@ -50,3 +50,6 @@ playwright/.cache/
 
 # pytest-benchmark storage (the benchmark job never writes it; this guards local runs)
 .benchmarks/
+
+# Manager's personal route data; never committed (see docs/steps/1.4.md)
+docs/maps/

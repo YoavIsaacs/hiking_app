@@ -26,8 +26,6 @@ def _check_monotonic(dists: Sequence[float]) -> None:
 def _elevation_at(x: float, dists: Sequence[float], elevs: Sequence[float]) -> float:
     """Piecewise-linear E(x); at a repeated distance the last point wins."""
     i = bisect_right(dists, x) - 1
-    if i < 0:
-        return elevs[0]
     if i >= len(dists) - 1:
         return elevs[-1]
     span = dists[i + 1] - dists[i]  # > 0: dists[i + 1] > x >= dists[i]
@@ -57,7 +55,7 @@ def segment_slopes(points: Sequence[TrackPoint]) -> list[float]:
             continue
         mid = (dists[i] + dists[i + 1]) / 2
         half = max(SLOPE_WINDOW_M, delta) / 2
-        a = max(0.0, mid - half)
+        a = max(dists[0], mid - half)
         b = min(total, mid + half)
         s = (_elevation_at(b, dists, elevs) - _elevation_at(a, dists, elevs)) / (b - a)
         slopes.append(max(-MAX_ABS_SLOPE, min(MAX_ABS_SLOPE, s)))

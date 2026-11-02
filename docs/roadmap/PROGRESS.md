@@ -14,20 +14,17 @@ The tech lead keeps this file true. A step moves to Done only with checkpoint ev
 | 1.1 | GPX test corpus | **partial** (manager deviation) | [#27](https://github.com/YoavIsaacs/hiking_app/pull/27) | On `main` @ 55bac5b: 9 `.gpx` + 9 `expected.json` entries (checkpoint needs 10 → 9/10). Edge cases → file: loop → 3 AllTrails files; no elevation → `derived-tel-hadid-no-ele`; > 10k points → `derived-ben-shemen-over-10k-points` (10,417); `<rte>` → `derived-modiin-hills-south-rte`; multi-segment → `derived-tel-hadid-multi-segment` (34.1 m gap); malformed → `derived-ben-shemen-truncated`; (+ not GPX → `derived-modiin-hills-south-kml`); **out-and-back → none (deferred)** → 6/7. Sources: AllTrails only (1/4). Reference values: manager-supplied AllTrails (8.5 km/198 m, 10.6 km/200 m, 6.4 km/103 m). `uv run pytest` 380 passed, coverage 99.17 % (local and `api-test` on PR); post-merge CI [39267399727](https://github.com/YoavIsaacs/hiking_app/actions/runs/39267399727), CodeQL, Deploy API green, live `git_sha` 55bac5b. No new required checks. **Open until** the manager's Komoot / Strava / own-recording files arrive. | 2026-10-19 |
 | 1.2 | GPX parser | done | [#33](https://github.com/YoavIsaacs/hiking_app/pull/33) | **Live** (`https://hike-api-zr6tmbe2ya-zf.a.run.app`, `git_sha` 4870b23 == `main` HEAD), `POST /v1/routes/parse` on all 9 fixtures: Ben Shemen 10,496 m / 204.5 m vs AllTrails 10.6 km / 200 m (−0.98 % / +2.2 %); Modiin 8,580 m / 202.0 m vs 8.5 km / 198 m (+0.94 % / +2.0 %); Tel Hadid 6,342 m / 99.6 m vs 6.4 km / 103 m (−0.90 % / −3.33 %) — bars 2 % / 10 %. Largest fixture (`derived-ben-shemen-over-10k-points`, 10,417 pts) 0.49 s round trip live, 55 ms in the CI benchmark (< 2 s). `<rte>` and multi-segment 200; truncated and KML → 422 `invalid_gpx`; 11 MB → 413; **0 × 500** (live, and Hypothesis/never-500 suites). On `main` @ 4870b23: CI [39423033087](https://github.com/YoavIsaacs/hiking_app/actions/runs/39423033087), CodeQL [39423033091](https://github.com/YoavIsaacs/hiking_app/actions/runs/39423033091), Deploy API [39423033084](https://github.com/YoavIsaacs/hiking_app/actions/runs/39423033084) green; branch gates: 1,637 passed, coverage 99.73 % (gate 85), ruff/mypy strict clean. Hostile input (ADR 0004): worst RSS 97.3 MiB at 512 MiB, slowest admitted file 2.6 s. New required check `benchmark` (ruleset read 2026-10-20: `lint`, `api-test`, `Analyze (python)`, `web-test`, `e2e`, `Analyze (javascript-typescript)`, `api-contract`, `pr-title`, `benchmark`). **Deviations (manager):** own expat reader instead of gpxpy (option A); path `/v1/routes/parse`; 100k-point cap; Cloud Run `--concurrency=8` (#35, first gated deploy: Deploy API [39426483438](https://github.com/YoavIsaacs/hiking_app/actions/runs/39426483438) printed `containerConcurrency=8`, promoted `hike-api-00019-pal`, live `git_sha` cd24cb0). Team: ≈ 49 agent calls, 4 review rounds; QA missed hostile shapes in rounds 1, 3, 4 (see brief team log). | 2026-10-20 |
 | 1.3 | Elevation backfill | done | [#41](https://github.com/YoavIsaacs/hiking_app/pull/41) | **Live** (`git_sha` 85d175d == `main` HEAD): `POST /v1/routes/parse` of `derived-tel-hadid-no-ele.gpx` → 200 in 0.53 s, gain **104.99 m vs AllTrails 103 m (+1.93 %, bar ±15 %)**, `elevation_source = "lookup"`, 72 points, no warnings; Cloud Logging `elevation_lookup` for request `1613ceaa4c284e80b7e383b90609c16a` (read by the manager): `calls=1 outcome=ok points=72 batches=1` (bar ≤ 5 calls). Offline (recorded responses): Tel Hadid +1.9 %, Modiin −1.7 % (1 call), Ben Shemen +1.8 % (2 calls); 250 points → exactly 3 requests; has-elevation → 0; worst case ≤ 5 (Hypothesis). Grid pick spacing 90 m / window 135 m / T 3.0 m (ADR 0005 Amendment 1). Branch gates: 2074 passed, 99.52 %; ruff, mypy strict clean. On `main` @ 85d175d: CI, CodeQL, Deploy API (first CI build of the pinned image: `python 3.12.15 expat expat_2.9.0`), Deploy Web green. No new required checks (ruleset read 2026-11-01: `lint`, `api-test`, `Analyze (python)`, `web-test`, `e2e`, `Analyze (javascript-typescript)`, `api-contract`, `pr-title`, `benchmark`). **Manager decisions:** $0-only fallbacks for the Open-Meteo quota (ADR 0005, option D excluded). Team: ≈ 22 agent calls; review 1 round (reviewer) + 2 CI rounds (see brief). | 2026-11-01 |
+| 1.3a | Hardening after 1.3 (inserted, manager-approved) | done | [#44](https://github.com/YoavIsaacs/hiking_app/pull/44), [#43](https://github.com/YoavIsaacs/hiking_app/pull/43) | **RSS ratchet fixed** (ADR 0004 item 56: a `RouteParseError` traceback cycle held each 10 MiB upload; scrubbed in `summarise_in_worker`): `api-image` on PR #44 at `--memory=512m --memory-swap=512m` → RSS 92 / 90 MiB after 10 / 60 hostile H2 U=256 uploads (bar ≤ 200; before ≈ 384 MiB, OOM at ≈ 45 uploads without swap), C=8 peak 316 MiB (bar < 400), 0 × 500, H11(d) 1.46 s; local A/B vs `main` n=24: 3.168 vs 3.190 s (no slowdown). **Release version wired:** #43 bumped manifest, `api/pyproject.toml`, `api/uv.lock` to 0.3.0; `check-version-sync.sh` OK on `main` @ 11a60a8; Deploy API [41427234837](https://github.com/YoavIsaacs/hiking_app/actions/runs/41427234837) green; live `/health` `version` **0.3.0** == tag `v0.3.0`, `git_sha` 11a60a8. **Deliberate breaks** (bcdc3af → reverted 8d854fa): `api-image` red on `.python-version` drift, `lint` red on version drift. CI [41427234886](https://github.com/YoavIsaacs/hiking_app/actions/runs/41427234886), CodeQL green. New required check **`api-image`** (ruleset read 2026-11-02: `lint`, `api-test`, `Analyze (python)`, `web-test`, `e2e`, `Analyze (javascript-typescript)`, `api-contract`, `pr-title`, `benchmark`, `api-image`). Team: ≈ 16 agent calls, 1 review round. | 2026-11-02 |
 
 ## Current state (handoff for a fresh session)
 Read this, then `docs/steps/<current step>.md`. Nothing here lives only in chat.
 
-- **Current step:** 1.3 Elevation backfill — `docs/steps/1.3.md`, branch `step/1.3-elevation-backfill`. Stage: **PR**
-  (build, verify, review done 2026-11-01; reviewer approved; review round fixed: raw-byte body cap + bounded gzip,
-  mock-only read paths removed). 1.2 carry items all closed in 1.3. After merge: watch Deploy API (first CI build of the
-  new Dockerfile), then live checkpoint + `elevation_lookup` log line (manager reads Cloud Logging).
-  **Next after 1.3 (proposed, small fix branch):** ADR 0004 item 55 RSS ratchet (119 → 398 MiB under repeated hostile
-  uploads) + an `api-image` PR job building `api/Dockerfile` (new required check → manager approval).
-  **Tech-lead process note:** don't commit while a subagent is editing the same tree. Pre-commit stashes the
-  unstaged files mid-edit (it happened twice on `step/1.2-close` and restored cleanly).
+- **Current step:** 1.4 Duration estimator — `docs/steps/1.4.md`, branch `step/1.4-duration-estimator`. Stage: **Brief**.
+  Checkpoint needs the manager's 5 past hikes (GPX + real time); collect them before the checkpoint, not before the build.
+  1.3 and 1.3a closed (2026-11-02). Follow-ups: S (H11(d)) quiet-host re-time (ADR 0004 item 56); long-route grid
+  re-tune needs an AllTrails route > 36 km (ADR 0005); Open-Meteo quota shared with 1.5 forecasts — size it in 1.5's design.
   **For 1.10:** CORS POST, Blob typing, 429 copy. **Manager:** update the master roadmap doc (own expat reader, not
-  gpxpy; `/v1/routes/parse`).
+  gpxpy; `/v1/routes/parse`; step 1.3a insert).
   **1.1 (manager, 2026-11-01): AllTrails is the only data source**; Komoot / Strava / own recordings dropped (GPX assumed
   equivalent across apps). Still owed by the manager: one AllTrails out-and-back `.gpx` + AllTrails' distance and gain, into
   `docs/maps/` (uncommitted). Then QA adds it, removes `out_and_back` from `DEFERRED_BY_MANAGER` in
@@ -54,14 +51,12 @@ Read this, then `docs/steps/<current step>.md`. Nothing here lives only in chat.
   The ruleset UI also set `require_extra_approval_for_unattributed_changes: true` (not in the runbook) — harmless so far; first suspect if a PR is blocked unexpectedly.
 - **Releases:** release-please (GitHub App `hike-release-please`; var `RELEASE_APP_CLIENT_ID`, secret
   `RELEASE_APP_PRIVATE_KEY`) keeps a release PR open; the manager merges it to cut a release. Nightly 02:43 UTC on fresh deps; failures go to one open `nightly-failure` issue.
-- **Open PRs:** none (2026-11-01; Dependabot #36–#39 merged by the manager, merged into the 1.3 branch).
+- **Open PRs:** none (2026-11-02; release 0.3.0 merged).
 - **Local leftovers (manager may delete):** temp clones `%TEMP%\tmp.7qIrHpAUnP`, `%TEMP%\tmp.GMVXYXKa6R`;
   Docker images `hike-api:qa`, `hike-api:test`.
 
 ### Carry-forward (decided items waiting for their step)
-- **From 0.6 (needs a decision when it matters):** API `/health` `version` comes from `api/pyproject.toml`, not the
-  release-please version (`.release-please-manifest.json`) — wire them together (release-please `extra-files` + `uv.lock`
-  sync) or accept the drift; raise before the next release. When `design/tokens.json` exists, add `design/**` to the CI
+- **From 0.6:** (version wiring done in 1.3a.) When `design/tokens.json` exists, add `design/**` to the CI
   `web` path filter. QA: web pre-commit hooks don't run in a bare `git worktree` (needs its own `pnpm install`, short path).
 - **Before Phase 3 (or when there is something to show):** custom domain for the web app (Firebase Hosting custom domain; buying a domain costs money → manager approval) and optionally `/api/**` Hosting rewrite to Cloud Run (check `me-west1` support). Revisit the deferred ADR 0003 kill switch.
 - **Before Phase 1 screens:** UX §6 44×44 px targets (deferred from 0.3); no visual identity or tokens exist yet (`design/tokens.json`, `docs/design/` absent).
@@ -138,6 +133,11 @@ Read this, then `docs/steps/<current step>.md`. Nothing here lives only in chat.
   vs wiring; 1.3 respx pre-read). Proposed `qa.md` change (pending manager approval): "Know what your double does: when a
   test is about wire-level handling (encoding, streaming, size caps), prove the production read path runs, e.g. by making
   the alternative path raise."
+- 1.3a: reviewer 1 round (probe lacked 422/200 status bars; single-shot H11(d) would flake in a required check → warning-only
+  median of 3). QA reported "30 shapes" (22 in the repo) and that an image was gone (it wasn't) — reports not checked against
+  the files; with 1.3's respx claim that's the 3rd QA report/file mismatch in two steps → covered by the pending `qa.md` rule
+  above plus "re-read the file before you report a count or a state". Backend's cycle fix clean, first try. Architect added a
+  `--memory-swap` method rule unasked (accepted).
 - **Repeated patterns → changes (manager-approved and applied 2026-10-14):**
   1. QA missed failure-path gaps twice (0.1, 0.2) → `.claude/agents/qa.md`: treat every untested failure path
      of a checklist item as a *finding*, not a follow-up; always probe negatives and false positives

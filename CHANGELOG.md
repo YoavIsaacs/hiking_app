@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.3.0](https://github.com/YoavIsaacs/hiking_app/compare/v0.2.0...v0.3.0) (2026-11-02)
+
+
+### Features
+
+* **api:** elevation backfill from Open-Meteo (step 1.3) ([#41](https://github.com/YoavIsaacs/hiking_app/issues/41)) ([85d175d](https://github.com/YoavIsaacs/hiking_app/commit/85d175d993fc6befe56fcf3eff58144474fd0a00))
+
+
+### Bug Fixes
+
+* **api:** break the traceback cycle behind the RSS ratchet; api-image check; release version wiring (step 1.3a) ([#44](https://github.com/YoavIsaacs/hiking_app/issues/44)) ([e8556e7](https://github.com/YoavIsaacs/hiking_app/commit/e8556e705020ba9f93319e7ddcc12ae66976980a))
+
 ## [0.2.0](https://github.com/YoavIsaacs/hiking_app/compare/v0.1.0...v0.2.0) (2026-10-20)
 
 

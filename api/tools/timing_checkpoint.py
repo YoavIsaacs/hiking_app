@@ -17,8 +17,13 @@ MANAGER INSTRUCTIONS (PowerShell). The hike files are your data; they are NOT co
        uv run python -m tools.timing_checkpoint
 
    Or name the CSV: uv run python -m tools.timing_checkpoint C:\path\hikes.csv
-4. Copy the printed table into PROGRESS.md. Exit code 0 = every hike within 20 %,
-   1 = a hike is outside 20 %, 2 = bad input (missing file, bad row, under 5 hikes).
+4. Copy the printed table into PROGRESS.md. Exit codes:
+   0 = every hike within 20 %;
+   1 = checkpoint FAIL (a hike is outside 20 %, or the fitted factor is outside
+       the range the app allows);
+   2 = bad input (missing file, bad row, under 5 hikes, a GPX without elevation,
+       a CSV that is not UTF-8: save it as "CSV UTF-8");
+   3 = internal error in this tool (message on stderr); NOT a checkpoint result.
 
 What it does: parses each GPX through the real ``summarise_gpx`` pipeline, runs
 ``estimate`` at pace 1.0 and rest 10 min/h, fits ONE pace factor as the geometric
@@ -36,10 +41,15 @@ from datetime import UTC, date, datetime, time
 from pathlib import Path
 from typing import Final, TextIO
 
+from app.models.route import RouteSummary
 from app.routes.errors import RouteParseError
 from app.routes.summary import summarise_gpx
 from app.timing.estimate import estimate
-from app.timing.params import DEFAULT_REST_MIN_PER_HOUR
+from app.timing.params import (
+    DEFAULT_REST_MIN_PER_HOUR,
+    MAX_PACE_FACTOR,
+    MIN_PACE_FACTOR,
+)
 
 COLUMNS: Final = ("gpx_file", "date", "start_time_local", "total_elapsed_min")
 MIN_HIKES: Final = 5
@@ -47,7 +57,7 @@ LIMIT_PCT: Final = 20.0
 DEFAULT_MANIFEST: Final = (
     Path(__file__).parents[2] / "docs" / "maps" / "hikes" / "hikes.csv"
 )
-EXIT_OK, EXIT_FAIL, EXIT_BAD_INPUT = 0, 1, 2
+EXIT_OK, EXIT_FAIL, EXIT_BAD_INPUT, EXIT_INTERNAL_ERROR = 0, 1, 2, 3
 
 
 class ManifestError(ValueError):
@@ -130,7 +140,31 @@ def within_limit(errors_pct: Sequence[float], limit_pct: float = LIMIT_PCT) -> b
     return bool(errors_pct) and all(abs(e) <= limit_pct for e in errors_pct)
 
 
-def estimated_total_at_pace_1(hike: Hike, base: Path) -> float:
+@dataclass(frozen=True)
+class Loaded:
+    hike: Hike
+    route: RouteSummary
+    start: datetime
+    pace_1_total_min: float
+
+
+def _read_manifest(manifest: Path) -> str:
+    try:
+        return manifest.read_text(encoding="utf-8-sig")
+    except UnicodeDecodeError:
+        raise ManifestError(
+            f"{manifest.name} is not UTF-8 text; in Excel save the CSV as "
+            "'CSV UTF-8 (Comma delimited)'"
+        ) from None
+
+
+def _use_utf8(out: TextIO) -> None:
+    """Hebrew file names must print even when stdout is a cp1252 pipe or file."""
+    if isinstance(out, io.TextIOWrapper):
+        out.reconfigure(encoding="utf-8")
+
+
+def load_hike(hike: Hike, base: Path) -> Loaded:
     path = base / hike.gpx_file
     try:
         data = path.read_bytes()
@@ -142,12 +176,19 @@ def estimated_total_at_pace_1(hike: Hike, base: Path) -> float:
         route = summarise_gpx(data, path.name)
     except RouteParseError as exc:
         raise ManifestError(f"{hike.gpx_file}: not a usable GPX ({exc})") from None
+    if route.elevation_source == "none":
+        raise ManifestError(
+            f"{hike.gpx_file}: GPX has no elevation; "
+            "export it from AllTrails with elevation"
+        )
     # Durations do not depend on the zone; estimate only needs an aware start.
     start = datetime.combine(hike.day, hike.start_local, tzinfo=UTC)
-    return estimate(route, start, 1.0, DEFAULT_REST_MIN_PER_HOUR).total_min
+    total = estimate(route, start, 1.0, DEFAULT_REST_MIN_PER_HOUR).total_min
+    return Loaded(hike, route, start, total)
 
 
 def run(manifest: Path, out: TextIO) -> int:
+    _use_utf8(out)
     if not manifest.is_file():
         out.write(
             f"BAD INPUT: manifest not found: {manifest}\n"
@@ -156,28 +197,40 @@ def run(manifest: Path, out: TextIO) -> int:
         )
         return EXIT_BAD_INPUT
     try:
-        hikes = parse_manifest(manifest.read_text(encoding="utf-8"))
+        hikes = parse_manifest(_read_manifest(manifest))
         if len(hikes) < MIN_HIKES:
             raise ManifestError(f"need at least {MIN_HIKES} hikes, found {len(hikes)}")
-        estimated = [estimated_total_at_pace_1(h, manifest.parent) for h in hikes]
+        loaded = [load_hike(h, manifest.parent) for h in hikes]
     except (ManifestError, OSError) as exc:
         out.write(f"BAD INPUT: {exc}\n")
         return EXIT_BAD_INPUT
-    real = [h.total_elapsed_min for h in hikes]
-    factor = fit_pace_factor(real, estimated)
+    real = [item.hike.total_elapsed_min for item in loaded]
+    factor = fit_pace_factor(real, [item.pace_1_total_min for item in loaded])
     out.write(
         f"Fitted pace factor (geometric mean of real / estimated): {factor:.4f}\n"
     )
+    if not MIN_PACE_FACTOR <= factor <= MAX_PACE_FACTOR:
+        out.write(
+            f"CHECKPOINT: FAIL - the fitted factor {factor:.4f} is outside "
+            f"[{MIN_PACE_FACTOR:g}, {MAX_PACE_FACTOR:g}], so the app cannot set it.\n"
+        )
+        return EXIT_FAIL
     out.write(f"Rest {DEFAULT_REST_MIN_PER_HOUR:g} min/h; limit +-{LIMIT_PCT:g} %\n\n")
-    out.write(f"{'hike':<44} {'estimated':>10} {'real':>8} {'error':>8}  verdict\n")
+    out.write(
+        f"{'hike':<44} {'elevation':>9} {'estimated':>10} {'real':>8} {'error':>8}  "
+        "verdict\n"
+    )
     errors: list[float] = []
-    for hike, est, real_min in zip(hikes, estimated, real, strict=True):
-        err = error_pct(est * factor, real_min)
+    for item, real_min in zip(loaded, real, strict=True):
+        est = estimate(
+            item.route, item.start, factor, DEFAULT_REST_MIN_PER_HOUR
+        ).total_min
+        err = error_pct(est, real_min)
         errors.append(err)
         verdict = "PASS" if abs(err) <= LIMIT_PCT else "FAIL"
         out.write(
-            f"{hike.gpx_file[:44]:<44} {est * factor:>10.1f} {real_min:>8.1f} "
-            f"{err:>+7.1f}%  {verdict}\n"
+            f"{item.hike.gpx_file[:44]:<44} {item.route.elevation_source:>9} "
+            f"{est:>10.1f} {real_min:>8.1f} {err:>+7.1f}%  {verdict}\n"
         )
     ok = within_limit(errors)
     out.write(f"\nCHECKPOINT: {'PASS' if ok else 'FAIL'}\n")
@@ -186,10 +239,14 @@ def run(manifest: Path, out: TextIO) -> int:
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
-    if len(args) > 1:
-        sys.stdout.write("usage: python -m tools.timing_checkpoint [hikes.csv]\n")
-        return EXIT_BAD_INPUT
-    return run(Path(args[0]) if args else DEFAULT_MANIFEST, sys.stdout)
+    try:
+        if len(args) > 1:
+            sys.stdout.write("usage: python -m tools.timing_checkpoint [hikes.csv]\n")
+            return EXIT_BAD_INPUT
+        return run(Path(args[0]) if args else DEFAULT_MANIFEST, sys.stdout)
+    except Exception as exc:  # last resort: a crash must never read as a FAIL
+        sys.stderr.write(f"INTERNAL ERROR (not a checkpoint result): {exc!r}\n")
+        return EXIT_INTERNAL_ERROR
 
 
 if __name__ == "__main__":

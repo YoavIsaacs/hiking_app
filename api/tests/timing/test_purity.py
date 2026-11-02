@@ -17,19 +17,30 @@ ALLOWED = {
     "app.models.timing",
 }
 CLOCK_CALLS = {"now", "utcnow", "today"}
+BANNED_BUILTINS = {"open", "print", "input", "eval", "exec", "__import__"}
+PACKAGE = ("app", "timing")
+BEYOND_ROOT = "<beyond the package root>"
 
 
-def imported_modules(tree: ast.AST) -> list[str]:
+def imported_modules(tree: ast.AST, package: tuple[str, ...] = PACKAGE) -> list[str]:
+    """Absolute module names imported; relative imports resolved against package."""
     found: list[str] = []
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             found += [a.name for a in node.names]
         elif isinstance(node, ast.ImportFrom):
-            base = "app.timing" if node.level else ""
             module = node.module or ""
-            name = f"{base}.{module}" if base and module else base or module
+            if node.level == 0:
+                found.append(module)
+                continue
+            up = node.level - 1
+            if up >= len(package):
+                found.append(BEYOND_ROOT)
+                continue
+            base = ".".join(package[: len(package) - up])
+            name = f"{base}.{module}" if module else base
             found.append(name)
-            if not module:  # "from . import x"
+            if not module:  # "from . import x" imports the submodule app.timing.x
                 found += [f"{name}.{a.name}" for a in node.names]
     return found
 
@@ -47,6 +58,8 @@ def violations(source: str) -> list[str]:
             called = fn.attr if isinstance(fn, ast.Attribute) else getattr(fn, "id", "")
             if called in CLOCK_CALLS:
                 problems.append(f"call {called}()")
+            elif isinstance(fn, ast.Name) and fn.id in BANNED_BUILTINS:
+                problems.append(f"call {fn.id}()")
     return problems
 
 

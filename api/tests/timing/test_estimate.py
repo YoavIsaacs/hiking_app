@@ -181,19 +181,19 @@ class NoOffset(tzinfo):
     ids=["naive", "tzinfo-without-offset"],
 )
 def test_naive_start_time_is_rejected(start: datetime) -> None:
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="start_time must be timezone-aware"):
         estimate(flat_5km(), start, 1.0, 10.0)
 
 
 @pytest.mark.parametrize("pace", [0.2, 0.0, -1.0, 4.1, math.nan, math.inf, -math.inf])
 def test_out_of_range_pace_is_rejected(pace: float) -> None:
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="pace_factor out of range"):
         estimate(flat_5km(), START, pace, 10.0)
 
 
 @pytest.mark.parametrize("rest", [-1.0, 61.0, math.nan, math.inf, -math.inf])
 def test_out_of_range_rest_is_rejected(rest: float) -> None:
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="rest_min_per_hour out of range"):
         estimate(flat_5km(), START, 1.0, rest)
 
 
@@ -208,7 +208,7 @@ def test_boundary_pace_and_rest_are_accepted(pace: float, rest: float) -> None:
 
 
 def test_decreasing_distance_is_rejected() -> None:
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="dist_m must not decrease"):
         estimate(make_route([0.0, 100.0, 50.0]), START, 1.0, 10.0)
 
 
